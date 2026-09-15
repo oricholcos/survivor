@@ -1,0 +1,33 @@
+{
+  "campaignDurationSec": 600,
+  "timeline": [
+    { "fromSec": 0, "spawn": { "enemy": "runner", "perSec": 0.6 } },
+    { "fromSec": 85, "burst": { "enemy": "standard", "count": 6, "strengthFactor": 0.49 } },
+    { "fromSec": 100, "spawn": { "enemy": "runner", "perSec": 0.8 } },
+    { "fromSec": 120, "spawn": { "enemy": "standard", "perSec": 0.4 } },
+    { "fromSec": 160, "burst": { "enemy": "standard", "count": 7, "strengthFactor": 0.49 } },
+    { "fromSec": 170, "spawn": { "enemy": "standard", "perSec": 0.45 } },
+    { "fromSec": 195, "burst": { "enemy": "runner", "count": 7, "boss": "boss_1", "strengthFactor": 0.49 } },
+    { "fromSec": 220, "spawn": { "enemy": "runner", "perSec": 1 } },
+    { "fromSec": 240, "spawn": { "enemy": "standard", "perSec": 0.55 } },
+    { "fromSec": 285, "burst": { "enemy": "standard", "count": 8, "boss": "boss_1", "strengthFactor": 0.49 } },
+    { "fromSec": 300, "spawn": { "enemy": "tank", "perSec": 0.35 } },
+    { "fromSec": 330, "spawn": { "enemy": "standard", "perSec": 0.8 } },
+    { "fromSec": 370, "spawn": { "enemy": "tank", "perSec": 0.35 } },
+    { "fromSec": 390, "spawn": { "enemy": "standard", "perSec": 0.95 } },
+    { "fromSec": 415, "burst": { "enemy": "standard", "count": 16, "boss": "boss_1", "strengthFactor": 0.9 } },
+    { "fromSec": 440, "spawn": { "enemy": "standard", "perSec": 1 } },
+    { "fromSec": 470, "burst": { "enemy": "standard", "count": 9, "boss": "boss_1", "strengthFactor": 0.9 } },
+    { "fromSec": 480, "spawn": { "enemy": "tank", "perSec": 0.3 } },
+    { "fromSec": 490, "spawn": { "enemy": "standard", "perSec": 1.25 } },
+    { "fromSec": 510, "spawn": { "enemy": "tank", "perSec": 0.5 } },
+    { "fromSec": 525, "burst": { "enemy": "runner", "count": 26, "boss": "boss_1", "strengthFactor": 0.74 } },
+    { "fromSec": 545, "spawn": { "enemy": "runner", "perSec": 1.45 } },
+    { "fromSec": 555, "burst": { "enemy": "standard", "count": 26, "strengthFactor": 0.9 } },
+    { "fromSec": 560, "spawn": { "enemy": "tank", "perSec": 0.18 } },
+    { "fromSec": 570, "spawn": { "enemy": "runner", "perSec": 1.5 } },
+    { "fromSec": 585, "burst": { "enemy": "runner", "count": 45, "boss": "boss_1", "strengthFactor": 1 } }
+  ],
+  "endlessLoop": { "loopFromSec": 560, "scalingPerLoop": 1.08 },
+  "scaling": { "hpPerSec": 0.0052 }
+}

@@ -1,0 +1,52 @@
+{
+  "id": "dragon_breath",
+  "name": "龙息锥",
+  "behavior": "dragon_breath",
+  "maxLevel": 10,
+  "base": {
+    "damage": 2,
+    "intervalMs": 150,
+    "projectileSpeed": 0,
+    "pierce": 0,
+    "ttlMs": 0,
+    "coneRange": 230,
+    "coneAngleDeg": 50,
+    "pushForce": 25,
+    "acidPoolEveryTicks": 10,
+    "acidPoolRadiusFactor": 0.35,
+    "acidPoolDurationMs": 2500,
+    "acidPoolTickMs": 500,
+    "acidPoolDamage": 2
+  },
+  "rangeKeys": ["coneRange", "coneAngleDeg"],
+  "cards": [
+    {
+      "id": "sticky_oil",
+      "name": "粘油",
+      "description": "命中的敌人被粘油减速 50%",
+      "once": true,
+      "params": [{ "key": "stickyOil", "value": 1, "op": "set" }]
+    },
+    {
+      "id": "blast_ignite",
+      "name": "爆燃",
+      "description": "已燃烧的敌人受到本武器直击伤害 ×2",
+      "once": true,
+      "params": [{ "key": "blastIgnite", "value": 1, "op": "set" }]
+    },
+    {
+      "id": "acid_pool",
+      "name": "酸池",
+      "description": "每 10 个喷射 tick 在锥形中点留下一片腐蚀酸池",
+      "once": true,
+      "params": [{ "key": "acidPool", "value": 1, "op": "set" }]
+    },
+    {
+      "id": "push_back",
+      "name": "推退",
+      "description": "命中的敌人被锥形气流持续推退",
+      "once": true,
+      "params": [{ "key": "pushBack", "value": 1, "op": "set" }]
+    }
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "burn": {
+    "id": "burn",
+    "name": "燃烧",
+    "durationMs": 3000,
+    "tickMs": 500,
+    "maxStacks": 1,
+    "refresh": "reset",
+    "damagePerTick": 3
+  },
+  "poison": {
+    "id": "poison",
+    "name": "毒附着",
+    "durationMs": 5000,
+    "tickMs": 1000,
+    "maxStacks": 3,
+    "refresh": "add",
+    "damagePerTick": 2
+  },
+  "slow": {
+    "id": "slow",
+    "name": "减速",
+    "durationMs": 2000,
+    "maxStacks": 1,
+    "refresh": "reset",
+    "speedFactor": 0.5,
+    "exclusiveGroup": "slow_family",
+    "potency": 2
+  },
+  "chill": {
+    "id": "chill",
+    "name": "冰附着",
+    "durationMs": 2500,
+    "maxStacks": 2,
+    "refresh": "add",
+    "speedFactor": 0.75,
+    "exclusiveGroup": "slow_family",
+    "potency": 1
+  },
+  "stun": {
+    "id": "stun",
+    "name": "眩晕",
+    "durationMs": 800,
+    "maxStacks": 1,
+    "refresh": "reset"
+  },
+  "mark": {
+    "id": "mark",
+    "name": "标记",
+    "durationMs": 4000,
+    "maxStacks": 1,
+    "refresh": "reset",
+    "damageTakenFactor": 1.25
+  },
+  "knockback": {
+    "id": "knockback",
+    "name": "击退",
+    "durationMs": 0,
+    "maxStacks": 1,
+    "refresh": "reset",
+    "force": 60
+  },
+  "blackhole": {
+    "id": "blackhole",
+    "name": "黑洞",
+    "durationMs": 1500,
+    "maxStacks": 1,
+    "refresh": "reset",
+    "pullPerSec": 220
+  },
+  "overheat": {
+    "id": "overheat",
+    "name": "过热",
+    "durationMs": 2500,
+    "maxStacks": 1,
+    "refresh": "reset",
+    "intervalFactor": 1.6
+  },
+  "corrode": {
+    "id": "corrode",
+    "name": "腐蚀",
+    "durationMs": 3000,
+    "maxStacks": 2,
+    "refresh": "add",
+    "damageTakenFactor": 1.15
+  }
+}

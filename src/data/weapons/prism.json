@@ -1,0 +1,56 @@
+{
+  "id": "prism",
+  "name": "弹射棱镜",
+  "behavior": "prism_chain",
+  "maxLevel": 10,
+  "base": {
+    "damage": 10,
+    "intervalMs": 1200,
+    "projectileSpeed": 800,
+    "pierce": 999,
+    "ttlMs": 4000,
+    "chainCount": 3,
+    "chainRange": 150,
+    "falloff": 0.8,
+    "zapRadius": 90,
+    "zapDamage": 4
+  },
+  "rangeKeys": ["chainRange"],
+  "cards": [
+    {
+      "id": "bounce_up",
+      "name": "弹跳+1",
+      "description": "弹跳次数 +1（可叠 5 次）",
+      "maxCount": 5,
+      "params": [{ "key": "chainCount", "value": 1, "op": "add" }]
+    },
+    {
+      "id": "chain_lightning",
+      "name": "连锁闪电",
+      "description": "命中时对周围至多 2 个敌人放出闪电（4 伤）",
+      "once": true,
+      "params": [{ "key": "chainLightning", "value": 1, "op": "set" }]
+    },
+    {
+      "id": "frost_venom",
+      "name": "冰毒附着",
+      "description": "命中的幸存敌人同时附着冰缓与中毒",
+      "once": true,
+      "params": [{ "key": "frostVenom", "value": 1, "op": "set" }]
+    },
+    {
+      "id": "boomerang",
+      "name": "回旋返回",
+      "description": "弹跳次数用尽后生成朝角色折返的回旋弹",
+      "once": true,
+      "params": [{ "key": "boomerang", "value": 1, "op": "set" }]
+    },
+    {
+      "id": "link_stable",
+      "name": "链路稳定",
+      "description": "伤害递减系数 +0.05（可叠 3 次）",
+      "maxCount": 3,
+      "params": [{ "key": "falloff", "value": 0.05, "op": "add" }]
+    }
+  ]
+}

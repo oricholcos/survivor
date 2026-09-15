@@ -1,0 +1,35 @@
+{
+  "id": "homing_missile",
+  "name": "追猎导弹",
+  "behavior": "homing_missile",
+  "maxLevel": 10,
+  "base": {
+    "damage": 12,
+    "intervalMs": 1400,
+    "projectileSpeed": 500,
+    "pierce": 0,
+    "ttlMs": 3000,
+    "aoeRadius": 70,
+    "splashFactor": 0.6,
+    "turnRateDegPerSec": 240,
+    "projectileCount": 1,
+    "volleySpreadDeg": 24
+  },
+  "rangeKeys": ["aoeRadius"],
+  "cards": [
+    {
+      "id": "burn_cloud",
+      "name": "燃烧云",
+      "description": "爆炸范围内的幸存敌人附着燃烧",
+      "once": true,
+      "params": [{ "key": "burnCloud", "value": 1, "op": "set" }]
+    },
+    {
+      "id": "prefer_elite",
+      "name": "优先锁定",
+      "description": "优先锁定精英（Boss）目标",
+      "once": true,
+      "params": [{ "key": "preferElite", "value": 1, "op": "set" }]
+    }
+  ]
+}

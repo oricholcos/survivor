@@ -1,0 +1,49 @@
+{
+  "id": "heat_beam",
+  "name": "灼热光束",
+  "behavior": "heat_beam",
+  "maxLevel": 10,
+  "base": {
+    "damage": 3,
+    "intervalMs": 120,
+    "projectileSpeed": 0,
+    "pierce": 0,
+    "ttlMs": 0,
+    "beamWidth": 14,
+    "beamRange": 520,
+    "heatPerShot": 12,
+    "coolPerSec": 20,
+    "overheatThreshold": 100
+  },
+  "rangeKeys": ["beamWidth", "beamRange"],
+  "cards": [
+    {
+      "id": "dual_beam",
+      "name": "双束",
+      "description": "对第二近的敌人再发射一条同样威力的光束",
+      "once": true,
+      "params": [{ "key": "dualBeam", "value": 1, "op": "set" }]
+    },
+    {
+      "id": "scorch",
+      "name": "灼痕",
+      "description": "被光束照到的敌人附着灼烧（每跳 2）",
+      "once": true,
+      "params": [{ "key": "scorch", "value": 1, "op": "set" }]
+    },
+    {
+      "id": "refract_up",
+      "name": "折射+1",
+      "description": "主光束终点偏转 30° 续射半程（可叠层）",
+      "maxCount": 2,
+      "params": [{ "key": "refraction", "value": 1, "op": "set" }]
+    },
+    {
+      "id": "cooling_up",
+      "name": "散热强化",
+      "description": "散热速率 +6/s（可重复获取）",
+      "maxCount": 2,
+      "params": [{ "key": "coolPerSec", "value": 6, "op": "add" }]
+    }
+  ]
+}

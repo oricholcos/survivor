@@ -1,0 +1,58 @@
+{
+  "id": "rail_piercer",
+  "name": "轨道贯穿炮",
+  "behavior": "piercing_bolt",
+  "maxLevel": 10,
+  "base": { "damage": 10, "intervalMs": 800, "projectileSpeed": 900, "pierce": 2, "ttlMs": 2000 },
+  "rangeKeys": [],
+  "cards": [
+    {
+      "id": "trident_split",
+      "name": "三叉分裂",
+      "description": "主射线两侧 ±10° 各分出 1 条侧射线，独立结算、各穿 pierce 个",
+      "once": true,
+      "params": [
+        { "key": "trident", "value": 1, "op": "set" },
+        { "key": "tridentAngleDeg", "value": 10, "op": "set" }
+      ]
+    },
+    {
+      "id": "refract_up",
+      "name": "折射+1",
+      "description": "射线终点偏转 30° 续射半程（可叠层）",
+      "maxCount": 2,
+      "params": [
+        { "key": "refract", "value": 1, "op": "add" },
+        { "key": "refractAngleDeg", "value": 30, "op": "set" },
+        { "key": "refractLengthFactor", "value": 0.5, "op": "set" }
+      ]
+    },
+    {
+      "id": "pierce_up",
+      "name": "贯通+1",
+      "description": "穿透 +1（可叠 4 次）",
+      "maxCount": 4,
+      "params": [{ "key": "pierce", "value": 1, "op": "add" }]
+    },
+    {
+      "id": "ricochet",
+      "name": "跳弹",
+      "description": "穿透链末位弹向 200px 内未受击者追加结算",
+      "once": true,
+      "params": [
+        { "key": "ricochet", "value": 1, "op": "set" },
+        { "key": "ricochetRange", "value": 200, "op": "set" }
+      ]
+    },
+    {
+      "id": "charge_damage",
+      "name": "蓄力增伤",
+      "description": "连续命中同一目标每层 +8% 伤害，至多 +80%，换目标清零",
+      "once": true,
+      "params": [
+        { "key": "chargeDamagePerStack", "value": 0.08, "op": "set" },
+        { "key": "chargeDamageMaxStacks", "value": 10, "op": "set" }
+      ]
+    }
+  ]
+}

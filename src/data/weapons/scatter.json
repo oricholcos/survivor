@@ -1,0 +1,54 @@
+{
+  "id": "scatter",
+  "name": "扇面霰弹",
+  "behavior": "scatter_shot",
+  "maxLevel": 10,
+  "base": {
+    "damage": 4,
+    "intervalMs": 1100,
+    "projectileSpeed": 700,
+    "pierce": 0,
+    "ttlMs": 650,
+    "projectileCount": 5,
+    "fanAngleDeg": 70,
+    "bounceRange": 200
+  },
+  "rangeKeys": ["fanAngleDeg"],
+  "cards": [
+    {
+      "id": "burn_bullet",
+      "name": "燃烧弹",
+      "description": "每枚弹丸命中附着燃烧",
+      "once": true,
+      "params": [{ "key": "burnBullet", "value": 1, "op": "set" }]
+    },
+    {
+      "id": "knockback",
+      "name": "击退",
+      "description": "命中把敌人沿弹来向击退",
+      "once": true,
+      "params": [
+        { "key": "knockback", "value": 1, "op": "set" },
+        { "key": "knockbackForce", "value": 60, "op": "set" }
+      ]
+    },
+    {
+      "id": "bounce_up",
+      "name": "弹丸反弹",
+      "description": "弹丸死亡后向范围内新的敌人反弹一次（可叠 2 次）",
+      "maxCount": 2,
+      "params": [
+        { "key": "bounce", "value": 1, "op": "set" },
+        { "key": "bounceCount", "value": 1, "op": "add" }
+      ]
+    },
+    {
+      "id": "dragon_breath_mode",
+      "name": "龙息模式",
+      "description": "质变：锥形持续灼烧，不再发射弹丸（与多射/连射/分裂互斥）",
+      "once": true,
+      "excludes": ["multi_shot", "burst_shot", "split_shot"],
+      "params": [{ "key": "dragonBreath", "value": 1, "op": "set" }]
+    }
+  ]
+}

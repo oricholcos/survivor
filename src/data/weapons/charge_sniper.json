@@ -1,0 +1,52 @@
+{
+  "id": "charge_sniper",
+  "name": "蓄能狙击",
+  "behavior": "charge_sniper",
+  "maxLevel": 10,
+  "base": {
+    "damage": 60,
+    "intervalMs": 2400,
+    "projectileSpeed": 1600,
+    "pierce": 0,
+    "ttlMs": 1200,
+    "fastSpeedThreshold": 80
+  },
+  "rangeKeys": [],
+  "cards": [
+    {
+      "id": "pierce_shot",
+      "name": "贯穿弹",
+      "description": "穿透 +2（可重复获取）",
+      "maxCount": 2,
+      "params": [
+        { "key": "pierceShot", "value": 1, "op": "set" },
+        { "key": "pierce", "value": 2, "op": "add" }
+      ]
+    },
+    {
+      "id": "headshot",
+      "name": "斩首",
+      "description": "目标 hp ≥ 60% 上限时伤害 ×1.5",
+      "once": true,
+      "params": [
+        { "key": "headshot", "value": 1, "op": "set" },
+        { "key": "headshotHpFactor", "value": 0.6, "op": "set" },
+        { "key": "headshotMultiplier", "value": 1.5, "op": "set" }
+      ]
+    },
+    {
+      "id": "execute_up",
+      "name": "处决强化",
+      "description": "斩首倍率 +0.25（可重复获取）",
+      "maxCount": 2,
+      "params": [{ "key": "headshotMultiplier", "value": 0.25, "op": "add" }]
+    },
+    {
+      "id": "slow_hit",
+      "name": "命中减速",
+      "description": "命中附带减速 50%、持续 2s",
+      "once": true,
+      "params": [{ "key": "slowHit", "value": 1, "op": "set" }]
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "xpBase": 5,
+  "xpGrowth": 1.4,
+  "gemFlySpeed": 600,
+  "dropFlySpeed": 600,
+  "repairDropChance": 0.02,
+  "repairHeal": 30,
+  "wallMaxHp": 3200,
+  "maxWeaponSlots": 4
+}

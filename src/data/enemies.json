@@ -1,0 +1,55 @@
+{
+  "runner": {
+    "id": "runner",
+    "name": "快速小怪",
+    "shape": "triangle",
+    "color": 16733525,
+    "hp": 15,
+    "speed": 90,
+    "damage": 4.5,
+    "attackIntervalMs": 2000,
+    "xp": 1,
+    "radius": 12,
+    "isBoss": false
+  },
+  "standard": {
+    "id": "standard",
+    "name": "标准怪",
+    "shape": "square",
+    "color": 8930559,
+    "hp": 34,
+    "speed": 45,
+    "damage": 7.5,
+    "attackIntervalMs": 1500,
+    "xp": 2,
+    "radius": 16,
+    "isBoss": false
+  },
+  "tank": {
+    "id": "tank",
+    "name": "肉盾怪",
+    "shape": "hexagon",
+    "color": 5635976,
+    "hp": 160,
+    "speed": 25,
+    "damage": 25,
+    "attackIntervalMs": 2500,
+    "xp": 5,
+    "radius": 22,
+    "isBoss": false
+  },
+  "boss_1": {
+    "id": "boss_1",
+    "name": "爆发波首领",
+    "shape": "star",
+    "color": 16737792,
+    "hp": 900,
+    "speed": 40,
+    "damage": 36,
+    "attackIntervalMs": 1200,
+    "xp": 30,
+    "radius": 34,
+    "bossHealPct": 0.055,
+    "isBoss": true
+  }
+}

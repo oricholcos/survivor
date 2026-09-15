@@ -1,0 +1,72 @@
+[
+  {
+    "id": "dmg_up",
+    "name": "伤害强化",
+    "description": "该武器伤害 ×1.3（可叠加）",
+    "params": [{ "key": "damage", "value": 1.3, "op": "mul" }],
+    "applyTo": ["all"]
+  },
+  {
+    "id": "spd_up",
+    "name": "攻速强化",
+    "description": "该武器开火间隔 ÷1.3（可叠加）",
+    "params": [{ "key": "intervalMs", "value": 1.3, "op": "div" }],
+    "applyTo": ["all"]
+  },
+  {
+    "id": "multi_shot",
+    "name": "多射+1",
+    "description": "同时多发射 1 颗弹体（可叠 4 次）",
+    "params": [{ "key": "projectileCount", "value": 1, "op": "add" }],
+    "maxCount": 4,
+    "applyTo": ["charge_sniper", "scatter", "homing_missile", "mortar", "prism"]
+  },
+  {
+    "id": "burst_shot",
+    "name": "连射+1",
+    "description": "每颗弹体跟发 1 波同角度弹，波间隔 150ms（可叠 2 次）",
+    "params": [
+      { "key": "burstWaves", "value": 1, "op": "add" },
+      { "key": "burstIntervalMs", "value": 150, "op": "set" }
+    ],
+    "maxCount": 2,
+    "applyTo": ["charge_sniper", "scatter", "homing_missile", "mortar", "prism"]
+  },
+  {
+    "id": "split_shot",
+    "name": "分裂",
+    "description": "主弹命中/爆炸后分裂 4 发次级弹：20% 伤害、锁定最近 4 个不同敌人、不再分裂",
+    "params": [
+      { "key": "splitCount", "value": 1, "op": "add" },
+      { "key": "splitDamageFactor", "value": 0.2, "op": "set" },
+      { "key": "splitMaxTargets", "value": 4, "op": "set" }
+    ],
+    "maxCount": 1,
+    "applyTo": ["charge_sniper", "scatter", "homing_missile", "mortar", "prism"]
+  },
+  {
+    "id": "range_up",
+    "name": "范围强化",
+    "description": "该武器范围参数 ×1.2（可叠 5 次）",
+    "kind": "range_mult",
+    "value": 1.2,
+    "maxCount": 5,
+    "applyTo": ["dragon_breath", "heat_beam", "homing_missile", "mortar", "prism", "scatter"]
+  },
+  {
+    "id": "dot_freq",
+    "name": "dot频率",
+    "description": "该武器附着的持续伤害 tick 间隔 ÷1.3（可叠 3 次）",
+    "kind": "dot_freq",
+    "value": 1.3,
+    "maxCount": 3,
+    "applyTo": ["dragon_breath", "heat_beam", "homing_missile", "mortar", "prism", "scatter"],
+    "requires": {
+      "heat_beam": "scorch",
+      "homing_missile": "burn_cloud",
+      "mortar": "burn_ground",
+      "prism": "frost_venom",
+      "scatter": "burn_bullet"
+    }
+  }
+]

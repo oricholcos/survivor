@@ -1,0 +1,45 @@
+{
+  "id": "mortar",
+  "name": "迫击榴弹",
+  "behavior": "mortar",
+  "maxLevel": 10,
+  "base": {
+    "damage": 18,
+    "intervalMs": 1800,
+    "projectileSpeed": 0,
+    "pierce": 0,
+    "ttlMs": 0,
+    "flightMs": 900,
+    "aoeRadius": 90,
+    "densityRadius": 110,
+    "burnRadiusFactor": 0.8,
+    "burnDurationMs": 3000,
+    "burnTickMs": 500,
+    "burnDamagePerTick": 3,
+    "blackHolePullPerSec": 300
+  },
+  "rangeKeys": ["aoeRadius"],
+  "cards": [
+    {
+      "id": "burn_ground",
+      "name": "燃烧地",
+      "description": "爆炸落点留下一片燃烧区域",
+      "once": true,
+      "params": [{ "key": "burnGround", "value": 1, "op": "set" }]
+    },
+    {
+      "id": "stun_blast",
+      "name": "眩晕",
+      "description": "爆炸震晕半径内的幸存敌人",
+      "once": true,
+      "params": [{ "key": "stunBlast", "value": 1, "op": "set" }]
+    },
+    {
+      "id": "black_hole",
+      "name": "黑洞",
+      "description": "爆炸后幸存敌人被持续拉向爆心",
+      "once": true,
+      "params": [{ "key": "blackHole", "value": 1, "op": "set" }]
+    }
+  ]
+}
