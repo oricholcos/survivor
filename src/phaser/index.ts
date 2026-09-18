@@ -20,7 +20,7 @@ export const PAGE_BACKGROUND = '#05050d';
  * 默认开启）；开启且 WebGL 渲染器时相机挂轻度 bloom 让霓虹发光元素泛光。
  */
 export function startGame(parent: HTMLElement, session: GameSession): Phaser.Game {
-  return new Phaser.Game({
+  const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent,
     width: GAME_WIDTH,
@@ -32,4 +32,8 @@ export function startGame(parent: HTMLElement, session: GameSession): Phaser.Gam
     },
     scene: [new MainScene(session, fxEnabledFromUrl())],
   });
+  // 调试句柄（与 ?speed / ?fx 同类的调试约定）：暴露游戏实例供控制台/GUI 验收手动
+  // 驱动主循环（game.loop.step(t)），RAF 被环境节流的场景（如内嵌浏览器）下可逐帧推进。
+  (window as unknown as Record<string, unknown>).__survivorGame = game;
+  return game;
 }

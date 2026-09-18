@@ -74,6 +74,9 @@ export const PRISM_ZAP_COLORS = {
   hot: 0xffffff,
 };
 
+/** 血条/经验条底槽色（T6a 自 mainScene 迁入：敌人池化血条的槽 tint 与墙/经验条共用）。 */
+export const COLOR_TRACK = 0x1a1f2e;
+
 /** 状态异常霓虹视觉配色表（纯几何零素材反馈）：冰冻蓝、毒素绿、灼烧橙红、眩晕金黄等。 */
 export const STATUS_EFFECT_COLORS = {
   // 减速 / 冰附着：冰蓝微弱冷光

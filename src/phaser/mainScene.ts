@@ -1,9 +1,12 @@
-// 主场景：霓虹几何渲染（T4.3，在 T1.11 灰盒骨架上升级，结构不变）。
-// SimState → Phaser Graphics 每帧重绘（立即模式，无对象级 sprite）；三层 Graphics 分工：
+// 主场景：霓虹几何渲染（T4.3，T6a 敌人渲染升级为预烘焙纹理 + 池化 Image，结构不变）。
+// SimState → 混合式每帧重绘：敌人本体/白闪/血条走 enemyRenderer 的池化 Image（零矢量
+// 三角化），其余保持 Graphics 立即模式。分层（depth 从低到高）：
 //   bg（depth 0）：静态背景，create 时一次性绘制星点/网格/结界光带，不逐帧重算；
-//   gfx（depth 1，常规混合）：地面区域、墙、宝石/修复包、敌人、角色本体、HUD 条；
-//   glow（depth 2，ADD 叠加混合）：弹丸/光束/轨道射线/龙息锥/榴弹爆炸/角色光晕/死亡爆裂/
-//   枪口闪光/红 vignette。
+//   underGfx（depth 1，常规混合）：地面区域、榴弹落点提示、墙、修复包、Boss 光环/血条金框；
+//   敌人池化 Image（depth 2~2.16，enemyRenderer 管理）：本体 → 白闪剪影 → 血条槽 → 血条填充；
+//   overGfx（depth 3，常规混合）：角色本体、HUD 条；
+//   glow（depth 4，ADD 叠加混合）：meta VFX（光束/龙息锥/榴弹爆炸）/敌人状态特效
+//   （矢量或降级光环）/弹丸/角色光晕/死亡爆裂/枪口闪光/红 vignette。
 // 主循环对接：update 内 step（paused 时冻结模拟、渲染照常）→ drainEvents → 渲染当前帧。
 // 事件消费约定：全部事件逐个转发给 session.onEvent（src/ui 的 DOM 覆盖层注册）；
 // 场景内部消化：击杀计数（HUD 用）+ 视觉反馈（enemyKilled 死亡爆裂/Boss 冲击波、
@@ -24,6 +27,12 @@ import type { GameSession } from '../game/session';
 import { loadWeaponDefs } from '../data/weapons';
 import { loadEnemyTypes } from '../data/enemies';
 import {
+  AURA_POOL_CAP,
+  EnemyRenderer,
+  ENEMY_FLASH_MS,
+  STATUS_FX_VECTOR_THRESHOLD,
+} from './enemyRenderer';
+import {
   DRAGON_BREATH_VFX_PREFIX,
   DeathBurst,
   HEAT_BEAM_VFX_PREFIX,
@@ -34,7 +43,7 @@ import {
   RAIL_VFX_PREFIX,
   RingWaves,
   STATUS_EFFECT_COLORS,
-  darken,
+  COLOR_TRACK,
   drawStaticBackground,
   fillPoly,
   projectileStyle,
@@ -48,7 +57,6 @@ const WALL_THICKNESS = 20; // 墙体横条高度
 const WALL_BAR_MARGIN = 40; // 墙血条左右留边
 const WALL_BAR_HEIGHT = 8;
 const WALL_BAR_OFFSET = 20; // 墙血条距墙线的上移量
-const ENEMY_HP_BAR_HEIGHT = 4;
 const CHARACTER_RADIUS = 14;
 const HUD_X = 16;
 const HUD_Y = 12;
@@ -58,8 +66,6 @@ const XP_BAR_HEIGHT = 8;
 
 /** 城墙低血量警示阈值（<30% 常驻红色脉冲）。 */
 const WALL_LOW_PCT = 0.3;
-/** 敌人受击白闪时长 ms（hp 下降检测触发）。 */
-const ENEMY_FLASH_MS = 120;
 /** 城墙受击红闪时长 ms（与 wallDamaged 事件触发的震屏时长同量级）。 */
 const WALL_FLASH_MS = 150;
 /** meta VFX 留存 80ms（core 任务锁定常量），视图按剩余时间线性淡出。 */
@@ -75,12 +81,9 @@ const MORTAR_BLAST_FADE_MS = 320;
  */
 const DRAGON_CONE_VIEW_HOLD_MS = 150;
 
-const COLOR_TRACK = 0x1a1f2e; // 血条/经验条底槽
 const COLOR_XP_FILL = 0x8be9fd;
 const COLOR_CHARACTER = 0xffe066;
 const COLOR_CHARACTER_STROKE = 0xfff6c0; // 角色亮描边（霓虹高光）
-const COLOR_BOSS_RING = 0xffd24a; // Boss 旋转外圈光环
-const COLOR_BOSS_RING_INNER = 0xffe9b0;
 
 /** 武器定义表（HUD 武器列表行 + 灼热光束宽度取值用；数据表只加载一次、内容共享只读）。 */
 const WEAPON_DEFS = loadWeaponDefs();
@@ -115,15 +118,7 @@ function healthColor(pct: number): number {
   return (r << 16) | (g << 8) | b;
 }
 
-/** 敌人血条颜色：pct=1 → 绿，pct=0 → 红。 */
-function hpBarColor(pct: number): number {
-  const t = clamp01(pct);
-  const r = Math.round(255 * (1 - t));
-  const g = Math.round(40 + 180 * t);
-  return (r << 16) | (g << 8) | 0x28;
-}
-
-// 多边形顶点 scratch：预分配复用，避免每帧为每个敌人分配点对象（fill/strokePoints 需切片）。
+// 多边形顶点 scratch：预分配复用，避免每帧为每个敌人分配点对象（strokePoints 需切片）。
 const MAX_POLY_POINTS = 10;
 const polyScratch: Array<{ x: number; y: number }> = Array.from({ length: MAX_POLY_POINTS }, () => ({
   x: 0,
@@ -154,18 +149,6 @@ function starInto(cx: number, cy: number, r: number, rot = 0): number {
   return MAX_POLY_POINTS;
 }
 
-/** 正多边形填充（scratch 复用版：敌人热路径用）。 */
-function fillRegularPolygon(
-  g: Phaser.GameObjects.Graphics,
-  cx: number,
-  cy: number,
-  r: number,
-  sides: number,
-): void {
-  const n = regularPolyInto(cx, cy, r, sides);
-  g.fillPoints(polyScratch.slice(0, n), true);
-}
-
 /** 正多边形描边（scratch 复用版）。 */
 function strokeRegularPolygon(
   g: Phaser.GameObjects.Graphics,
@@ -176,12 +159,6 @@ function strokeRegularPolygon(
 ): void {
   const n = regularPolyInto(cx, cy, r, sides);
   g.strokePoints(polyScratch.slice(0, n), true);
-}
-
-/** 五角星填充。 */
-function fillStar(g: Phaser.GameObjects.Graphics, cx: number, cy: number, r: number): void {
-  starInto(cx, cy, r);
-  g.fillPoints(polyScratch, true);
 }
 
 /** 五角星描边。 */
@@ -216,57 +193,6 @@ function bezier(p0: number, pc: number, p1: number, t: number): number {
 
 // —— 敌人霓虹几何形 ——
 
-/**
- * Boss 旋转外圈光环：4 段宽微光弧 + 4 段亮弧同速正转，内圈细环反转（state.timeMs 驱动）。
- */
-function drawBossRings(g: Phaser.GameObjects.Graphics, e: Enemy, r: number, timeMs: number): void {
-  const spin = (timeMs / 1000) * 1.5;
-  const ringR = r + 9;
-  const arcLen = Math.PI / 3.2;
-  for (let pass = 0; pass < 2; pass++) {
-    g.lineStyle(pass === 0 ? 7 : 2.5, COLOR_BOSS_RING, pass === 0 ? 0.14 : 0.9);
-    for (let i = 0; i < 4; i++) {
-      const a0 = spin + (i * Math.PI) / 2;
-      g.beginPath();
-      g.arc(e.x, e.y, ringR, a0, a0 + arcLen);
-      g.strokePath();
-    }
-  }
-  const a1 = -spin * 1.7;
-  g.lineStyle(1.5, COLOR_BOSS_RING_INNER, 0.5);
-  g.beginPath();
-  g.arc(e.x, e.y, r + 4, a1, a1 + Math.PI * 1.4);
-  g.strokePath();
-}
-
-/** 按图鉴 shape 填充敌人几何形（color/alpha 由调用方给，白闪复用同一形状）。 */
-function fillEnemyShape(
-  g: Phaser.GameObjects.Graphics,
-  e: Enemy,
-  r: number,
-  color: number,
-  alpha: number,
-): void {
-  g.fillStyle(color, alpha);
-  switch (e.shape) {
-    case 'triangle':
-      fillRegularPolygon(g, e.x, e.y, r, 3);
-      break;
-    case 'square':
-      g.fillRect(e.x - r * 0.8, e.y - r * 0.8, r * 1.6, r * 1.6);
-      break;
-    case 'hexagon':
-      fillRegularPolygon(g, e.x, e.y, r, 6);
-      break;
-    case 'star':
-      fillStar(g, e.x, e.y, r);
-      break;
-    default:
-      g.fillCircle(e.x, e.y, r);
-      break;
-  }
-}
-
 /** 按图鉴 shape 描边敌人几何形（高饱和霓虹描边 / 微光外圈复用）。 */
 function strokeEnemyShape(
   g: Phaser.GameObjects.Graphics,
@@ -294,45 +220,6 @@ function strokeEnemyShape(
       g.strokeCircle(e.x, e.y, r);
       break;
   }
-}
-
-/**
- * 画一只敌人：霓虹几何风——暗色填充（图鉴色向暗底收缩）+ 高饱和描边 + 微光外圈；
- * Boss（星形）加旋转外圈光环 + 更醒目的血条（加宽加高 + 金色描边框）；
- * flashAlpha > 0 时叠加受击白闪（hp 下降检测，渲染层实现）；头顶细血条保留。
- */
-function drawEnemy(
-  g: Phaser.GameObjects.Graphics,
-  e: Enemy,
-  flashAlpha: number,
-  timeMs: number,
-): void {
-  const r = e.isBoss ? e.radius * 1.15 : e.radius;
-  if (e.isBoss) {
-    drawBossRings(g, e, r, timeMs);
-  }
-
-  // 微光外圈（宽幅低 alpha）→ 高饱和描边 → 暗色填充 → 受击白闪。
-  strokeEnemyShape(g, e, r + 2.5, 5, e.color, 0.16);
-  strokeEnemyShape(g, e, r, 2.5, e.color, 1);
-  fillEnemyShape(g, e, r - 1.2, darken(e.color, 0.3), 1);
-  if (flashAlpha > 0) {
-    fillEnemyShape(g, e, r - 1.2, 0xffffff, 0.85 * flashAlpha);
-  }
-
-  // 头顶血条（Boss 更醒目：加宽加高 + 金色描边框）。
-  const pct = e.maxHp > 0 ? clamp01(e.hp / e.maxHp) : 0;
-  const barW = e.isBoss ? e.radius * 2.8 : e.radius * 2;
-  const barH = e.isBoss ? 6 : ENEMY_HP_BAR_HEIGHT;
-  const barY = e.y - r - (e.isBoss ? 22 : 10);
-  if (e.isBoss) {
-    g.lineStyle(1.5, COLOR_BOSS_RING, 0.55);
-    g.strokeRect(e.x - barW / 2 - 2, barY - 2, barW + 4, barH + 4);
-  }
-  g.fillStyle(COLOR_TRACK, 1);
-  g.fillRect(e.x - barW / 2, barY, barW, barH);
-  g.fillStyle(hpBarColor(pct), 1);
-  g.fillRect(e.x - barW / 2, barY, barW * pct, barH);
 }
 
 /**
@@ -678,8 +565,11 @@ export class MainScene extends Phaser.Scene {
   private readonly fxEnabled: boolean;
 
   private bgGfx!: Phaser.GameObjects.Graphics; // 静态背景（一次性）
-  private gfx!: Phaser.GameObjects.Graphics; // 常规混合：场景实体
+  private underGfx!: Phaser.GameObjects.Graphics; // 常规混合·底层：区域/墙/修复包/Boss 覆盖层
+  private overGfx!: Phaser.GameObjects.Graphics; // 常规混合·顶层：角色/HUD 条
   private glowGfx!: Phaser.GameObjects.Graphics; // ADD 混合：发光层
+  /** 敌人渲染器（T6a）：预烘焙纹理 + 池化 Image（本体/白闪/血条/降级光环）。 */
+  private enemyRenderer!: EnemyRenderer;
   private hudText!: Phaser.GameObjects.Text;
   /** 击杀数：从 enemyKilled 事件累计（视图侧派生值，随 state 替换重置）。 */
   private kills = 0;
@@ -721,10 +611,17 @@ export class MainScene extends Phaser.Scene {
   create(): void {
     this.cameras.main.setBackgroundColor('#05050d');
     this.bgGfx = this.add.graphics().setDepth(0);
-    this.gfx = this.add.graphics().setDepth(1);
-    this.glowGfx = this.add.graphics().setDepth(2).setBlendMode(Phaser.BlendModes.ADD);
+    this.underGfx = this.add.graphics().setDepth(1);
+    this.overGfx = this.add.graphics().setDepth(3);
+    this.glowGfx = this.add.graphics().setDepth(4).setBlendMode(Phaser.BlendModes.ADD);
     const layout = this.session.state.layout;
     drawStaticBackground(this.bgGfx, layout.width, layout.height, layout.wallLineY);
+    // 敌人渲染池（T6a）：create 时按图鉴逐类型烘焙本体/白闪/光环纹理，并建满固定容量池。
+    // 容量 = maxEnemies + 34 余量（core 实体护栏封顶 350 → 池 384）；上限 512 防坏配置爆池。
+    const cfgMax = this.session.state.config.maxEnemies;
+    const poolCap =
+      Number.isFinite(cfgMax) && cfgMax > 0 ? Math.min(cfgMax + 34, 512) : 384;
+    this.enemyRenderer = new EnemyRenderer(this, ENEMY_TYPES, poolCap, AURA_POOL_CAP);
     this.hudText = this.add
       .text(HUD_X, HUD_Y, '', {
         fontFamily: 'Consolas, "Courier New", monospace',
@@ -893,43 +790,51 @@ export class MainScene extends Phaser.Scene {
     this.lastProjectileId = maxId;
   }
 
-  /** 霓虹几何渲染当前帧：Graphics 立即模式整帧重绘（bg 静态层不重绘）。 */
+  /**
+   * 霓虹几何渲染当前帧（bg 静态层不重绘）：underGfx/overGfx/glow 三个 Graphics 立即
+   * 模式整帧重绘 + 敌人走 enemyRenderer 池化 Image（T6a，零矢量三角化）。
+   */
   private renderWorld(): void {
-    const g = this.gfx;
+    const under = this.underGfx;
+    const over = this.overGfx;
     const glow = this.glowGfx;
     const s = this.session.state;
-    g.clear();
+    under.clear();
+    over.clear();
     glow.clear();
 
     this.trackEnemyHits(s);
     this.detectNewProjectiles(s);
 
-    // —— 常规混合层：地面区域 → 榴弹落点提示 → 墙 → 修复包 → 敌人 → 角色 → HUD 条 ——
-    this.drawZones(g, s);
-    this.drawMortarGuides(g, s);
-    this.drawWall(g, s);
-    this.drawDrops(g, glow, s);
+    // —— 常规混合·底层：地面区域 → 榴弹落点提示 → 墙 → 修复包 → Boss 光环/血条金框 ——
+    this.drawZones(under, s);
+    this.drawMortarGuides(under, s);
+    this.drawWall(under, s);
+    this.drawDrops(under, glow, s);
+    this.enemyRenderer.drawBossOverlays(under, s);
 
-    for (let i = 0; i < s.enemies.length; i++) {
-      const e = s.enemies[i];
-      if (e.dead) {
-        continue; // 尸体标记：渲染必须跳过
-      }
-      const until = this.flashUntil.get(e.id) ?? 0;
-      const flash = until > s.timeMs ? clamp01((until - s.timeMs) / ENEMY_FLASH_MS) : 0;
-      drawEnemy(g, e, flash, s.timeMs);
-    }
+    // —— 池化敌人 Image（本体/白闪/血条，数组序 = 槽序 = 绘制序，与原立即模式一致）——
+    // 状态特效降级开关：状态敌 ≤ 阈值逐敌绘制矢量微粒/冰晶（视觉最丰富）；超阈值整体
+    // 切换为预烘焙光环贴图（ADD 池化 Image + 正弦脉动），高密度局不做大量矢量 tessellation。
+    const useVectorStatusFx =
+      this.enemyRenderer.countStatusEnemies(s) <= STATUS_FX_VECTOR_THRESHOLD;
+    this.enemyRenderer.sync(s, this.flashUntil, s.timeMs, !useVectorStatusFx);
 
-    this.drawCharacter(g, glow, s);
+    // —— 常规混合·顶层：角色（在敌人之后画，与原层级一致） ——
+    this.drawCharacter(over, glow, s);
 
     // —— ADD 发光层：meta VFX（光束/龙息锥）→ 敌人状态特效 → 弹丸 → 池化粒子 → 红 vignette ——
     this.drawMetaVfx(glow, s);
-    for (let i = 0; i < s.enemies.length; i++) {
-      const e = s.enemies[i];
-      if (!e.dead && e.effects.length > 0) {
-        drawEnemyStatusEffects(glow, e, s.timeMs);
+    if (useVectorStatusFx) {
+      for (let i = 0; i < s.enemies.length; i++) {
+        const e = s.enemies[i];
+        if (!e.dead && e.effects.length > 0) {
+          drawEnemyStatusEffects(glow, e, s.timeMs);
+        }
       }
     }
+    // （降级路径：状态光环已由 EnemyRenderer 以池化 ADD Image 绘制在本层；ADD 混合
+    // 可交换，与弹丸的层内先后顺序不影响合成结果。）
     for (let i = 0; i < s.projectiles.length; i++) {
       const p = s.projectiles[i];
       if (!p.dead) {
@@ -1476,7 +1381,7 @@ export class MainScene extends Phaser.Scene {
 
     const need = xpToNext(s);
     const xpPct = need > 0 && Number.isFinite(need) ? clamp01(s.progress.xp / need) : 0;
-    const g = this.gfx;
+    const g = this.overGfx;
     g.fillStyle(COLOR_TRACK, 1);
     g.fillRect(HUD_X, XP_BAR_Y, XP_BAR_WIDTH, XP_BAR_HEIGHT);
     g.fillStyle(COLOR_XP_FILL, 1);
