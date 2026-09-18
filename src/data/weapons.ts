@@ -34,6 +34,7 @@ function genericCardsFor(weaponId: string, cards: CardData[]): WeaponCardDef[] {
       kind: c.kind,
       value: c.value,
       maxCount: c.maxCount,
+      hardMax: c.hardMax,
       once: c.once,
       excludes: c.excludes,
       requiresCard: c.requires ? (c.requires[weaponId] ?? null) : null,

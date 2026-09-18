@@ -32,6 +32,17 @@ function repCard(id: string, maxCount: number): CardDef {
     params: [{ key: id, value: 1, op: 'add' }],
   };
 }
+/** 牌夹具：maxCount + hardMax 双上限牌（解锁前 maxCount、突破后 hardMax 永久封顶）。 */
+function hardMaxCard(id: string, maxCount: number, hardMax: number): CardDef {
+  return {
+    id,
+    name: `硬上限牌${id}`,
+    description: `${id} 效果（可叠 ${maxCount} 次，突破后上限 ${hardMax} 次）`,
+    maxCount,
+    hardMax,
+    params: [{ key: id, value: 1, op: 'add' }],
+  };
+}
 /** 牌夹具：无上限数值牌（如伤害强化）。 */
 function statCard(id: string): CardDef {
   return { id, name: `数值牌${id}`, description: `${id} 乘区`, params: [{ key: 'damage', value: 1.3, op: 'mul' }] };
@@ -199,6 +210,63 @@ describe('rollUpgradeOptions 候选池构成', () => {
         description: 'dmg_up 乘区',
       });
     }
+  });
+
+  it('解锁后 hardMax 硬上限：达硬上限的牌不重现；未达上限的牌照常进池（解锁前后一致）', () => {
+    const defs: Record<string, WeaponDef> = {
+      wh: makeDef('wh', [hardMaxCard('wh_hm', 2, 4), statCard('dmg_up')]),
+      wa: makeDef('wa', [statCard('dmg_up')]),
+      wb: makeDef('wb', [statCard('dmg_up')]),
+      wc: makeDef('wc', [statCard('dmg_up')]),
+    };
+    const state = createSimState(1);
+    state.rng = zeroRng();
+    ownWeapon(state, 'wh', 10, { wh_hm: 4, dmg_up: 6 }); // wh_hm 已达 hardMax 4
+    ownWeapon(state, 'wa', 10, { dmg_up: 10 });
+    ownWeapon(state, 'wb', 10, { dmg_up: 10 });
+    ownWeapon(state, 'wc', 10, { dmg_up: 10 });
+    expect(allMaxedUnlocked(state, defs)).toBe(true);
+
+    const options = rollUpgradeOptions(state, defs, 99);
+    const whCards = options
+      .filter((o) => o.kind === 'card' && o.weaponId === 'wh')
+      .map((o) => (o as { cardId: string }).cardId);
+    expect(whCards).toEqual(['dmg_up']); // wh_hm 达硬上限：解锁后也不重现
+
+    // 解锁前同样生效：持有数达到 hardMax 即移除（即便未达 maxCount 语义的解锁门槛）。
+    const early = createSimState(1);
+    early.rng = zeroRng();
+    ownWeapon(early, 'wh', 4, { wh_hm: 4 });
+    const earlyOptions = rollUpgradeOptions(early, defs, 99);
+    expect(earlyOptions.filter((o) => o.kind === 'card' && (o as { cardId: string }).cardId === 'wh_hm')).toHaveLength(0);
+  });
+
+  it('解锁后文案清洗只对无 hardMax 的牌执行：hardMax 牌保留两段上限说明', () => {
+    const defs: Record<string, WeaponDef> = {
+      wh: makeDef('wh', [hardMaxCard('wh_hm', 2, 4), repCard('wh_rep', 2)]),
+      wa: makeDef('wa', [statCard('dmg_up')]),
+      wb: makeDef('wb', [statCard('dmg_up')]),
+      wc: makeDef('wc', [statCard('dmg_up')]),
+    };
+    const state = createSimState(1);
+    state.rng = zeroRng();
+    ownWeapon(state, 'wh', 10, { wh_hm: 2, wh_rep: 2 }); // 双牌均达解锁前上限
+    ownWeapon(state, 'wa', 10, { dmg_up: 10 });
+    ownWeapon(state, 'wb', 10, { dmg_up: 10 });
+    ownWeapon(state, 'wc', 10, { dmg_up: 10 });
+
+    const options = rollUpgradeOptions(state, defs, 99);
+    const hmOpt = options.find(
+      (o) => o.kind === 'card' && o.weaponId === 'wh' && (o as { cardId: string }).cardId === 'wh_hm',
+    ) as Extract<UpgradeOption, { kind: 'card' }> | undefined;
+    expect(hmOpt).toBeDefined(); // hardMax 4 > 持有 2：解锁后重现
+    expect(hmOpt!.description).toBe('wh_hm 效果（可叠 2 次，突破后上限 4 次）'); // 文案原样保留
+
+    const repOpt = options.find(
+      (o) => o.kind === 'card' && o.weaponId === 'wh' && (o as { cardId: string }).cardId === 'wh_rep',
+    ) as Extract<UpgradeOption, { kind: 'card' }> | undefined;
+    expect(repOpt).toBeDefined(); // 无 hardMax：解锁后上限失效重现
+    expect(repOpt!.description).toBe('wh_rep ×N'); // 照旧清洗（上限字样已剥除）
   });
 
   it('count 参数可覆盖默认 3；候选不足时返回全池不抛错；count<=0 返回空', () => {
@@ -619,7 +687,7 @@ describe('牌池升级流完整生命周期：0级起步 -> 选牌等级提升 -
       expect(sanitizeUnlimitedCardDescription('目标 hp ≥ 60% 上限时伤害 ×1.5')).toBe('目标 hp ≥ 60% 上限时伤害 ×1.5');
     });
 
-    it('真实表解锁无限牌池后：卡牌描述无上限字样，且已持有分裂牌（split_shot）不再出现', () => {
+    it('真实表解锁无限牌池后：无 hardMax 牌文案照旧清洗、hardMax 牌保留两段上限，且已持有分裂牌（split_shot）不再出现', () => {
       const realDefs = loadWeaponDefs();
       const state = createSimState(1);
       // 拥有 4 把武器且全部满 10 级
@@ -641,11 +709,19 @@ describe('牌池升级流完整生命周期：0级起步 -> 选牌等级提升 -
       const splitOptions = options.filter((o) => o.kind === 'card' && o.cardId === 'split_shot');
       expect(splitOptions).toHaveLength(0);
 
-      // 2. 依然包含多射等可无限突破牌，但其 description 中的上限说明已被剥除
+      // 2. multi_shot 持有 4 < hardMax 8：解锁后依然进池，且因 hardMax 永久生效，
+      //    两段上限文案原样保留（不做突破清洗）。
       const multiMortar = options.find((o) => o.kind === 'card' && o.weaponId === 'mortar' && o.cardId === 'multi_shot');
       expect(multiMortar).toBeDefined();
-      expect(multiMortar!.description).not.toContain('可叠 4 次');
-      expect(multiMortar!.description).toBe('同时多发射 1 颗弹体');
+      expect(multiMortar!.description).toBe('同时多发射 1 颗弹体（可叠 4 次，突破后上限 8 次）');
+
+      // 3. 不变式：凡保留「可叠 n 次」（带数字）文案的选项必是 hardMax 牌（带「突破后上限」两段说明）；
+      //    dmg_up 等「（可叠加，上限 n 次）」措辞为纯 hardMax 牌，不在此列。
+      for (const o of options) {
+        if (o.kind === 'card' && /（?可叠\s*\d+\s*次/.test(o.description)) {
+          expect(o.description).toContain('突破后上限');
+        }
+      }
     });
   });
 });

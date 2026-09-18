@@ -42,6 +42,9 @@ export interface WeaponCardDef {
   value?: number;
   /** 解锁（集满 4 把全 10 级）前可持有上限；缺省 = 无上限（受 10 级总量自然约束）。 */
   maxCount?: number;
+  /** 硬上限：无论解锁前后，持有张数达到 hardMax 即从牌池移除（与 maxCount 的语义区别：
+   *  maxCount 只在解锁前生效、突破后失效；hardMax 永远生效，防无限牌池下乘区/弹量失控）。 */
+  hardMax?: number;
   /** 纯布尔一次性牌：true = 拿到一张后从牌池移除（解锁前后一致，重复拿无意义）。 */
   once?: boolean;
   /** 互斥：持有本牌（count>0）期间，从该武器牌池移除列出的牌 id（如龙息模式 → 多射/连射/分裂）。 */
@@ -70,7 +73,8 @@ export function isWeaponMaxed(state: SimState, weaponId: string, defs: Record<st
 
 /**
  * 无限牌池解锁判定（用户拍板）：拥有武器数 ≥ config.maxWeaponSlots 且【全部】达到 maxLevel。
- * 解锁后所有数量上限失效（once 布尔牌仍拿一次即移除）；武器栏上限不变。
+ * 解锁后所有数量上限失效（once 布尔牌仍拿一次即移除；hardMax 硬上限例外，永远生效）；
+ * 武器栏上限不变。
  */
 export function allMaxedUnlocked(state: SimState, defs: Record<string, { maxLevel?: number }>): boolean {
   const owned = Object.keys(state.weaponStates);
@@ -87,8 +91,9 @@ export function allMaxedUnlocked(state: SimState, defs: Record<string, { maxLeve
 
 /**
  * 某武器当前的可用牌池（def.cards 目录序，确定性）：逐张按
- * ① once 已持有 → 移除（解锁前后一致）；② 解锁前 maxCount 达上限 → 移除；
- * ③ requiresCard 前置未满足 → 移除；④ 被已持有牌的 excludes 互斥 → 移除。
+ * ① once/split_shot 已持有 → 移除（解锁前后一致）；② 解锁前 maxCount 达上限 → 移除；
+ * ③ hardMax 硬上限达上限 → 移除（解锁前后一致，与 maxCount 的区别：不随无限牌池解锁失效）；
+ * ④ requiresCard 前置未满足 → 移除；⑤ 被已持有牌的 excludes 互斥 → 移除。
  * 「未满级武器才有牌」的门由 upgrade.ts 的 isWeaponMaxed 把守（本函数纯牌级规则）。
  */
 export function availableCards(def: { cards: WeaponCardDef[] }, ws: { cards: Record<string, number> }, unlocked: boolean): WeaponCardDef[] {
@@ -117,6 +122,9 @@ export function availableCards(def: { cards: WeaponCardDef[] }, ws: { cards: Rec
     }
     if (!unlocked && card.maxCount !== undefined && count >= card.maxCount) {
       continue; // 解锁前：达数量上限（解锁后上限全失效）
+    }
+    if (card.hardMax !== undefined && count >= card.hardMax) {
+      continue; // 硬上限：达 hardMax 即移除（解锁前后一致——maxCount 突破后失效，hardMax 永远生效）
     }
     if (card.requiresCard && (held[card.requiresCard] ?? 0) <= 0) {
       continue; // 前置未满足（前置条件解锁后仍生效）

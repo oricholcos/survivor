@@ -4,7 +4,8 @@
 // - card：武器牌（绑定某把已拥有武器；通用牌与专属牌统一走 def.cards 目录）。
 // 生成规则：每把未满级武器 → 其可用牌池（尊重上限/前置/互斥/一次性）；集满
 // maxWeaponSlots 把且全部满级 → 无限牌池解锁：所有数量上限失效（可叠/带参数牌无限
-// 重复），纯布尔 once 牌仍拿一次即从池移除；已满级武器解锁前不进候选。
+// 重复），纯布尔 once 牌仍拿一次即从池移除，hardMax 硬上限例外（永远生效）；已满级
+// 武器解锁前不进候选。
 // 纯 TypeScript，禁止 import phaser 与任何 DOM/BOM。
 // 随机契约：抽取全流程只用 state.rng（同种子同状态产出可复现），禁用 Math.random。
 
@@ -92,7 +93,9 @@ export function rollUpgradeOptions(state: SimState, defs: Record<string, WeaponD
     const cards = availableCards(def, ws, unlocked);
     for (let c = 0; c < cards.length; c++) {
       const card = cards[c];
-      const desc = unlocked ? sanitizeUnlimitedCardDescription(card.description) : card.description;
+      // 文案清洗只对没有 hardMax 的牌执行：hardMax 牌的上限在突破后依然真实存在，
+      // 描述中的两段上限说明（可叠 n 次 / 突破后上限 m 次）必须原样保留，否则误导玩家。
+      const desc = unlocked && card.hardMax === undefined ? sanitizeUnlimitedCardDescription(card.description) : card.description;
       candidates.push({
         kind: 'card',
         weaponId,

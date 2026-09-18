@@ -20,6 +20,7 @@
       "name": "折射+1",
       "description": "每次命中且折射计数>0时，折向300px内最近未受击敌人（折射-1，穿透-1，上限4次）",
       "maxCount": 4,
+      "hardMax": 4,
       "params": [
         { "key": "refract", "value": 1, "op": "add" }
       ]
@@ -27,8 +28,9 @@
     {
       "id": "pierce_up",
       "name": "贯通+1",
-      "description": "穿透 +1（可叠 4 次）",
+      "description": "穿透 +1（可叠 4 次，突破后上限 8 次）",
       "maxCount": 4,
+      "hardMax": 8,
       "params": [{ "key": "pierce", "value": 1, "op": "add" }]
     },
     {

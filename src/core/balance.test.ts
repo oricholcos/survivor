@@ -30,6 +30,8 @@
 //   T1 无尽经验需求 ×loopScale 重校准：升级需求随循环膨胀后自动玩家升级放缓，
 //   实测收敛点 674.6s（此前经验平顶时代为 ~800s 锚点）——下限断言 ≥560s 保持不变，
 //   不为凑 800s 锚点回调数值（收敛前移是本改动的预期效果）。
+//   T2 hardMax 叠牌硬上限：代理叠牌上限改为感知 hardMax（突破后连射 2→4、多射 4→8、
+//   伤害 5→12 等），实测收敛点 670.1s（Lv.43，loop=2）——下限断言 ≥560s 仍保持不变。
 // 性能：全部对局（3 campaign + 1 endless）墙钟总时长（单测运行通常 < 18s，全量并发回归放宽至 < 30s 防 CPU 争用抖动）。
 //
 // 数值契约：本文件零平衡数值——全部读 src/data 的 JSON（waves/enemies/weapons/cards/config/
@@ -216,7 +218,8 @@ function chooseUpgrade(state: SimState, options: UpgradeOption[]): UpgradeOption
       const existingCount = ws !== undefined ? (ws.cards[o.cardId] ?? 0) : 0;
       const def = WEAPON_DEFS[o.weaponId];
       const cardDef = def?.cards.find((c) => c.id === o.cardId);
-      const limit = cardDef?.maxCount ?? 5;
+      // hardMax 硬上限解锁后依然生效：代理叠牌上限优先取 hardMax（缺省回退 maxCount ?? 5）。
+      const limit = cardDef?.hardMax ?? cardDef?.maxCount ?? 5;
       if (existingCount >= limit) {
         score = -10000;
       } else {

@@ -34,8 +34,9 @@
     {
       "id": "refract_up",
       "name": "折射+1",
-      "description": "主光束终点偏转 30° 续射半程（可叠层）",
+      "description": "主光束终点偏转 30° 续射半程（可叠 2 次，突破后上限 4 次）",
       "maxCount": 2,
+      "hardMax": 4,
       "params": [{ "key": "refraction", "value": 1, "op": "set" }]
     },
     {

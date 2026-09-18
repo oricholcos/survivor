@@ -2,8 +2,8 @@
 // getCardCount 计数、buildWeaponStats 乘区叠乘（×1.3^n / ÷1.3^n / range 逐键 / params
 // set·add·mul·div）与目录序确定性、getWeaponStats 委托、isWeaponMaxed（10 级封顶）、
 // allMaxedUnlocked 解锁判定（3 把满 ≠ 解锁 / 4 把满 = 解锁 / 有一把未满 ≠ 解锁）、
-// availableCards 池规则（maxCount 上限 / once 布尔牌移除 / requiresCard 前置 / excludes
-// 互斥·龙息模式 / 解锁后上限全失效但 once 仍移除）、dotTickMultiplier。
+// availableCards 池规则（maxCount 上限 / hardMax 硬上限 / once 布尔牌移除 / requiresCard 前置 / excludes
+// 互斥·龙息模式 / 解锁后 maxCount 失效但 once·hardMax 仍移除）、dotTickMultiplier。
 // 夹具用手写字面量（结构同真实表），不依赖数据层。
 import { describe, expect, it } from 'vitest';
 import {
@@ -230,6 +230,21 @@ describe('availableCards 池规则', () => {
     const ws = { cards: { multi: 4 } };
     expect(ids(def, ws, false)).toEqual(['dmg']); // multi 达上限 → 移除
     expect(ids(def, ws, true)).toEqual(['multi', 'dmg']); // 解锁后：上限失效
+  });
+
+  it('hardMax 硬上限：达上限的牌解锁前后都不出现（与 maxCount 的区别：不随解锁失效）', () => {
+    const def = makeCardDef([
+      { id: 'dmg', name: '伤害强化', description: '', hardMax: 12, params: [] },
+      { id: 'multi', name: '多射+1', description: '', maxCount: 4, hardMax: 8, params: [] },
+    ]);
+    // 双牌均达 hardMax：解锁前后一律移除。
+    const wsFull = { cards: { dmg: 12, multi: 8 } };
+    expect(ids(def, wsFull, false)).toEqual([]);
+    expect(ids(def, wsFull, true)).toEqual([]);
+    // 未达 hardMax：multi 持有 6 > maxCount 4 → 解锁前移除、解锁后放行（直到 hardMax 8）。
+    const wsMid = { cards: { dmg: 11, multi: 6 } };
+    expect(ids(def, wsMid, false)).toEqual(['dmg']);
+    expect(ids(def, wsMid, true)).toEqual(['dmg', 'multi']);
   });
 
   it('once 布尔牌：拿到一张即从池移除（解锁前后一致）；未拿则在池', () => {

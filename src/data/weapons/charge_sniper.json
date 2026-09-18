@@ -16,8 +16,9 @@
     {
       "id": "pierce_shot",
       "name": "贯穿弹",
-      "description": "穿透 +2（可重复获取）",
+      "description": "穿透 +2（可叠 2 次，突破后上限 4 次）",
       "maxCount": 2,
+      "hardMax": 4,
       "params": [
         { "key": "pierceShot", "value": 1, "op": "set" },
         { "key": "pierce", "value": 2, "op": "add" }
@@ -37,9 +38,10 @@
     {
       "id": "execute_up",
       "name": "处决强化",
-      "description": "斩首倍率 +0.25（可重复获取）",
+      "description": "斩首倍率 +0.25（可叠 2 次，突破后上限 4 次）",
       "requiresCard": "headshot",
       "maxCount": 2,
+      "hardMax": 4,
       "params": [{ "key": "headshotMultiplier", "value": 0.25, "op": "add" }]
     },
     {

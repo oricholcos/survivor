@@ -35,8 +35,9 @@
     {
       "id": "bounce_up",
       "name": "弹丸反弹",
-      "description": "弹丸死亡后向范围内新的敌人反弹一次（可叠 2 次）",
+      "description": "弹丸死亡后向范围内新的敌人反弹一次（可叠 2 次，突破后上限 4 次）",
       "maxCount": 2,
+      "hardMax": 4,
       "params": [
         { "key": "bounce", "value": 1, "op": "set" },
         { "key": "bounceCount", "value": 1, "op": "add" }

@@ -20,8 +20,9 @@
     {
       "id": "bounce_up",
       "name": "弹跳+1",
-      "description": "弹跳次数 +1（可叠 5 次）",
+      "description": "弹跳次数 +1（可叠 5 次，突破后上限 8 次）",
       "maxCount": 5,
+      "hardMax": 8,
       "params": [{ "key": "chainCount", "value": 1, "op": "add" }]
     },
     {
@@ -55,8 +56,9 @@
     {
       "id": "link_stable",
       "name": "链路稳定",
-      "description": "伤害递减系数 +0.05（可叠 3 次）",
+      "description": "伤害递减系数 +0.05（可叠 3 次，突破后上限 4 次）",
       "maxCount": 3,
+      "hardMax": 4,
       "params": [{ "key": "falloff", "value": 0.05, "op": "add" }]
     }
   ]

@@ -22,6 +22,8 @@ export interface CardData {
   applyTo: string[];
   /** 解锁前可持有上限；缺省 = 无上限。 */
   maxCount?: number;
+  /** 硬上限：解锁前后都生效（达到即从牌池移除），防无限牌池下数值/弹量失控。 */
+  hardMax?: number;
   /** 纯布尔一次性牌：拿到一张后从牌池移除。 */
   once?: boolean;
   /** 互斥：持有本牌期间从该武器牌池移除的牌 id。 */
