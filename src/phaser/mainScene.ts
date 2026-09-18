@@ -1,12 +1,14 @@
-// 主场景：霓虹几何渲染（T4.3，T6a 敌人渲染升级为预烘焙纹理 + 池化 Image，结构不变）。
+// 主场景：霓虹几何渲染（T4.3；T6a 敌人 / T6b 弹丸渲染升级为预烘焙纹理 + 池化 Image，结构不变）。
 // SimState → 混合式每帧重绘：敌人本体/白闪/血条走 enemyRenderer 的池化 Image（零矢量
-// 三角化），其余保持 Graphics 立即模式。分层（depth 从低到高）：
+// 三角化），弹丸走 projectileRenderer 的池化 ADD Image（零矢量三角化），其余保持 Graphics
+// 立即模式。分层（depth 从低到高）：
 //   bg（depth 0）：静态背景，create 时一次性绘制星点/网格/结界光带，不逐帧重算；
 //   underGfx（depth 1，常规混合）：地面区域、榴弹落点提示、墙、修复包、Boss 光环/血条金框；
 //   敌人池化 Image（depth 2~2.16，enemyRenderer 管理）：本体 → 白闪剪影 → 血条槽 → 血条填充；
 //   overGfx（depth 3，常规混合）：角色本体、HUD 条；
 //   glow（depth 4，ADD 叠加混合）：meta VFX（光束/龙息锥/榴弹爆炸）/敌人状态特效
-//   （矢量或降级光环）/弹丸/角色光晕/死亡爆裂/枪口闪光/红 vignette。
+//   （矢量或降级光环）/弹丸池化 Image（projectileRenderer，T6b）/角色光晕/死亡爆裂/
+//   枪口闪光/红 vignette。
 // 主循环对接：update 内 step（paused 时冻结模拟、渲染照常）→ drainEvents → 渲染当前帧。
 // 事件消费约定：全部事件逐个转发给 session.onEvent（src/ui 的 DOM 覆盖层注册）；
 // 场景内部消化：击杀计数（HUD 用）+ 视觉反馈（enemyKilled 死亡爆裂/Boss 冲击波、
@@ -22,7 +24,7 @@ import type { RailVfx } from '../core/behaviors/behavior_piercingBolt';
 import type { MortarBlastVfx } from '../core/behaviors/behavior_mortar';
 import type { PrismZapSegment } from '../core/behaviors/behavior_prismChain';
 import type { GameEvent } from '../core/events';
-import type { Enemy, Projectile, SimState } from '../core/types';
+import type { Enemy, SimState } from '../core/types';
 import type { GameSession } from '../game/session';
 import { loadWeaponDefs } from '../data/weapons';
 import { loadEnemyTypes } from '../data/enemies';
@@ -32,6 +34,7 @@ import {
   ENEMY_FLASH_MS,
   STATUS_FX_VECTOR_THRESHOLD,
 } from './enemyRenderer';
+import { ProjectileRenderer } from './projectileRenderer';
 import {
   DRAGON_BREATH_VFX_PREFIX,
   DeathBurst,
@@ -44,11 +47,10 @@ import {
   RingWaves,
   STATUS_EFFECT_COLORS,
   COLOR_TRACK,
+  bezier,
   drawStaticBackground,
-  fillPoly,
   projectileStyle,
   zoneColor,
-  type ProjectileStyle,
 } from './fx';
 
 // —— 布局/样式常量（视图层允许硬编码；页面深色底 #05050d） ——
@@ -74,6 +76,13 @@ const META_VFX_FADE_MS = 80;
 const RAIL_VFX_FADE_MS = 100;
 /** 榴弹爆炸 VFX 留存 320ms（与 core MORTAR_BLAST_VFX_MS 一致），淡出与冲击环扩张共用。 */
 const MORTAR_BLAST_FADE_MS = 320;
+/**
+ * 榴弹爆炸中心闪光的 glow 层活动实例上限（T6b）：meta 列表由 core 滚动淘汰过期条目
+ * （数组按入队序排列），但留存窗口内条目数本身无界——视图侧只画最近 32 条（跳过最旧，
+ * 与 DeathBurst/RingWaves 等池类的「超限丢弃最旧」语义一致），中心闪光至多 2 个圆/条，
+ * 封顶高密度连爆帧的矢量绘制量。冲击环入池另由 RingWaves 自身容量兜底。
+ */
+const MORTAR_BLAST_DRAW_CAP = 32;
 /**
  * 龙息锥视图侧驻留时长：core 的 dragon_breath meta 仅留存 80ms，而喷射 tick 间隔 150ms，
  * 逐帧淡出会出现「锥形闪烁有间隙」的观感——视图在每次读到新鲜 meta 时把本地驻留延长到
@@ -183,12 +192,6 @@ function strokeLine(
   g.moveTo(x1, y1);
   g.lineTo(x2, y2);
   g.strokePath();
-}
-
-/** 二次贝塞尔分量（迫击榴弹的视觉下坠弧线用）。 */
-function bezier(p0: number, pc: number, p1: number, t: number): number {
-  const u = 1 - t;
-  return u * u * p0 + 2 * u * t * pc + t * t * p1;
 }
 
 // —— 敌人霓虹几何形 ——
@@ -397,166 +400,6 @@ export function drawEnemyStatusEffects(
   }
 }
 
-// —— 弹丸霓虹形态（behavior → 形状/颜色映射，配色表见 fx.ts） ——
-
-/** 直线型弹丸（贯穿长条 / 狙击长针）：外圈泛光粗线 + 内芯亮线 + 弹头白热点。 */
-function drawBolt(
-  g: Phaser.GameObjects.Graphics,
-  p: Projectile,
-  nx: number,
-  ny: number,
-  st: ProjectileStyle,
-  length: number,
-  outerW: number,
-  coreW: number,
-): void {
-  const tailX = p.x - nx * length * 0.4;
-  const tailY = p.y - ny * length * 0.4;
-  const headX = p.x + nx * length * 0.6;
-  const headY = p.y + ny * length * 0.6;
-  strokeLine(g, tailX, tailY, headX, headY, outerW, st.outer, 0.22);
-  strokeLine(g, tailX, tailY, headX, headY, coreW, st.core, 1);
-  g.fillStyle(st.hot, 0.9);
-  g.fillCircle(headX, headY, coreW * 0.8 + 1);
-}
-
-/** 导弹（品红带尾焰）：速度反方向三节渐隐尾焰圆 + 弹体亮芯，弹头白热点。 */
-function drawMissile(
-  g: Phaser.GameObjects.Graphics,
-  p: Projectile,
-  nx: number,
-  ny: number,
-  st: ProjectileStyle,
-  timeMs: number,
-): void {
-  const bomblet = p.data.bomblet === 1;
-  const scale = bomblet ? 0.7 : 1;
-  const flicker = 0.75 + 0.25 * Math.sin(timeMs / 30 + p.id * 1.7);
-  for (let k = 0; k < 3; k++) {
-    const d = (4 + k * 5.5) * scale;
-    g.fillStyle(st.outer, (0.4 - k * 0.12) * flicker);
-    g.fillCircle(p.x - nx * d, p.y - ny * d, (3.4 - k * 0.9) * scale);
-  }
-  const r = bomblet ? 2.2 : 3.2;
-  g.fillStyle(st.outer, 0.3);
-  g.fillCircle(p.x, p.y, r * 2.6);
-  g.fillStyle(st.core, 1);
-  g.fillCircle(p.x, p.y, r);
-  g.fillStyle(st.hot, 0.9);
-  g.fillCircle(p.x + nx * r * 0.6, p.y + ny * r * 0.6, r * 0.5);
-}
-
-/** 棱镜（紫电小菱形）：自旋菱形三层（泛光/亮芯/白核）+ 弹尾两段抖动小电弧。 */
-function drawPrism(
-  g: Phaser.GameObjects.Graphics,
-  p: Projectile,
-  nx: number,
-  ny: number,
-  st: ProjectileStyle,
-  timeMs: number,
-): void {
-  const spin = (timeMs / 1000) * 4 + p.id * 1.3;
-  const r = Math.max(4, p.radius * 1.5);
-  // 弹尾小电弧：横向抖动由 id 定相（确定性，视图纯装饰）。
-  const j1 = Math.sin(timeMs / 45 + p.id * 2.1) * 3;
-  const j2 = Math.sin(timeMs / 60 + p.id * 3.7) * 4;
-  const px = -ny;
-  const py = nx;
-  g.lineStyle(1.5, st.core, 0.5);
-  g.beginPath();
-  g.moveTo(p.x - nx * 4, p.y - ny * 4);
-  g.lineTo(p.x - nx * 9 + px * j1, p.y - ny * 9 + py * j1);
-  g.lineTo(p.x - nx * 14 + px * j2, p.y - ny * 14 + py * j2);
-  g.strokePath();
-  // 菱形本体三层。
-  fillPoly(g, p.x, p.y, r * 1.9, 4, spin, st.outer, 0.28);
-  fillPoly(g, p.x, p.y, r, 4, spin, st.core, 0.95);
-  fillPoly(g, p.x, p.y, r * 0.4, 4, spin, st.hot, 0.9);
-}
-
-/**
- * 迫击榴弹的视觉位置：母弹（data.bomblet !== 1）沿「角色→落点」的二次贝塞尔弧取点
- * （progress = 1 - ttl/总飞行时长），与虚线弧线提示/落点危险圈严格贴合；
- * 模拟弹体本身直线 noCollide 飞行、只在落点结算，视觉弧不参与任何判定。
- * 非（有效母弹）返回 null：按模拟位置画普通绿点。
- */
-function mortarVisualPos(p: Projectile, s: SimState): { x: number; y: number } | null {
-  if (p.behavior !== 'mortar' || p.data.bomblet === 1) {
-    return null;
-  }
-  const tx = p.data.tx;
-  const ty = p.data.ty;
-  if (!Number.isFinite(tx) || !Number.isFinite(ty)) {
-    return null;
-  }
-  const ch = s.character;
-  const speed = Math.hypot(p.vx, p.vy);
-  const dist = Math.hypot(tx - ch.x, ty - ch.y);
-  if (speed <= 1e-6 || dist <= 20) {
-    return null;
-  }
-  const totalMs = (dist / speed) * 1000;
-  const t = totalMs > 0 ? clamp01(1 - p.ttlMs / totalMs) : 0;
-  const h = Math.min(200, Math.max(60, dist * 0.32));
-  const cx = (ch.x + tx) / 2;
-  const cy = (ch.y + ty) / 2 - h;
-  return { x: bezier(ch.x, cx, tx, t), y: bezier(ch.y, cy, ty, t) };
-}
-
-/** 画一枚弹丸（ADD 发光层内）：按 behavior 分形态。未知行为回落暖白小亮点。 */
-function drawProjectile(
-  g: Phaser.GameObjects.Graphics,
-  p: Projectile,
-  s: SimState,
-): void {
-  const st = projectileStyle(p.behavior);
-  const speed = Math.hypot(p.vx, p.vy);
-  const nx = speed > 1e-6 ? p.vx / speed : 0;
-  const ny = speed > 1e-6 ? p.vy / speed : -1;
-
-  switch (p.behavior) {
-    case 'charge_sniper': // 亮白长针
-      drawBolt(g, p, nx, ny, st, 44, 6, 2);
-      g.fillStyle(st.core, 0.5);
-      g.fillCircle(p.x + nx * 22, p.y + ny * 22, 3.5);
-      break;
-    case 'scatter_shot': // 橙黄小点
-      g.fillStyle(st.outer, 0.22);
-      g.fillCircle(p.x, p.y, Math.max(2, p.radius) * 2.6);
-      g.fillStyle(st.core, 1);
-      g.fillCircle(p.x, p.y, Math.max(2.2, p.radius));
-      g.fillStyle(st.hot, 0.9);
-      g.fillCircle(p.x, p.y, Math.max(1.2, p.radius * 0.45));
-      break;
-    case 'homing_missile': // 品红带尾焰
-      drawMissile(g, p, nx, ny, st, s.timeMs);
-      break;
-    case 'prism_chain': // 紫电小菱形
-      drawPrism(g, p, nx, ny, st, s.timeMs);
-      break;
-    case 'mortar': {
-      // 绿色圆点：母弹画在视觉弧线上（与弧线提示/落点圈贴合），子榴弹按模拟位置。
-      const vp = mortarVisualPos(p, s);
-      const x = vp ? vp.x : p.x;
-      const y = vp ? vp.y : p.y;
-      const r = Math.max(2.6, p.radius);
-      g.fillStyle(st.outer, 0.22);
-      g.fillCircle(x, y, r * 2.4);
-      g.fillStyle(st.core, 1);
-      g.fillCircle(x, y, r);
-      g.fillStyle(st.hot, 0.85);
-      g.fillCircle(x, y, r * 0.45);
-      break;
-    }
-    default:
-      g.fillStyle(st.outer, 0.2);
-      g.fillCircle(p.x, p.y, Math.max(3, p.radius) * 2);
-      g.fillStyle(st.core, 1);
-      g.fillCircle(p.x, p.y, Math.max(2, p.radius));
-      break;
-  }
-}
-
 export class MainScene extends Phaser.Scene {
   private readonly session: GameSession;
   /** 调试速度：构造时捕获的每帧子步数（main.ts 读 ?speed=N 后经 setStepsPerFrame 注入）。 */
@@ -570,6 +413,8 @@ export class MainScene extends Phaser.Scene {
   private glowGfx!: Phaser.GameObjects.Graphics; // ADD 混合：发光层
   /** 敌人渲染器（T6a）：预烘焙纹理 + 池化 Image（本体/白闪/血条/降级光环）。 */
   private enemyRenderer!: EnemyRenderer;
+  /** 弹丸渲染器（T6b）：预烘焙纹理 + 池化 ADD Image（按 behavior 分弹种贴图）。 */
+  private projectileRenderer!: ProjectileRenderer;
   private hudText!: Phaser.GameObjects.Text;
   /** 击杀数：从 enemyKilled 事件累计（视图侧派生值，随 state 替换重置）。 */
   private kills = 0;
@@ -622,6 +467,13 @@ export class MainScene extends Phaser.Scene {
     const poolCap =
       Number.isFinite(cfgMax) && cfgMax > 0 ? Math.min(cfgMax + 34, 512) : 384;
     this.enemyRenderer = new EnemyRenderer(this, ENEMY_TYPES, poolCap, AURA_POOL_CAP);
+    // 弹丸渲染池（T6b）：create 时按 behavior 烘焙弹体贴图（glow 光晕烘进贴图），并建满
+    // 固定容量池（ADD Image）。容量 = maxProjectiles + 40 余量（core 硬上限 600 → 池 640，
+    // 吸收同帧内的瞬时超额）；上限 640 防坏配置爆池。
+    const cfgMaxProj = this.session.state.config.maxProjectiles;
+    const projPoolCap =
+      Number.isFinite(cfgMaxProj) && cfgMaxProj > 0 ? Math.min(cfgMaxProj + 40, 640) : 640;
+    this.projectileRenderer = new ProjectileRenderer(this, projPoolCap);
     this.hudText = this.add
       .text(HUD_X, HUD_Y, '', {
         fontFamily: 'Consolas, "Courier New", monospace',
@@ -792,7 +644,8 @@ export class MainScene extends Phaser.Scene {
 
   /**
    * 霓虹几何渲染当前帧（bg 静态层不重绘）：underGfx/overGfx/glow 三个 Graphics 立即
-   * 模式整帧重绘 + 敌人走 enemyRenderer 池化 Image（T6a，零矢量三角化）。
+   * 模式整帧重绘 + 敌人/弹丸走 enemyRenderer / projectileRenderer 池化 Image
+   * （T6a/T6b，零矢量三角化）。
    */
   private renderWorld(): void {
     const under = this.underGfx;
@@ -835,12 +688,9 @@ export class MainScene extends Phaser.Scene {
     }
     // （降级路径：状态光环已由 EnemyRenderer 以池化 ADD Image 绘制在本层；ADD 混合
     // 可交换，与弹丸的层内先后顺序不影响合成结果。）
-    for (let i = 0; i < s.projectiles.length; i++) {
-      const p = s.projectiles[i];
-      if (!p.dead) {
-        drawProjectile(glow, p, s);
-      }
-    }
+    // 弹丸（T6b）：池化 ADD Image 逐帧属性覆写（烘焙纹理含 glow 光晕），移除原逐弹
+    // 矢量重绘——活弹数百时 Graphics tessellation 是最大渲染瓶颈，现稳态零三角化零分配。
+    this.projectileRenderer.sync(s);
     this.deathBurst.draw(glow);
     this.waves.draw(glow);
     this.muzzle.draw(glow);
@@ -1115,7 +965,7 @@ export class MainScene extends Phaser.Scene {
 
   /**
    * 轨道贯穿炮射线（meta['rail_vfx:<id>'] = { segments, untilMs }，T5.2b hitscan 化）：
-   * 该武器不再发射弹丸（drawProjectile 已无其分支），开火表现 = 一道贯穿全场的闪现射线。
+   * 该武器不再发射弹丸，开火表现 = 一道贯穿全场的闪现射线。
    * 三层线段（宽青泛光 / 亮青内芯 / 白热芯）+ 射线根部白热枪口热点（hitscan 无弹丸、
    * 不再触发「新弹丸」枪口闪光，开火反馈画在射线根部），按剩余留存时间线性淡出。
    */
@@ -1160,6 +1010,16 @@ export class MainScene extends Phaser.Scene {
     }
     const st = projectileStyle('mortar');
     let maxUntil = this.blastWatermark;
+    // 活动条目计数：超上限时跳过最旧条目不画（数组按入队序排列，头部即最旧）。
+    let liveCount = 0;
+    for (let i = 0; i < list.length; i++) {
+      const b = list[i] as MortarBlastVfx | undefined;
+      if (b && Number.isFinite(b.x + b.y + b.radius + b.untilMs) && b.untilMs > s.timeMs) {
+        liveCount += 1;
+      }
+    }
+    const skipOldest = Math.max(0, liveCount - MORTAR_BLAST_DRAW_CAP);
+    let liveSeen = 0;
     for (let i = 0; i < list.length; i++) {
       const b = list[i] as MortarBlastVfx | undefined;
       if (!b || !Number.isFinite(b.x + b.y + b.radius + b.untilMs)) {
@@ -1171,6 +1031,9 @@ export class MainScene extends Phaser.Scene {
       const remain = b.untilMs - s.timeMs;
       if (remain <= 0) {
         continue; // 已过期：不再渲染（core 侧写入时滚动淘汰）
+      }
+      if (liveSeen++ < skipOldest) {
+        continue; // 超上限的最旧条目：跳过不画（确定性丢弃最旧）
       }
       if (b.untilMs > this.blastWatermark) {
         // 新爆炸：冲击波环入池，寿命 = 留存时长，终径 = 爆炸半径。

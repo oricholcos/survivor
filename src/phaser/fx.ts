@@ -127,6 +127,12 @@ export function mulberry32(seed: number): () => number {
   };
 }
 
+/** 二次贝塞尔分量（迫击榴弹的视觉下坠弧线用；T6b 自 mainScene 迁入共享）。 */
+export function bezier(p0: number, pc: number, p1: number, t: number): number {
+  const u = 1 - t;
+  return u * u * p0 + 2 * u * t * pc + t * t * p1;
+}
+
 /** 颜色向暗底色收缩：factor=0 → 纯暗底，1 → 原色（霓虹「暗填充+亮描边」用）。 */
 export function darken(color: number, factor: number): number {
   const baseR = 7;
