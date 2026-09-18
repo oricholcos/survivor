@@ -8,7 +8,7 @@
 
 import './behaviors/index'; // 副作用 import：触发 behavior_*.ts 自动发现与注册（新增行为零中心改动）
 import { getBehavior } from './behaviors/registry';
-import { pushEvent } from './events';
+import { pushSfxThrottled, SFX_PUSH_MIN_INTERVAL_MS } from './events';
 import { overheatFactor } from './effects';
 import { buildWeaponStats } from './cards';
 import type { WeaponCardDef } from './cards';
@@ -107,11 +107,12 @@ export function updateWeapons(state: SimState, dtMs: number, defs: Record<string
       // 音效事件（T4.1）：仅真实开火 push 一次 shoot（每波一次）。
       // 空转判定用文档契约「fire 可改写 cooldownMs（如无目标归 0）」：全部带目标判定的
       // 行为在无目标时把 cooldownMs 改写归 0，真实开火不改写——据此前后快照区分，
-      // 不改变任何模拟行为（高射速下的声音合并由音频侧节流器负责）。
+      // 不改变任何模拟行为。推送经 pushSfxThrottled 按模拟时间粗滤（30ms 内同名只留
+      // 首个），只影响 sfx 事件流密度、不影响开火与模拟结算；播放端节流器仍做细合并。
       const cooldownBeforeFire = ws.cooldownMs;
       getBehavior(def.behavior).fire(state, weaponId, stats);
       if (!(ws.cooldownMs === 0 && cooldownBeforeFire !== 0)) {
-        pushEvent(state, { kind: 'sfx', name: 'shoot' });
+        pushSfxThrottled(state, 'shoot', SFX_PUSH_MIN_INTERVAL_MS);
       }
       // 效果槽消费：过热（overheat）惩罚乘区——开火间隔拉长（data 可逐实例覆盖定义值）。
       // 下限 16ms（防极高攻速无限牌池把间隔除到 ~0 导致单帧几千亿次循环爆掉执行时）。

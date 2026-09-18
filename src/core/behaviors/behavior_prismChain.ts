@@ -53,7 +53,7 @@
 //   poisonTickMs，命中钩子按快照逐实例覆盖（chill 无 tick，不涉及）；mult<=1 不写覆盖。
 
 import { applyEffect, dealDamage, getEffectDef } from '../effects';
-import { pushEvent } from '../events';
+import { pushSfxThrottled, SFX_PUSH_MIN_INTERVAL_MS } from '../events';
 import { scheduleBurstWaves, consumeDueBurstWaves } from '../cards';
 import { distSq, normalize } from '../math';
 import { pickNearestDistinctEnemies, spawnProjectile } from '../projectiles';
@@ -148,7 +148,9 @@ function zapNearby(
       y2: e.y,
       untilMs: state.timeMs + 100,
     });
-    pushEvent(state, { kind: 'sfx', name: 'hit' });
+    // zap 命中音效（T4.1）：高频 hit 事件按模拟时间粗滤（30ms 内同名只留首个），
+    // 只影响 sfx 事件流密度、不影响 zap 伤害与 VFX 坐标记录。
+    pushSfxThrottled(state, 'hit', SFX_PUSH_MIN_INTERVAL_MS);
     zapped += 1;
   }
   state.meta[PRISM_ZAP_VFX_KEY] = list;

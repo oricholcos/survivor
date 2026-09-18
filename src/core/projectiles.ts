@@ -6,7 +6,7 @@
 // 纯 TypeScript，禁止 import phaser 与任何 DOM/BOM；本文件无随机。
 
 import { getBehavior } from './behaviors/registry';
-import { pushEvent } from './events';
+import { pushSfxThrottled, SFX_PUSH_MIN_INTERVAL_MS } from './events';
 import { applyEffectsOnHit, dealDamage } from './effects';
 import { Pool } from './objectPool';
 import type { SpatialHash } from './spatialHash';
@@ -257,11 +257,12 @@ export function updateProjectiles(state: SimState, dtMs: number, grid: SpatialHa
           applyEffectsOnHit(state, enemy, p.effectsOnHit);
         }
 
-        // 音效事件（T4.1）：每次去重后的命中 push 一次 hit（高射速/多穿透的密度由
-        // 音频侧节流器合并）。门控：仅带 behavior 的弹丸发声——生产弹丸一律由行为
-        // spawn 且带 behavior，无主裸弹（池默认空 behavior）不发声。
+        // 音效事件（T4.1）：每次去重后的命中 push 一次 hit。门控：仅带 behavior 的
+        // 弹丸发声——生产弹丸一律由行为 spawn 且带 behavior，无主裸弹（池默认空
+        // behavior）不发声。推送经 pushSfxThrottled 按模拟时间粗滤（30ms 内同名只留
+        // 首个），只影响 sfx 事件流密度、不影响命中结算；播放端节流器仍做细合并。
         if (p.behavior !== '') {
-          pushEvent(state, { kind: 'sfx', name: 'hit' });
+          pushSfxThrottled(state, 'hit', SFX_PUSH_MIN_INTERVAL_MS);
         }
 
         // 行为命中钩子：伤害与附着结算完、穿透消耗之前调用。钩子可把弹标记 dead
