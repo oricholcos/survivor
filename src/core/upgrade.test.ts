@@ -5,12 +5,18 @@
 // （card → cards++ 且 level+1、>10 允许；new_weapon → 0 级起步）、中文文案可直接供 UI 渲染。
 // 武器 defs 用手写字面量夹具（cards 即合并后的目录），不依赖真实数据表。
 import { describe, expect, it } from 'vitest';
-import { applyUpgrade, rollUpgradeOptions } from './upgrade';
+import { applyUpgrade, rollUpgradeOptions, sanitizeUnlimitedCardDescription } from './upgrade';
 import type { UpgradeOption } from './upgrade';
 import type { WeaponDef } from './weapons';
-import type { WeaponCardDef as CardDef } from './cards';
+import {
+  allMaxedUnlocked,
+  isWeaponMaxed,
+  MAX_WEAPON_LEVEL,
+  type WeaponCardDef as CardDef,
+} from './cards';
 import { createSimState } from './simState';
 import type { Rng, SimState } from './types';
+import { loadWeaponDefs } from '../data/weapons';
 
 /** 牌夹具：一次性布尔牌。 */
 function onceCard(id: string): CardDef {
@@ -338,5 +344,308 @@ describe('面向玩家的中文文案（UI 直接渲染）', () => {
     fresh.rng = zeroRng();
     const newOption = rollUpgradeOptions(fresh, DEFS, 3)[0];
     expect(newOption).toMatchObject({ kind: 'new_weapon', name: '武器w1', description: '新武器' });
+  });
+});
+
+describe('前置依赖 (requiresCard) 与 互斥 (excludes) 约束生成器严格遵守', () => {
+  const DEFS_CONSTRAINTS: Record<string, WeaponDef> = {
+    wc: makeDef('wc', [
+      onceCard('prereq'),
+      {
+        id: 'dependent',
+        name: '后置依赖牌',
+        description: '需持有 prereq',
+        requiresCard: 'prereq',
+        params: [{ key: 'damage', value: 1.5, op: 'mul' }],
+      },
+      {
+        id: 'mode_exclusive',
+        name: '质变互斥牌',
+        description: '排除 excluded_card',
+        once: true,
+        excludes: ['excluded_card'],
+        params: [{ key: 'mode', value: 1, op: 'set' }],
+      },
+      {
+        id: 'excluded_card',
+        name: '被排斥牌',
+        description: '与 mode_exclusive 互斥',
+        params: [{ key: 'damage', value: 1.2, op: 'mul' }],
+      },
+      statCard('generic_dmg'),
+    ]),
+  };
+
+  it('未获得 prereq 时，dependent 绝对不出现在 roll 选项中', () => {
+    const state = createSimState(1);
+    state.rng = zeroRng();
+    ownWeapon(state, 'wc', 0, {});
+    const options = rollUpgradeOptions(state, DEFS_CONSTRAINTS, 99);
+    const cardIds = options
+      .filter((o) => o.kind === 'card' && o.weaponId === 'wc')
+      .map((o) => (o as { cardId: string }).cardId);
+
+    expect(cardIds).not.toContain('dependent');
+    expect(cardIds).toContain('prereq');
+    expect(cardIds).toContain('excluded_card');
+    expect(cardIds).toContain('mode_exclusive');
+    expect(cardIds).toContain('generic_dmg');
+  });
+
+  it('获得 prereq 后，dependent 正常出现在 roll 选项中，且 prereq (once) 移除', () => {
+    const state = createSimState(1);
+    state.rng = zeroRng();
+    ownWeapon(state, 'wc', 1, { prereq: 1 });
+    const options = rollUpgradeOptions(state, DEFS_CONSTRAINTS, 99);
+    const cardIds = options
+      .filter((o) => o.kind === 'card' && o.weaponId === 'wc')
+      .map((o) => (o as { cardId: string }).cardId);
+
+    expect(cardIds).toContain('dependent');
+    expect(cardIds).not.toContain('prereq'); // once 牌移除
+  });
+
+  it('持有 mode_exclusive 后，excluded_card 被彻底移出候选池', () => {
+    const state = createSimState(1);
+    state.rng = zeroRng();
+    ownWeapon(state, 'wc', 1, { mode_exclusive: 1 });
+    const options = rollUpgradeOptions(state, DEFS_CONSTRAINTS, 99);
+    const cardIds = options
+      .filter((o) => o.kind === 'card' && o.weaponId === 'wc')
+      .map((o) => (o as { cardId: string }).cardId);
+
+    expect(cardIds).not.toContain('excluded_card');
+    expect(cardIds).not.toContain('mode_exclusive'); // once 牌自身也移出
+    expect(cardIds).toContain('prereq');
+    expect(cardIds).toContain('generic_dmg');
+  });
+
+
+
+  it('真实武器数据表（scatter dot_freq requires burn_bullet）：三选一严格遵守', () => {
+    const realDefs = loadWeaponDefs();
+    const state = createSimState(1);
+    state.rng = zeroRng();
+    ownWeapon(state, 'scatter', 0, {});
+
+    // 未拿 burn_bullet 时，dot_freq 不得入选
+    let options = rollUpgradeOptions(state, realDefs, 99);
+    let scatterCards = options
+      .filter((o) => o.kind === 'card' && o.weaponId === 'scatter')
+      .map((o) => (o as { cardId: string }).cardId);
+    expect(scatterCards).not.toContain('dot_freq');
+
+    // 吃下 burn_bullet 后，dot_freq 进入候选
+    state.weaponStates.scatter.cards.burn_bullet = 1;
+    state.weaponStates.scatter.level = 1;
+    options = rollUpgradeOptions(state, realDefs, 99);
+    scatterCards = options
+      .filter((o) => o.kind === 'card' && o.weaponId === 'scatter')
+      .map((o) => (o as { cardId: string }).cardId);
+    expect(scatterCards).toContain('dot_freq');
+  });
+});
+
+describe('牌池中绝无旧被动牌（纯武器牌池重构验证）', () => {
+  it('真实数据表中全部武器 defs 均无旧被动牌定义，每张牌均绑定武器', () => {
+    const defs = loadWeaponDefs();
+    for (const wid in defs) {
+      const def = defs[wid];
+      expect(def.cards.length).toBeGreaterThan(0);
+      for (const card of def.cards) {
+        expect(card.id).toBeDefined();
+        expect(typeof card.name).toBe('string');
+        // 绝不含 passive kind
+        expect((card as { kind?: string }).kind).not.toBe('passive');
+      }
+    }
+  });
+
+  it('跨 50 种随机种子及不同武器持有状态下，rollUpgradeOptions 仅产生 new_weapon 或 card', () => {
+    const defs = loadWeaponDefs();
+    for (let seed = 1; seed <= 50; seed++) {
+      const state = createSimState(seed);
+      if (seed % 2 === 0) {
+        ownWeapon(state, 'rail_piercer', 0);
+      }
+      if (seed % 3 === 0) {
+        ownWeapon(state, 'scatter', 3, { burn_bullet: 1 });
+      }
+      const options = rollUpgradeOptions(state, defs, 3);
+      for (const opt of options) {
+        expect(['new_weapon', 'card']).toContain(opt.kind);
+        if (opt.kind === 'card') {
+          expect(state.weaponStates[opt.weaponId]).toBeDefined();
+          const def = defs[opt.weaponId];
+          expect(def.cards.some((c) => c.id === opt.cardId)).toBe(true);
+        }
+      }
+    }
+  });
+});
+
+describe('牌池升级流完整生命周期：0级起步 -> 选牌等级提升 -> 满级限制 -> 4把满级 -> 解锁无限牌池', () => {
+  it('完整模拟：0级武器 -> 每次选牌level+1 -> 单把满级禁卡 -> 满4把禁新武器 -> 4把全满解锁无限牌池 -> 超出10级继续提升', () => {
+    const defs = loadWeaponDefs();
+    const state = createSimState(42);
+    expect(state.config.maxWeaponSlots).toBe(4);
+    expect(MAX_WEAPON_LEVEL).toBe(10);
+
+    // 1. 开局：0 把武器
+    expect(Object.keys(state.weaponStates)).toHaveLength(0);
+    let options = rollUpgradeOptions(state, defs, 3);
+    expect(options.every((o) => o.kind === 'new_weapon')).toBe(true);
+
+    // 2. 选择第 1 把武器：rail_piercer -> 0 级起步
+    const w1Opt = options.find((o) => o.kind === 'new_weapon' && o.weaponId === 'rail_piercer') ?? options[0];
+    applyUpgrade(state, w1Opt, defs);
+    const w1 = w1Opt.weaponId;
+    expect(state.weaponStates[w1]).toBeDefined();
+    expect(state.weaponStates[w1].level).toBe(0);
+    expect(state.weaponStates[w1].cards).toEqual({});
+
+    // 3. 为 w1 连选 10 张牌，验证每次 level+1
+    for (let expectedLevel = 1; expectedLevel <= 10; expectedLevel++) {
+      options = rollUpgradeOptions(state, defs, 99);
+      const cardOpt = options.find((o) => o.kind === 'card' && o.weaponId === w1);
+      expect(cardOpt).toBeDefined();
+      applyUpgrade(state, cardOpt!, defs);
+      expect(state.weaponStates[w1].level).toBe(expectedLevel);
+    }
+
+    // 4. w1 满级（10 级）检查：此时只有 1 把武器，未达到 4 把，无限牌池未解锁
+    expect(isWeaponMaxed(state, w1, defs)).toBe(true);
+    expect(allMaxedUnlocked(state, defs)).toBe(false);
+
+    // 满级武器在未解锁前绝不进候选池！
+    options = rollUpgradeOptions(state, defs, 99);
+    expect(options.some((o) => o.kind === 'card' && o.weaponId === w1)).toBe(false);
+
+    // 5. 获得第 2 把武器，升至 10 级
+    const w2Opt = options.find((o) => o.kind === 'new_weapon')!;
+    expect(w2Opt).toBeDefined();
+    applyUpgrade(state, w2Opt, defs);
+    const w2 = w2Opt.weaponId;
+    expect(state.weaponStates[w2].level).toBe(0);
+    for (let lvl = 1; lvl <= 10; lvl++) {
+      options = rollUpgradeOptions(state, defs, 99);
+      const card = options.find((o) => o.kind === 'card' && o.weaponId === w2)!;
+      applyUpgrade(state, card, defs);
+    }
+    expect(isWeaponMaxed(state, w2, defs)).toBe(true);
+    expect(allMaxedUnlocked(state, defs)).toBe(false);
+
+    // 6. 获得第 3 把武器，升至 10 级
+    options = rollUpgradeOptions(state, defs, 99);
+    const w3Opt = options.find((o) => o.kind === 'new_weapon')!;
+    applyUpgrade(state, w3Opt, defs);
+    const w3 = w3Opt.weaponId;
+    expect(state.weaponStates[w3].level).toBe(0);
+    for (let lvl = 1; lvl <= 10; lvl++) {
+      options = rollUpgradeOptions(state, defs, 99);
+      const card = options.find((o) => o.kind === 'card' && o.weaponId === w3)!;
+      applyUpgrade(state, card, defs);
+    }
+    expect(isWeaponMaxed(state, w3, defs)).toBe(true);
+    expect(allMaxedUnlocked(state, defs)).toBe(false);
+
+    // 7. 获得第 4 把武器：此时拥有武器数已达 maxWeaponSlots (4)
+    options = rollUpgradeOptions(state, defs, 99);
+    const w4Opt = options.find((o) => o.kind === 'new_weapon')!;
+    applyUpgrade(state, w4Opt, defs);
+    const w4 = w4Opt.weaponId;
+    expect(Object.keys(state.weaponStates)).toHaveLength(4);
+    expect(state.weaponStates[w4].level).toBe(0);
+
+    // 武器栏已满：候选池中不得再出现任何 new_weapon 选项！
+    options = rollUpgradeOptions(state, defs, 99);
+    expect(options.some((o) => o.kind === 'new_weapon')).toBe(false);
+
+    // 8. 升级第 4 把武器至 9 级：仍未全部满级，未解锁
+    for (let lvl = 1; lvl <= 9; lvl++) {
+      options = rollUpgradeOptions(state, defs, 99);
+      const card = options.find((o) => o.kind === 'card' && o.weaponId === w4)!;
+      applyUpgrade(state, card, defs);
+    }
+    expect(state.weaponStates[w4].level).toBe(9);
+    expect(allMaxedUnlocked(state, defs)).toBe(false);
+
+    // 第 10 级：吃下最后一张牌
+    options = rollUpgradeOptions(state, defs, 99);
+    const card10 = options.find((o) => o.kind === 'card' && o.weaponId === w4)!;
+    applyUpgrade(state, card10, defs);
+    expect(state.weaponStates[w4].level).toBe(10);
+
+    // 9. 临界突变：4 把武器全部满 10 级！无限牌池立即解锁！
+    expect(allMaxedUnlocked(state, defs)).toBe(true);
+
+    // 10. 验证解锁后无限牌池特权：
+    options = rollUpgradeOptions(state, defs, 99);
+    const unlockedWeaponsInPool = new Set(
+      options.filter((o) => o.kind === 'card').map((o) => o.weaponId),
+    );
+    // 全部 4 把武器重新进池！
+    expect(unlockedWeaponsInPool.has(w1)).toBe(true);
+    expect(unlockedWeaponsInPool.has(w2)).toBe(true);
+    expect(unlockedWeaponsInPool.has(w3)).toBe(true);
+    expect(unlockedWeaponsInPool.has(w4)).toBe(true);
+
+    // 选一张 w1 的牌，验证等级突破 10 级并达到 11、12 级
+    const w1CardPost = options.find((o) => o.kind === 'card' && o.weaponId === w1)!;
+    applyUpgrade(state, w1CardPost, defs);
+    expect(state.weaponStates[w1].level).toBe(11);
+
+    options = rollUpgradeOptions(state, defs, 99);
+    const w1CardPost2 = options.find((o) => o.kind === 'card' && o.weaponId === w1)!;
+    applyUpgrade(state, w1CardPost2, defs);
+    expect(state.weaponStates[w1].level).toBe(12);
+
+    // 解锁状态依旧保持
+    expect(allMaxedUnlocked(state, defs)).toBe(true);
+    // 依然无新武器
+    expect(rollUpgradeOptions(state, defs, 99).some((o) => o.kind === 'new_weapon')).toBe(false);
+  });
+
+  describe('突破上限卡牌描述清洗与分裂牌过滤', () => {
+    it('sanitizeUnlimitedCardDescription 清洗上限文本，保留正常文案', () => {
+      expect(sanitizeUnlimitedCardDescription('同时多发射 1 颗弹体（可叠 4 次）')).toBe('同时多发射 1 颗弹体');
+      expect(sanitizeUnlimitedCardDescription('每颗弹体跟发 1 波同角度弹，波间隔 150ms（可叠 2 次）')).toBe('每颗弹体跟发 1 波同角度弹，波间隔 150ms');
+      expect(sanitizeUnlimitedCardDescription('该武器范围参数 ×1.2（可叠 5 次）')).toBe('该武器范围参数 ×1.2');
+      expect(sanitizeUnlimitedCardDescription('该武器附着的持续伤害 tick 间隔 ÷1.3（可叠 3 次）')).toBe('该武器附着的持续伤害 tick 间隔 ÷1.3');
+      expect(sanitizeUnlimitedCardDescription('每次命中且折射计数>0时，折向300px内最近未受击敌人（折射-1，穿透-1，上限4次）')).toBe('每次命中且折射计数>0时，折向300px内最近未受击敌人（折射-1，穿透-1）');
+      expect(sanitizeUnlimitedCardDescription('穿透 +1（可叠 4 次）')).toBe('穿透 +1');
+      expect(sanitizeUnlimitedCardDescription('c1 ×N（上限 2）')).toBe('c1 ×N');
+      expect(sanitizeUnlimitedCardDescription('该武器伤害 ×1.3（可叠加）')).toBe('该武器伤害 ×1.3（可叠加）');
+      expect(sanitizeUnlimitedCardDescription('目标 hp ≥ 60% 上限时伤害 ×1.5')).toBe('目标 hp ≥ 60% 上限时伤害 ×1.5');
+    });
+
+    it('真实表解锁无限牌池后：卡牌描述无上限字样，且已持有分裂牌（split_shot）不再出现', () => {
+      const realDefs = loadWeaponDefs();
+      const state = createSimState(1);
+      // 拥有 4 把武器且全部满 10 级
+      const wIds = ['mortar', 'charge_sniper', 'rail_piercer', 'prism'];
+      for (const id of wIds) {
+        state.weaponStates[id] = {
+          level: 10,
+          cooldownMs: 0,
+          cards: {
+            multi_shot: 4,
+            split_shot: 1, // 已持有一张分裂牌
+          },
+        };
+      }
+      expect(allMaxedUnlocked(state, realDefs)).toBe(true);
+
+      const options = rollUpgradeOptions(state, realDefs, 99);
+      // 1. 绝不包含已持有的 split_shot
+      const splitOptions = options.filter((o) => o.kind === 'card' && o.cardId === 'split_shot');
+      expect(splitOptions).toHaveLength(0);
+
+      // 2. 依然包含多射等可无限突破牌，但其 description 中的上限说明已被剥除
+      const multiMortar = options.find((o) => o.kind === 'card' && o.weaponId === 'mortar' && o.cardId === 'multi_shot');
+      expect(multiMortar).toBeDefined();
+      expect(multiMortar!.description).not.toContain('可叠 4 次');
+      expect(multiMortar!.description).toBe('同时多发射 1 颗弹体');
+    });
   });
 });

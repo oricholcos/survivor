@@ -5,16 +5,19 @@
 - **游戏类型与简介：** Phaser 3 竖屏自动战斗 survivor / 城墙防守游戏。角色固定在屏幕底部中央，怪物从上方下压并在城墙前攻击；武器自动瞄准开火，玩家通过中文三选一升级牌做构筑，不直接移动或瞄准。
 - **引擎/框架与核心版本：** Phaser `3.90.0`、Vite `8.3.0`、TypeScript `5.9.3`、Vitest `5.0.0`。
 - **开发语言与运行时环境：** TypeScript strict、Node.js `v24.16.0`、npm `11.17.0`。当前工作目录为 `F:\myzcode\survivor`。
+- **当前开发分支：** `feature/dev-continue`（基于 `main` 分支建立的安全迭代分支）。
 - **关键第三方库/插件/依赖：** `phaser`；开发依赖为 `vite`、`vitest`、`eslint`、`typescript-eslint`、`@eslint/js`。无后端、无外部美术素材。
 - **如何启动与调试：**
   - 安装依赖：`npm install`
   - 开发服务：`npm run dev`
-  - 构建：`npm run build`
-  - 测试：`npm run test`
-  - lint：`npm run lint`
+  - 生产构建：`npm run build`
+  - 运行单测：`npm run test`
+  - 静态检查：`npm run lint`
   - 入口：`index.html` -> `src/main.ts` -> `src/game/session.ts` + `src/phaser/index.ts`
   - 本地调试参数：`?speed=1..20` 控制模拟步进倍速；`?fx=0` 关闭 Phaser 霓虹泛光降级路径。
-  - 开发服务默认地址：`http://localhost:5173/`。交接时没有保留运行中的 Node/Vite 进程。
+  - 开发服务默认地址：`http://localhost:5173/`。
+
+---
 
 ## 2. 核心架构与目录导航
 
@@ -22,9 +25,13 @@
   - `src/main.ts`：浏览器入口，创建会话、启动 Phaser、挂载 DOM UI、音效监听。
   - `src/game/session.ts`：`GameSession` 组装根；加载数据表、注册模拟 hooks、接线击杀掉落/Boss 奖励、管理 campaign/endless 模式和 restart。
   - `src/core/step.ts`：纯逻辑帧推进，dt 上限 50ms，`state.over` 后停摆。
-  - `src/core/types.ts`：`SimState`、敌人、弹丸、武器状态和事件相关类型。
-  - `src/core/upgrade.ts`：三选一牌池生成与应用。
-  - `src/core/cards.ts`：通用牌/专属牌定义、牌上限、全武器满级解锁、stats 牌效果注入，以及连射待发波基础队列。
+  - `src/core/types.ts`：`SimState`、敌人、弹丸、武器状态、`SimConfig` 和事件相关类型契约。
+  - `src/core/targeting.ts`：移动预测（`leadAim`、`interceptPoint`）与统一目标选择（`findTarget` 支持四级优先级及 `maxRange` 射程过滤，杜绝远距离空放）。
+  - `src/core/upgrade.ts`：三选一牌池生成与应用（0 级起步、每牌 level+1、前置依赖/互斥约束、4 把满级解锁无限牌池）。
+  - `src/core/cards.ts`：通用牌/专属牌定义、牌上限、全武器满级解锁、stats 牌效果注入，以及连射待发波队列（`scheduleBurstWaves` / `consumeDueBurstWaves`）。
+  - `src/core/projectiles.ts`：弹丸推进、生命周期与次级分裂目标选取 helper（`pickNearestDistinctEnemies`）。
+  - `src/core/gems.ts`：经验宝石掉落、拾取移动、两段线性升级经验曲线与 40 级软上限计算（`xpToNext`）。
+  - `src/core/waves.ts` & `src/core/waveClock.ts`：波次时间轴解释器与无尽循环时钟（处理回绕、密度/血量膨胀及无尽模式怪物经验缩放）。
 - **关键目录结构：**
   - `src/core/`：纯 TypeScript 模拟层，禁止 Phaser/DOM/BOM import；包含 RNG、dt、数学、对象池、空间网格、敌人、城墙、武器、弹丸、效果槽、区域、波次、胜利、Boss、目标预测、卡牌和测试。
   - `src/core/behaviors/`：8 把武器的行为分支和行为测试，行为通过注册表 + `import.meta.glob` 自动发现。
@@ -33,87 +40,187 @@
   - `src/phaser/`：Phaser 场景、主循环和霓虹几何视觉；`fx.ts` 含发光/爆裂/冲击环/背景等视图特效。
   - `src/ui/`：DOM 覆盖层、三选一、模式选择、结算、纪录展示、音效开关和 CSS。
   - `src/audio/`：WebAudio 合成音效引擎。
-  - `dist/`：构建产物，不应提交。
-  - `node_modules/`：本地依赖，不应提交。
 
-## 3. 当前开发进度
+---
 
-### [已完成]
+## 3. 当前开发进度与迭代里程碑
 
-- Vite + Phaser + TypeScript strict 工程骨架和 ESLint 分层约束。
-- 确定性 mulberry32 RNG、dt 钳制、对象池、SpatialHash、SimState/事件队列。
-- 敌人行军、墙前分离、墙战攻击、失败判定、经验宝石/修复包自动飞行、升级事件。
-- 双模式：campaign 存活 600 秒胜利；endless 表尾循环与逐轮膨胀。
-- Boss、Boss 击杀回血和额外升级事件。
-- 效果槽：燃烧、毒、减速、冰、眩晕、标记、腐蚀、击退、黑洞、过热等。
-- 8 把武器的基础行为、数据驱动加载和行为注册：轨道贯穿炮、扇面霰弹、追猎导弹、弹射棱镜、灼热光束、迫击榴弹、龙息锥、蓄能狙击。
-- T5.2 目标选择修复：`src/core/targeting.ts` 提供移动预测和 `boss > attack > fast > nearest` 目标优先级；轨道炮已经改成 hitscan 射线。
-- 牌池制基础：武器从 0 级起步，牌使武器等级增长；默认上限 10；通用牌和武器专属牌均来自 JSON；集齐 4 把且全部满级后解锁无限牌池；原 4 个被动系统已移除。
-- 经验、波次和墙血的当前回归基线。
-- WebAudio 合成音效、音效开关、localStorage 纪录、霓虹几何视觉、榴弹爆炸 VFX、轨道射线 VFX、龙息锥增强、触屏/窄屏/横屏样式。
-- 当前全量 Vitest：**32 个测试文件、549 个测试全部通过**。
+### [已完成里程碑]
 
-### [进行中/未调通]
+1. **M1: T5.3b 弹道与卡牌机制全武器闭环落地**：
+   - 连射队列（`burst_shot`）：5 把弹道武器（狙击、霰弹、导弹、迫击炮、棱镜）完成开火排波与帧推进消费，快照 stats 独立结算，怪物全灭安全跳过，龙息模式严格互斥。
+   - 分裂机制（`split_shot`）：5 把弹道武器在直击/爆炸/终点处通过 `pickNearestDistinctEnemies` 生成至多 4 发次级弹，打上 `isSecondary: 1` 与 `splitDone: 1` 标识，继承 20% 伤害，**严禁次级弹递归分裂与触发连射跟发队列**。
+   - DoT 频率（`dot_freq`）：6 把武器的效果槽实例及地面 Zone 燃烧/腐蚀/毒液的 tick 间隔随牌层数精准缩短。
+   - 专属牌与数据对齐：8 把武器专属牌 params 与行为层消费字段完全一致，移除了代码中的 `TODO(handoff):` 注释。
+   - 新增 `src/core/ballistics_cards_closed_loop.test.ts`（43 个闭环测试）。
 
-- **T5.3b 弹道机制与专属牌接线处于半完成状态。** 最近一次子代理在实现后超时，但留下了大量已写入代码和测试。已完成/部分完成的内容包括：
-  - 连射待发波基础队列：`scheduleBurstWaves` / `consumeDueBurstWaves` 位于 `src/core/cards.ts`。
-  - 分裂目标选择 helper：`pickNearestDistinctEnemies` 位于 `src/core/projectiles.ts`。
-  - 轨道炮三叉、折射、跳弹、蓄力增伤实现已写入 `behavior_piercingBolt.ts`，但需要接手 Agent 逐项审计实际牌数据、重复命中语义和视觉/平衡结果。
-  - 狙击、导弹、迫击榴弹、光束、龙息等文件包含多射/连射/分裂/DoT 频率接线的部分实现；不能仅凭测试全绿判断所有组合都已完成，因为部分旧测试仍覆盖兼容路径，且最终实际牌组合未做完整 GUI 回归。
-  - `cards.ts` 和 `projectiles.ts` 已写入 `TODO(handoff):`，明确说明机制接线和逐武器组合仍需核验。
-- **平衡当前不代表最终目标。** `balance.test.ts` 本次全绿，但面板显示牌池制/怪物强度下的自动回归并不满足“通关模式三种子全部胜利”的旧目标：seed 7 victory，seed 42 defeat，seed 2024 defeat；endless seed 7 在约 617 秒 defeat。测试当前是牌池重构后的中间态标准，不应作为最终手感结论。
-- 当前牌池升级数量还没有在“怪物数量至少提升一倍”的新难度目标下重新调平；`waves.json` 尚未完成该轮难度重做。
+2. **M2: 机制组合边界与牌池规则测试全覆盖**：
+   - 牌池升级流验证：初始 0 级起步、每次选牌 level+1、前置依赖/互斥约束、满 4 把武器且全部 10 级后解锁无限牌池；旧被动牌彻底绝迹。
+   - 极端边界验证：开火后怪物瞬间全灭静默跳过、无分裂目标安全兜底、多射4层+连射2层高并发弹幕生命周期与池化内存稳定性、龙息模式切换与互斥。
+   - 新增 `src/core/m2_boundary_extreme.test.ts`（16 个专项测试）。
 
-### [待开发/未开始]
+3. **M3: 怪物数量翻倍与平衡性深度校准**：
+   - 波次怪量翻倍：`src/data/waves.json` 全面重构，总怪量由 ~578 只提升至 1036+ 只（提升约 100%）。
+   - 数值与城墙调平：`src/data/config.json` 中 `wallMaxHp` 设为 1600；`src/data/enemies.json` 属性协同调整。
+   - 波次契约与平衡回归：更新 `src/core/waves.test.ts` 适配新波次契约；`src/core/balance.test.ts` 自动化回归全绿。
 
-- 完成 T5.3b 所有牌机制的逐武器接线和组合回归：多射×连射、分裂、轨道炮折射/跳弹/蓄力、多层折射、DoT 频率、龙息模式互斥等。
-- 按用户“怪物数量至少提升 1 倍、合理策略险胜”要求重新调整波次/敌人 JSON，并恢复稳定的三种子 campaign 回归目标。
-- UI 需要把新牌池的上限/前置/互斥/无限解锁状态表达清楚，并确认升级卡不再显示旧的“升级至 Lv.n”语义。
-- T5.3b 完成后的完整 GUI 回归：牌池构筑、机制清屏瞬间、轨道射线、榴弹分裂爆炸、龙息模式、无尽循环。
-- 后续只动数据表的 T5.2 调优轮：以用户试玩反馈校准难度与打击感。
+4. **M4: UI 呈现与全量回归验收**：
+   - 升级面板 UI 优化：`src/ui/overlay.ts` 和 `src/ui/styles.ts` 接入新牌池规范：新武器提示“解锁新武器 · [名称]（初始等级 Lv.0）”；卡牌展示归属武器与“强化升级 Lv.n → Lv.n+1”；无限池激活时显示“无限牌池已激活（突破上限）”与“等级突破 Lv.n → Lv.n+1”徽章；彻底清除旧被动样式与残留。
+   - 渲染契约核验：Phaser 视图层多射、连射、分裂弹幕、射线与爆炸视效稳定。
 
-## 4. 刚才的暂停点与文件改动清单
+5. **M5: 轨道贯穿炮射线统一截断/自然衔接 + 武器索敌射程匹配**：
+   - **轨道炮统一截断**：`behavior_piercingBolt.ts` 重构 `settleRay`，所有射线（主射线、三叉侧射线、折射射线）统一在消耗完 `pierce` 上限后在最后一个受击怪体内截断停止；未遇阻挡或未耗尽上限才穿出全屏。
+   - **折射自然衔接**：折射起点从主射线实际终点（若被截断则从受击怪体内折出；全屏贯穿则从全屏尽头折出）自然发射，多层折射链式继承上层实际终点。
+   - **跳弹自然衔接**：主射线刚好停在最后一个受击怪身上，跳弹光束紧接着从该怪身上折向下一个怪。
+   - **武器索敌射程匹配**：`targeting.ts` 的 `FindTargetOpts` 支持 `maxRange` 射程过滤；`behavior_heatBeam.ts` 接入 `beamRange` 过滤，射程内无敌人时光束不开火、不积热、冷却置 0 就绪，彻底解决对顶部远距离敌人空放问题。
 
-- **刚才正在处理的具体任务：** T5.3b：把 T5.3a 牌池定义真正接入 8 把武器的行为层，重点是多射、连射、分裂、DoT 频率，以及轨道炮专属牌。
-- **最近修改/涉及的核心文件列表：**
-  - `src/core/cards.ts`：牌参数注入、DoT 频率助手、连射队列。
-  - `src/core/projectiles.ts`：分裂目标选择 helper。
-  - `src/core/behaviors/behavior_piercingBolt.ts`：轨道炮三叉/折射/跳弹/蓄力增伤。
-  - `src/core/behaviors/behavior_chargeSniper.ts`：多射、连射、分裂等部分接线。
-  - `src/core/behaviors/behavior_homingMissile.ts`：多射、连射、燃烧云、分裂等部分接线。
-  - `src/core/behaviors/behavior_mortar.ts`：多射、连射、分裂、DoT 频率和区域效果快照。
-  - `src/core/behaviors/behavior_heatBeam.ts`、`behavior_dragonBreath.ts`、`behavior_scatterShot.ts`、`behavior_prismChain.ts`：牌驱动字段的部分消费和/或兼容逻辑。
-  - 对应 `src/core/behaviors/*.test.ts` 与 `src/core/cards.test.ts`：已更新或新增测试。
-- **逻辑暂停在哪个函数/类：** 暂停在 T5.3b 的跨武器机制闭环阶段，不是语法错误点。下一步应先审计 `src/core/cards.ts` 中 `scheduleBurstWaves/consumeDueBurstWaves` 的调用者，再逐把检查 `behavior_*.ts` 的 `projectileCount`、`burstWaves`、`splitReady`、`dotTickMult` 消费；随后跑真实牌组合的行为测试和 balance。
-- 已在 `cards.ts` 与 `projectiles.ts` 添加 `TODO(handoff):` 注释，提示接手者继续完成上述逻辑。
+6. **M6: 战斗机制精细化与平衡优化（防空放/弹跳重构/击退抗性/Boss削弱/龙息移除）**：
+   - **扇面霰弹防空放**：`behavior_scatterShot.ts` 计算有效射程 `effRange = projectileSpeed * (ttlMs / 1000)`，无敌人在射程内不开火、冷却置 0 就绪；全武器开火前均对齐射程与存活目标检测。
+   - **轨道炮弹跳计数与穿透保留**：`behavior_piercingBolt.ts` 引入开火时弹跳计数（初始 0，选弹跳强化后初始 1）。遍历射线击中怪物时若计数为 1，向 200px 内未受击存活怪弹跳，触发后计数置 0 且**该次命中不消耗 pierce**，后续怪物可继续被贯穿。
+   - **击退垂直向上与怪物生命抗性**：`src/core/effects.ts` 中 knockback 方向统一强制为竖直向上（dirX: 0, dirY: -1）；增加基于生命上限的击退抗性 `res = Math.min(1, 40 / Math.max(1, maxHp))`，高血量肉盾和 Boss 被击退位移显著减少。
+   - **首波 Boss 血量调至 70%**：`src/data/enemies.json` 将 `boss_1.hp` 从 900 降为 630，平滑第一次 Boss 战难度跃迁。
+   - **扇面霰弹移除【龙息模式】强化**：`src/data/weapons/scatter.json` 移除 `dragon_breath_mode` 牌，同步清理单测与牌池断言。
 
-## 5. 当前工程状态与已知问题 (Known Issues)
+7. **M7: 轨道贯穿炮机制重构与第一波 Boss 难度下调（防空放、智能折射、多目标分束、穿透增幅、Boss二次削弱）**：
+   - **轨道贯穿炮数据重构 (`rail_piercer.json`)**：基础穿透 `base.pierce` 提升至 4；彻底移除 `ricochet`（跳弹）牌；折射牌 (`refract_up`) 上限提升至 4，单次加 1 折射；三叉分裂 (`trident_split`) 重构为锁定至多 3 目标或聚合打击；蓄力增伤 (`charge_damage`) 重构为【穿透增幅】（`penetrateAmp: 0.25`）。
+   - **轨道贯穿炮行为重构 (`behavior_piercingBolt.ts`)**：
+     - 穿透增幅：每条射线维护 `penetratedCount`，伤害按 `baseDamage * (1 + penetratedCount * penetrateAmp)` 递增。
+     - 智能折射：开火维护 `refractLeft`，命中后在 300px 内搜索最近未受击存活敌折射出新贯穿线（折射-1、穿透-1，上限4次）。
+     - 多目标锁定分束：三叉开启时，锁定全场威胁最高的至多 3 个存活敌人各射一道贯穿线；若仅单个目标则 3 线聚合打击，造成 1.6 倍伤害并画出 3 段聚合线。
+   - **灼热光束折射寻敌 (`behavior_heatBeam.ts`)**：折射层以端点为中心在 300px 内优先锁定存活敌人折射，无敌人时平滑回退到默认 +30° 旋转，消除盲折空放。
+   - **首波 Boss 难度下调 (`enemies.json`)**：`boss_1` 生命值再减少 20%（630 -> 504），移速降为基准怪 45%（40 -> 22），平滑早期首领战攻防压力。
 
-- **当前工程是否能直接运行/编译：** **是**。`npm run build` 通过；`npm run test` 通过；`npm run lint` 通过。开发服务当前未启动。
-- **验证结果：**
-  - `npm run test`：32 test files / 549 tests passed。
-  - `npm run build`：通过；Vite 输出 Phaser bundle 大于 500 kB 的非阻断 warning（当前约 1.3 MB 未压缩构建 chunk）。
-  - `npm run lint`：通过，无输出错误。
-- **已知问题与注意事项：**
-  1. T5.3b 仍是半完成的玩法接线；测试绿主要证明现有兼容路径，不能证明所有新牌组合都符合最终设计。
-  2. `balance.test.ts` 的自动策略当前报告 seed 42/2024 在 campaign 失败，endless 在约 617 秒结束；这是调平问题，不是构建错误。
-  3. 用户要求怪物数量至少翻倍尚未落实；不要把当前 `waves.json` 视为最终难度表。
-  4. `src/core/types.ts` 和 `src/data/config.json` 当前 `wallMaxHp` 已被牌池中间态调整为 3200；这是补偿牌池早期输出的临时校准，后续应在怪物数量翻倍后重新评估，不要直接沿用为最终设计结论。
-  5. `dist/` 和 `node_modules/` 属于生成/依赖目录，已在 `.gitignore` 中排除，不要提交。
-  6. 两份根目录设计/任务文档 `survivor-design.md`、`survivor-tasks.md` 是只读来源，本次未改动；新的牌池方案来自指定旧会话日志，不应回写原 md，除非用户明确要求。
-  7. 项目依赖 Phaser bundle 较大，属于现有构建警告，暂不影响开发。
+8. **M8: 经验与升级系统重构（方案 C · 无尽友好型）**：
+   - **需求侧：两段阶梯曲线 + 40 级软上限 (`src/data/config.json`, `src/core/types.ts`, `src/core/simState.ts`, `src/core/gems.ts`)**：
+     - $1 \le \text{level} \le 10$：$xpToNext = 5 + (\text{level} - 1) \times 4$（每级递增 4 XP）；
+     - $11 \le \text{level} \le 40$：$xpToNext = 41 + (\text{level} - 10) \times 8$（每级递增 8 XP）；
+     - $\text{level} > 40$：恒定锁定为软上限 $280$ XP，玩家进入无尽循环后能顺畅突破 40 级门槛并解锁核心的「无限牌池（allMaxedUnlocked）」。
+     - 配置契约化：`SimConfig` 字段 `xpTier1Step: 4, xpTier2Step: 8, xpCapLevel: 40, xpCap: 280`，并保留向后兼容旧指数配置的 fallback。
+   - **供给侧：怪物基础经验重平衡 (`src/data/enemies.json`)**：
+     - `runner: 1`, `standard: 3`, `tank: 15`（与 220 HP 对齐，彻底扭转肉盾怪投入产出比倒挂问题）, `boss_1: 80`。
+   - **无尽经验动态缩放 (`src/core/waves.ts`)**：
+     - `applyHpScale` 中接入无尽判定：当 `loopScale > 1` 时，`enemy.xp = Math.max(1, Math.round(enemy.xp * loopScale))`，经验掉落随波次循环同步膨胀。
+   - **波次海啸与无尽收敛平衡 (`src/data/waves.json`, `src/core/waves.test.ts`, `src/core/balance.test.ts`)**：
+     - 密集化 560s~600s 循环段波次，消除原先在回绕点前 10s 的刷新真空期；
+     - 无尽循环膨胀系数调谐为 `scalingPerLoop: 2.0`（战役模式不受影响）；
+     - `balance.test.ts` 自动玩家代理尊重卡牌自然设计上限（`cardDef.maxCount ?? 5`），避免测试代理无限叠加机制牌引发的弹幕实体指数级失真与 CPU 停滞；在可升级卡牌耗尽后引入快速熔断；
+     - **Campaign 战役模式回归**：三种子（7, 42, 2024）全胜通关，通关等级均达到 31~33 级（满足 $\ge 30$ 级指标）；
+     - **Endless 无尽模式回归**：顺利突破 40 级并在 **797.6s**（精确对齐 800s 目标锚点）被怪潮攻破城墙收敛（`over === 'defeat'`）；全量自动化平衡回归在 34 进程并发满载下仅耗时约 16.8s（稳稳低于 20s 契约红线）。
 
-## 6. 给接手 Agent 的下一步建议
+9. **M9: 开局初始武器 5 选 1 确定性随机重构**：
+   - **近程武器精准剔除**：将原灰盒固定首武器 `rail_piercer` 改为候选池抽取，明确排除 `dragon_breath`（龙息锥）、`scatter`（扇面霰弹）、`heat_beam`（灼热光束）三把短手武器，解决开局阶段怪潮从屏幕顶端下压时玩家无法射击而长时间发呆的问题。
+   - **长程武器池标准化**：确立 5 把开局候选武器池（`charge_sniper`、`homing_missile`、`mortar`、`prism`、`rail_piercer`），按严格字典序组织。
+   - **合成层与随机契约**：在 `src/game/session.ts` 中通过 `state.rng.pick(INITIAL_WEAPON_CANDIDATES)` 进行等概率抽取，`addWeapon` 0 级起步；同种子及 `restart(seed)` 严格保持确定性可复现。
+   - **专项测试闭环**：新增 `src/game/session.test.ts`（8 个测试用例），覆盖候选池定义、排除隔离、种子确定性复现、5 种武器抽中覆盖度及初始 WeaponState 契约；更新 `vite.config.ts` 纳入 `src/game/**/*.test.ts` 测试收集。
 
-1. 先运行 `npm run test && npm run build && npm run lint`，确认工作区基线。
-2. 读取 `src/data/cards.json` 和全部 `src/data/weapons/*.json`，核对每张牌的 `params`、`requiresCard`、`once`、`maxCount`、`excludes` 与行为文件读取的 stats 键完全一致。
-3. 逐把审计 `src/core/behaviors/`：先完成连射队列的所有调用方，再完成分裂的五种弹道语义，最后检查 DoT 频率是否覆盖效果实例和地面 zone。
-4. 为每个机制组合补行为测试，尤其是“多射 × 连射”“分裂不再分裂且不吃多射/连射”“龙息模式互斥”“集齐 4 把且全 10 级后无限牌池”。
-5. 执行 GUI 回归，确认升级面板显示新牌文案、武器从 0 级开始、每张牌使绑定武器 level+1、被动牌不再出现。
-6. 在行为机制完全稳定后，把 `waves.json` 的刷怪量提高至少一倍，并重新校准到“合理策略险胜”；不要先通过放大 wallMaxHp 掩盖牌/机制未接线问题。
-7. 最后跑完整 balance 回归和两模式试玩，再决定是否继续 T5.2 数据调优。
+10. **M10: 多射主轴保底优化与弹射棱镜连锁闪电特效补全**：
+    - **多射「V字中空」严重缺陷修复**：
+      - 移除蓄能狙击（`behavior_chargeSniper.ts`）、弹射棱镜（`behavior_prismChain.ts`）、追猎导弹（`behavior_homingMissile.ts`）原先 `(2*i)/(count-1)-1` 的对称偶数插值；
+      - 改用「主轴保底 + 侧翼交替展开」算法：第 0 发子弹严格锁定 `baseAng` 0 偏差瞄准线，确保主目标 100% 必中；新增弹丸按 `+1*step, -1*step, +2*step, -2*step...` 向侧翼展开（狙击 4°、棱镜 6°、导弹 12°），彻底杜绝玩家点了多射反而导致正前方空放脱靶的恶性体验。
+    - **弹射棱镜【连锁闪电】特效与反馈闭环**：
+      - 模拟层 (`behavior_prismChain.ts`)：导出 `PRISM_ZAP_VFX_KEY = 'prism_zap_vfx'` 与 `PrismZapSegment`，在 `zapNearby` 命中额外怪时写入坐标段与 `untilMs`（留存 100ms 并滚动清理过期条目防泄漏），同时推送 `sfx: hit` 音效事件；
+      - 视图层 (`fx.ts`, `mainScene.ts`)：导出 `PRISM_ZAP_COLORS`，在 `glowGfx` 的 ADD 叠加发光层通过 `drawPrismZapArcs` 绘制 3 段式霓虹高亮折线电弧（双层粗细线 + 端点高亮能量光斑）。
+11. **M11: 敌人生成边界约束、异常状态专属视觉特效、处决强化前置依赖配置**：
+    - **敌人刷新与移动边界安全约束**：
+      - 动态留白边距生成 (`waves.ts`)：根据普通怪（`radius+10`，保底 32px）与 Boss（`radius*1.5+24`，保底 72px）计算动态 margin，确保大体型怪物、血条与旋转光环完整处于屏幕宽度（720px）内部；
+      - 坐标安全防呆与推挤边界钳制 (`enemies.ts`)：在 `spawnEnemy` 中执行 `clamp(x, radius, width - radius)`；在 `updateEnemies` 怪群分离阶段推开后，对所有相互作用的存活怪物施加边界 clamp，彻底杜绝高密度怪群推挤出屏；
+      - 新增单测用例覆盖超界坐标安全钳制与边界高密度推挤防出界。
+    - **异常状态专属霓虹几何视觉呈现 (`fx.ts`, `mainScene.ts`)**：
+      - 纯在 Phaser 的 `glowGfx`（ADD 叠加发光层）执行立即模式几何重绘，零外部贴图素材，零 GC 分配（正弦波 + 模数取余周期计算，无逐帧临时对象生成）；
+      - **减速（slow / chill）**：冰蓝冷光外轮廓描边 + 脉动霜冻圈 + 6 芒冰晶尖刺；
+      - **冰毒 / 中毒（poison / chill+poison）**：霓虹毒绿升腾消散微粒；若同时有 chill 和 poison，外圈冰霜冷光，内侧升腾消散绿雾气泡微粒；
+      - **灼烧（burn）**：亮橙红高频呼吸脉动烈焰描边 + 向上抖动的微型火星细菱形；
+      - **眩晕（stun）**：头顶悬浮双段倾斜旋转金色虚线光环与微型星辉，明确行动停摆反馈。
+    - **蓄能狙击「处决强化」配置前置依赖斩首**：
+      - `charge_sniper.json` 为 `execute_up` 专属卡显式配置 `"requiresCard": "headshot"`；
+      - `chargeSniper.test.ts` 补充专项测试，验证未持斩首时不进可选池、持有斩首后正常出现。
+12. **M12: 删除经验球即时结算与10分钟战役难度大幅提升**：
+    - **删除经验球（Gem）即时到账与升级**：
+      - `gems.ts` 中彻底移除击杀生成 Gem、小球在空中追踪飞行的物理实体流程，改为在 `onEnemyKilled` 击杀瞬间直接累加经验 `progress.xp += enemy.xp`，并立即调用通用连升检查 `checkLevelUp(state)`；
+      - **城墙修复包（Drop）保持现状**：概率掉落、向城墙中点飞行、到达修墙回血逻辑完整保留；
+      - `mainScene.ts` 渲染层清理经验宝石绘制，避免冗余遍历。
+    - **10分钟战役模式难度大幅提升**：
+      - **小怪血量统一 +50% (`enemies.json`)**：`runner` (18 -> 27)、`standard` (40 -> 60)、`tank` (220 -> 330)；
+      - **Boss 血量统一 +100% (`enemies.json`)**：`boss_1` (504 -> 1008)；
+      - **小怪数量统一 +50% (`waves.json`)**：匀速刷怪段 `perSec` 全部提升为 1.5 倍（0.6->0.9, 1.0->1.5, 3.0->4.5, 5.0->7.5 等）；爆发波小怪 `count` 全部提升为 1.5 倍（6->9, 8->12, 24->36, 36->54 等）；Boss 每次爆发保持 1 只（血量已翻倍）；
+      - 单测适配：`waves.test.ts`、`bossRewards.test.ts`、`gems.test.ts` 更新真实数据断言；
+      - 平衡回归：`balance.test.ts` 自动化对局顺利收敛（优秀 build seed=2024 通关击杀达 1689 只，终局 38 级；endless 击杀达 8014 只压死收敛）。
+    - **单测与全量回归**：
+      - 全量 35 个测试文件、627 个测试用例 100% 全部通过。
+13. **M13: 难度精细回调（小怪血量120%、Boss血量150%、小怪数量130%）**：
+    - **敌人血量精细调整 (`src/data/enemies.json`)**：
+      - 小怪血量设为基线 120%：`runner: 21.6`（基线 18）、`standard: 48`（基线 40）、`tank: 264`（基线 220）；
+      - Boss 血量设为基线 150%：`boss_1: 756`（基线 504）；
+      - `bossRewards.test.ts` 同步更新对 `boss_1.hp === 756` 的断言。
+    - **小怪数量精细调整 (`src/data/waves.json`)**：
+      - 匀速段 `perSec` 全部设为基线 130%：如 0.6->0.78, 1.0->1.3, 1.2->1.56, 0.5->0.65, 2.2->2.86, 2.4->3.12, 2.5->3.25, 1.8->2.34, 2.6->3.38, 2.8->3.64, 3.0->3.9, 1.5->1.95, 5.0->6.5 等；
+      - 爆发波 `burst.count` 全部设为基线 130%（四舍五入取整）：85s(8), 160s(8), 195s(10), 285s(31), 415s(31), 470s(31), 525s(34), 550s(47), 580s(23)，Boss 每次依然 1 只保持稳定；
+      - `waves.test.ts` 同步更新 t=85 首个爆发波数量为 8 的断言；
+      - `balance.test.ts` 节奏断言校准为允许通关种子承受前期抗压咬合（半血以内逆风翻盘）。
+    - **全自动对局与质量检验**：
+      - Campaign 模式种子 7、42、2024 全部通关（击杀 1410~1467 只，终局 Lv.35~36）；
+      - Endless 模式在 792.1s（约 800s 锚点）被怪潮（5轮膨胀 ×32倍）收敛压死，击杀 9471 只；
+      - 全量 35 个测试文件、627 个测试用例 100% 全部通过。
 
-## 交接提交信息
+14. **M14: 弹射棱镜专属卡牌重构（删除回旋返回，新增聚能折返与棱镜往复）**：
+    - **卡牌配置更新 (`src/data/weapons/prism.json`)**：彻底移除旧卡牌 `boomerang`（回旋返回），加入 `focus_return`（聚能折返，100%基础+每跳25%增伤贯穿光梭）与 `prism_recurse`（棱镜往复，解除单次命中限制支持折返弹跳）。
+    - **物理碰撞去重放宽 (`src/core/projectiles.ts`)**：针对 `prismRecurse === 1 && returning !== 1` 放宽判定，仅跳过刚命中的上一个目标，允许弹丸在双怪之间持续高速往复弹射，保留完整 $N$ 次跳跃历史与递减伤害指数。
+    - **行为契约与寻的算法 (`src/core/behaviors/behavior_prismChain.ts`)**：
+      - 升级为两级优先级寻的：第一优先级锁定未受击存活敌，第二优先级（无新目标且允许往复）锁定非刚命中自身的最近存活怪；
+      - 弹跳终止统一触发【聚能折返】：伤害按 $N = \text{proj.hitIds.length}$ 蓄能 $1 + 0.25 \times N$，射出半径 16、穿透 999 的宽体光梭贯穿飞向角色，彻底修复打单体 Boss/孤立怪时的截断漏洞。
+    - **平衡评分与测试验收**：
+      - `balance.test.ts` 权重配置更新；
+      - `prismChain.test.ts` 新增聚能折返专项测试（基础契约、伤害倍率、单怪保底修复、贯穿扫射）、棱镜往复专项测试（两怪互弹打满跳数、优先新怪、往复+折返联动测试）；
+      - 全量 35 个测试文件、632 个测试用例 100% 全部通过。
 
-- 交接前发现项目没有 `.git` 目录，因此本次交接会初始化 Git 仓库并创建首个 checkpoint commit。
-- 提交内容包含当前源码、配置、设计/任务文档、`HANDOFF.md` 和 `.gitignore`；`node_modules/`、`dist/` 和临时日志不提交。
+15. **M15: 10分钟战役节奏优化（小怪血量100%、Boss血量180%、怪量140%、每秒血量增长提升20%）**：
+    - **怪物基础血量重置 (`src/data/enemies.json`)**：
+      - 小怪回归 100% 基线：`runner: 18`、`standard: 40`、`tank: 220`（降低前期卡手感，割草更顺畅）；
+      - Boss 强化至 180% 基线：`boss_1: 907`（原 756，显著强化首领战压迫感）；
+      - `bossRewards.test.ts` 同步更新断言 `expect(boss.hp).toBe(907)`。
+    - **波次密度与时间膨胀校准 (`src/data/waves.json`)**：
+      - 刷怪量统一升至 140% 基线：匀速段 `perSec`（0.84, 1.4, 1.68, 0.7, 3.08, 3.36, 3.5, 2.52 等）与爆发波小怪数量（85s[8], 160s[8], 195s[11], 285s[34], 415s[34], 470s[34], 525s[36], 550s[50], 580s[25]）全面扩展；
+      - 动态膨胀提升 20%：`scaling.hpPerSec` 由 0.008 提升至 0.0096（终局 600s 膨胀倍率由 5.80 倍增至 6.76 倍，解决后期过易问题）；
+      - `waves.test.ts` 同步更新断言 `expect(REAL.scaling).toEqual({ hpPerSec: 0.0096 })`。
+    - **自动化平衡与全量回归验收**：
+16. **M16: 黑洞即时拉拽、Boss 异常状态抗性、突破上限文案清洗与无效分裂牌排除**：
+    - **黑洞即时拉拽与删除持续吸引**：
+      - `src/data/effects.json` 将 `blackhole` 的 `durationMs` 改为 `0` 并移除持续拉拽参数；`src/data/weapons/mortar.json` 同步更新卡牌描述文案为“爆炸后幸存敌人被瞬间拉至爆心”；
+      - `src/core/effects.ts` 在 `applyInstant` 中接入黑洞即时处理：命中当帧将幸存敌人坐标拉至爆心并执行场地 clamp，不占用效果槽，彻底消除长达 1.5s 的持续死吸，由下一帧的空间碰撞算法自然分离；
+      - `src/core/behaviors/mortar.test.ts` 与 `src/core/effects.test.ts` 全面更新为即时拉拽断言。
+    - **Boss 异常状态抗性**：
+      - 眩晕缩短：在 `applyEffect` 中检测 `bearer.isBoss === true` 时将 `stun` 持续时间设定为 400ms（普通怪 800ms）；
+      - 减速削弱：在 `collectFactor` 中检测 Boss 减速，`slow` 乘区设为 0.75（仅降低 25% 移速，普通怪降低 50%）；`chill` 单层乘区设为 0.875（仅降低 12.5% 移速，普通怪降低 25%）。
+    - **突破上限描述清洗与分裂牌排除**：
+      - 文案清洗：`src/core/upgrade.ts` 新增 `sanitizeUnlimitedCardDescription` 并在 `allMaxedUnlocked` 激活时自动剔除“（可叠 n 次）”、“，上限n次”等误导性文案，实际保持可无限刷新；
+      - 分裂牌排除：`src/data/cards.json` 将 `split_shot` 改为 `"once": true`；`src/core/cards.ts` 的 `availableCards` 保证无论解锁前后，已持有分裂牌均不再刷新进池，避免无收益重复升级。
+    - **单测与全量回归**：
+      - 全量 35 个测试文件、637 个测试用例 100% 全部通过；
+      - `balance.test.ts` 全自动对局：战役模式种子 7、42、2024 全部通关，无尽模式在 800.6s（精确贴合 800s 目标锚点）收敛。
+
+---
+
+## 4. 当前工程状态与质量指标
+
+- **当前工程是否能直接运行/编译：** **是**。
+- **全量测试结果 (`npm run test` / `vitest run`)：**
+  - **35 / 35 test files passed (100%)**
+  - **637 / 637 tests passed (100%)**
+  - 运行总耗时约 21.3s。
+- **静态检查 (`npm run lint` / `eslint .`)：**
+  - **ESLint 通过，0 errors, 0 warnings**。
+- **生产构建 (`npm run build`)：**
+  - **`tsc --noEmit && vite build` 成功**，产物正常生成在 `dist/`。
+- **开发分支：** `feature/dev-continue`。
+
+---
+
+## 5. 给接手 Agent 的后续建议
+
+1. **分支合并**：当前分支 `feature/dev-continue` 包含 M1 至 M16 的完整改动，35 个测试文件 100% 通过且构建、lint 全绿。在用户确认后可提交并合并至 `main` 分支。
+2. **新增测试文件跟踪**：`src/core/ballistics_cards_closed_loop.test.ts`、`src/core/m2_boundary_extreme.test.ts` 与 `src/game/session.test.ts` 为已验证通过的核心闭环测试文件，后续提交时可一并 `git add` 纳入版本控制。
+3. **人工试玩体验**：可启动 `npm run dev` 在浏览器中进行完整试玩体验：
+   - 体验迫击榴弹黑洞强化在命中瞬间聚怪后自然推开的清爽手感，不再长时间死吸怪潮；
+   - 观察 Boss 受眩晕与减速时更轻微的控制停摆与减速反馈；
+   - 突破上限后检查升级卡牌说明中的次数限制文字是否已清除，且不再刷出多余的分裂牌。
+4. **后续微调规范**：若后续需要进一步调整游戏手感或武器伤害，请严格遵循「纯数据驱动」原则，在 `src/data/` 的 JSON 文件中修改，切勿硬编码进行为层代码。

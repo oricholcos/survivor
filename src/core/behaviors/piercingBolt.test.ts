@@ -205,7 +205,7 @@ describe('数值全部来自 WeaponDef（改表即变，T5.3a 牌池制）', () 
     const railDef = loadWeaponDefs().rail_piercer;
     expect(railDef).toBeDefined();
 
-    // 无牌 = base：damage 10 / pierce 2
+    // 无牌 = base：damage 10 / pierce 4
     const s1 = createSimState(1);
     for (const y of [1000, 900, 800]) {
       makeEnemy(s1, 360, y);
@@ -214,7 +214,7 @@ describe('数值全部来自 WeaponDef（改表即变，T5.3a 牌池制）', () 
     behavior.fire(s1, 'rail_piercer', getWeaponStats(railDef, s1, 'rail_piercer'));
     expect(s1.enemies[0].hp).toBe(90);
     expect(s1.enemies[1].hp).toBe(90);
-    expect(s1.enemies[2].hp).toBe(100);
+    expect(s1.enemies[2].hp).toBe(90);
 
     // 牌组 [伤害强化 +2 张贯通]：damage 13、pierce 4 → 3 个线上敌人全中
     const s3 = createSimState(1);
@@ -293,186 +293,62 @@ function makeRailDefLike(): WeaponDef {
   };
 }
 
-// —— T5.3b 轨道炮专属牌接线：三叉 / 折射叠层 / 跳弹 / 蓄力增伤 ——
+// —— 轨道炮专属牌接线：智能折射 / 穿透增幅 / 三叉分裂 ——
 
-describe('三叉分裂（trident_split 牌：±10° 侧射线独立结算）', () => {
-  it('主射线 + ±10° 各一条侧射线（VFX 3 段）；各射线独立结算、各穿 pierce 个', () => {
+describe('智能折射（refract 牌：命中后折向300px内最近未受击敌人，折射-1，穿透-1，上限4次）', () => {
+  it('命中触发折射，300px内最近未受击敌人受到伤害，折射与穿透消耗', () => {
     const state = createSimState(1);
-    // 主目标 (360,900) 距角色 320（最近 → 主射线正上）；侧线敌人在 ±10° 线上更远（t=900）
-    const main = makeEnemy(state, 360, 900);
-    const rad = (10 * Math.PI) / 180;
-    const right = makeEnemy(state, 360 + 900 * Math.sin(rad), 1220 - 900 * Math.cos(rad));
-    const left = makeEnemy(state, 360 - 900 * Math.sin(rad), 1220 - 900 * Math.cos(rad));
+    const m1 = makeEnemy(state, 360, 900); // 主目标
+    const r1 = makeEnemy(state, 500, 900); // 距 m1 140 ≤ 300：折射目标
+    behavior.fire(state, 'rail_piercer', makeStats({ pierce: 2, refract: 1 }));
 
-    behavior.fire(state, 'rail_piercer', makeStats({ trident: 1, tridentAngleDeg: 10 }));
-
-    expect(main.hp).toBe(90); // 主射线 10 伤
-    expect(right.hp).toBe(90); // +10° 侧射线独立结算
-    expect(left.hp).toBe(90); // -10° 侧射线独立结算
+    expect(m1.hp).toBe(90);
+    expect(r1.hp).toBe(90);
     const vfx = state.meta['rail_vfx:rail_piercer'] as { segments: unknown[] };
-    expect(vfx.segments).toHaveLength(3); // 主 + 双侧
-  });
-
-  it('侧射线各穿 pierce 个（pierce=2：每条侧线上 2 个敌人全中）；对照无牌只有主射线 1 段', () => {
-    const state = createSimState(1);
-    const rad = (10 * Math.PI) / 180;
-    const main = makeEnemy(state, 360, 700); // 距 520：主射线正上（比侧线敌人近）
-    // +10° 线上 t=600/t=800 两个、-10° 线上 t=600/t=800 两个（都比主目标远）
-    makeEnemy(state, 360 + 600 * Math.sin(rad), 1220 - 600 * Math.cos(rad));
-    makeEnemy(state, 360 + 800 * Math.sin(rad), 1220 - 800 * Math.cos(rad));
-    makeEnemy(state, 360 - 600 * Math.sin(rad), 1220 - 600 * Math.cos(rad));
-    makeEnemy(state, 360 - 800 * Math.sin(rad), 1220 - 800 * Math.cos(rad));
-
-    behavior.fire(state, 'rail_piercer', makeStats({ trident: 1, tridentAngleDeg: 10 }));
-    expect(main.hp).toBe(90); // 主射线
-    for (let i = 1; i < state.enemies.length; i++) {
-      // 每条侧线各自独立结算、各穿 pierce=2 个：线上的 2 个敌人各中 1 发（pierce=1 时更远者会被截断）
-      expect(state.enemies[i].hp).toBe(90);
-    }
-
-    // 对照无牌：±10° 线上的敌人不受击、VFX 仅主射线 1 段
-    const plain = createSimState(1);
-    makeEnemy(plain, 360, 700); // 主射线目标（最近）
-    makeEnemy(plain, 360 + 600 * Math.sin(rad), 1220 - 600 * Math.cos(rad)); // 侧线位置
-    behavior.fire(plain, 'rail_piercer', makeStats());
-    expect(plain.enemies[1].hp).toBe(100);
-    const vfx = plain.meta['rail_vfx:rail_piercer'] as { segments: unknown[] };
-    expect(vfx.segments).toHaveLength(1);
+    expect(vfx.segments.length).toBeGreaterThanOrEqual(2);
   });
 });
 
-describe('折射+1（refract_up 牌可叠层：终点偏 30° 续射半程、链式续段）', () => {
-  it('1 层：主射线终点续一段（长 = range×0.5、方向 +30°）；2 层：再从上一段终点 +30° 续一段', () => {
+describe('穿透增幅（penetrateAmp 牌：射线每贯穿一个敌人，后续伤害提升25%）', () => {
+  it('第1个怪100%、第2个怪125%、第3个怪150%', () => {
     const state = createSimState(1);
-    makeEnemy(state, 360, 600); // 主射线需有目标才开火
-    behavior.fire(state, 'rail_piercer', makeStats({ refract: 2, refractAngleDeg: 30, refractLengthFactor: 0.5 }));
+    const a = makeEnemy(state, 360, 1000, 100);
+    const b = makeEnemy(state, 360, 800, 100);
+    const c = makeEnemy(state, 360, 600, 100);
 
-    const vfx = state.meta['rail_vfx:rail_piercer'] as {
-      segments: Array<{ x1: number; y1: number; x2: number; y2: number }>;
-    };
-    expect(vfx.segments).toHaveLength(3); // 主 + 2 段折射
-    const range = Math.hypot(720, 1280 - -40);
-    const [m, r1, r2] = vfx.segments;
-    // 主射线：角色 (360,1220) → 正上满射程
-    expect(m.x2).toBeCloseTo(360, 6);
-    expect(m.y2).toBeCloseTo(1220 - range, 6);
-    // 折射段 1：主射线终点、方向 (sin30, -cos30)、长 range×0.5
-    expect(r1.x1).toBeCloseTo(m.x2, 6);
-    expect(r1.y1).toBeCloseTo(m.y2, 6);
-    expect(r1.x2).toBeCloseTo(m.x2 + range * 0.5 * Math.sin((30 * Math.PI) / 180), 6);
-    expect(r1.y2).toBeCloseTo(m.y2 - range * 0.5 * Math.cos((30 * Math.PI) / 180), 6);
-    // 折射段 2：上一段终点再 +30°（累计 60°）
-    expect(r2.x1).toBeCloseTo(r1.x2, 6);
-    expect(r2.y1).toBeCloseTo(r1.y2, 6);
-    expect(r2.x2).toBeCloseTo(r1.x2 + range * 0.5 * Math.sin((60 * Math.PI) / 180), 6);
-    expect(r2.y2).toBeCloseTo(r1.y2 - range * 0.5 * Math.cos((60 * Math.PI) / 180), 6);
-  });
+    behavior.fire(state, 'rail_piercer', makeStats({ pierce: 3, penetrateAmp: 0.25 }));
 
-  it('折射段独立结算：段中点敌人受伤（几何精确放置）', () => {
-    const state = createSimState(1);
-    makeEnemy(state, 360, 600); // 主射线目标
-    const range = Math.hypot(720, 1280 - -40);
-    const rad = (30 * Math.PI) / 180;
-    const half = range * 0.5;
-    // 折射段中点 = 主射线终点 (360, 1220-range) + (half/2)×方向(sin30, -cos30)
-    const onRefract = makeEnemy(
-      state,
-      360 + (half / 2) * Math.sin(rad),
-      1220 - range - (half / 2) * Math.cos(rad),
-    );
-
-    behavior.fire(state, 'rail_piercer', makeStats({ refract: 1, refractAngleDeg: 30, refractLengthFactor: 0.5 }));
-    expect(onRefract.hp).toBe(90); // 折射段中点敌人受伤
+    expect(a.hp).toBe(90);   // 10 * (1 + 0 * 0.25) = 10
+    expect(b.hp).toBe(87.5); // 10 * (1 + 1 * 0.25) = 12.5 -> 100 - 12.5 = 87.5
+    expect(c.hp).toBe(85);   // 10 * (1 + 2 * 0.25) = 15.0 -> 100 - 15 = 85
   });
 });
 
-describe('跳弹（ricochet 牌：主射线穿透链末位向范围内未受击者追加结算）', () => {
-  it('主链打完（pierce=1 命中最近）→ 从最后受击者向 200px 内未受击最近者跳弹（全额伤害 + VFX 段）', () => {
+describe('三叉分裂（trident 牌：多目标锁定分束或单目标聚合打击）', () => {
+  it('单怪聚合打击：基础伤害乘1.6（16伤），记录3段聚合线段', () => {
     const state = createSimState(1);
-    const onRay = makeEnemy(state, 360, 600); // 距 620：主射线上（pierce 1 只中它）
-    const near = makeEnemy(state, 500, 600); // 距 onRay 140 ≤ 200：跳弹目标（距角色 635.6 更远）
-    makeEnemy(state, 500, 350); // 距 onRay 286.5 > 200：范围外不跳（距角色 881 更远）
+    const e = makeEnemy(state, 360, 900, 100);
 
-    behavior.fire(state, 'rail_piercer', makeStats({ pierce: 1, ricochet: 1, ricochetRange: 200 }));
+    behavior.fire(state, 'rail_piercer', makeStats({ trident: 1, pierce: 1 }));
 
-    expect(onRay.hp).toBe(90);
-    expect(near.hp).toBe(90); // 跳弹追加全额结算
-    expect(state.enemies[2].hp).toBe(100); // 范围外不受击
-    const vfx = state.meta['rail_vfx:rail_piercer'] as {
-      segments: Array<{ x1: number; y1: number; x2: number; y2: number }>;
-    };
-    expect(vfx.segments).toHaveLength(2); // 主射线 + 跳弹段
-    expect(vfx.segments[1].x1).toBeCloseTo(onRay.x, 6);
-    expect(vfx.segments[1].y1).toBeCloseTo(onRay.y, 6);
-    expect(vfx.segments[1].x2).toBeCloseTo(near.x, 6);
-    expect(vfx.segments[1].y2).toBeCloseTo(near.y, 6);
+    expect(e.hp).toBe(100 - 48); // 3 rays * 16 = 48 total damage
+    const vfx = state.meta['rail_vfx:rail_piercer'] as { segments: unknown[] };
+    expect(vfx.segments).toHaveLength(3);
   });
 
-  it('跳弹不重复结算已受击者；主射线无受击者不跳弹', () => {
+  it('多怪分散锁定打击：锁定场上威胁最高的至多3个不同敌人各射一道贯穿线', () => {
     const state = createSimState(1);
-    // 主射线上 2 个敌人（pierce 2 全中）：跳弹必须落在两者之外的未受击者
-    makeEnemy(state, 360, 600);
-    makeEnemy(state, 360, 400);
-    makeEnemy(state, 360, 300); // 距最后受击者 (360,400) 100 ≤ 200：第三个被跳弹命中
-    behavior.fire(state, 'rail_piercer', makeStats({ pierce: 2, ricochet: 1, ricochetRange: 200 }));
-    expect(state.enemies.map((e) => e.hp)).toEqual([90, 90, 90]); // 链 2 + 跳弹 1
+    const t1 = makeEnemy(state, 360, 900, 100);
+    const t2 = makeEnemy(state, 500, 900, 100);
+    const t3 = makeEnemy(state, 220, 900, 100);
 
-    // 范围内无未受击者：链已覆盖 → 不产生跳弹段
-    const all = createSimState(1);
-    makeEnemy(all, 360, 600);
-    makeEnemy(all, 360, 400);
-    makeEnemy(all, 360, 150); // 距最后受击者 (360,400) 250 > 200：链外且跳弹不及
-    behavior.fire(all, 'rail_piercer', makeStats({ pierce: 2, ricochet: 1, ricochetRange: 200 }));
-    expect(all.enemies.map((e) => e.hp)).toEqual([90, 90, 100]);
-    const allVfx = all.meta['rail_vfx:rail_piercer'] as { segments: unknown[] };
-    expect(allVfx.segments).toHaveLength(1); // 仅主射线：无跳弹段
+    behavior.fire(state, 'rail_piercer', makeStats({ trident: 1, pierce: 1 }));
+
+    expect(t1.hp).toBe(90);
+    expect(t2.hp).toBe(90);
+    expect(t3.hp).toBe(90);
+    const vfx = state.meta['rail_vfx:rail_piercer'] as { segments: unknown[] };
+    expect(vfx.segments).toHaveLength(3);
   });
 });
 
-describe('蓄力增伤（charge_damage 牌：连续命中同一目标叠层、换目标清零）', () => {
-  it('连续开火同一目标：首发无加成 → 第 2 连击 ×1.08、第 3 连击 ×1.16；槽位按 weaponId 记 {targetId, stacks}', () => {
-    const state = createSimState(1);
-    const e = makeEnemy(state, 360, 600, 1e6);
-    const stats = makeStats({ chargeDamagePerStack: 0.08, chargeDamageMaxStacks: 10 });
-
-    behavior.fire(state, 'rail_piercer', stats);
-    expect(e.hp).toBeCloseTo(1e6 - 10, 6); // 首发无加成
-    behavior.fire(state, 'rail_piercer', stats);
-    expect(e.hp).toBeCloseTo(1e6 - 10 - 10.8, 6); // 第 2 连击 ×1.08
-    behavior.fire(state, 'rail_piercer', stats);
-    expect(e.hp).toBeCloseTo(1e6 - 10 - 10.8 - 11.6, 6); // 第 3 连击 ×1.16
-
-    const slot = state.meta['rail_charge:rail_piercer'] as { targetId: number; stacks: number };
-    expect(slot.targetId).toBe(e.id);
-    expect(slot.stacks).toBe(3);
-  });
-
-  it('层数封顶 maxStacks（10 层 = +80%，不超上限）；换目标清零重计；无牌不建槽', () => {
-    const state = createSimState(1);
-    const a = makeEnemy(state, 360, 600, 1e6);
-    const stats = makeStats({ chargeDamagePerStack: 0.08, chargeDamageMaxStacks: 10 });
-    behavior.fire(state, 'rail_piercer', stats); // 首发无加成（stacks 0→1）
-    (state.meta['rail_charge:rail_piercer'] as { stacks: number }).stacks = 10; // 置满：封顶状态
-    behavior.fire(state, 'rail_piercer', stats);
-    expect(a.hp).toBeCloseTo(1e6 - 10 - 18, 6); // ×1.8 封顶（+80%）
-    expect((state.meta['rail_charge:rail_piercer'] as { stacks: number }).stacks).toBe(10); // 恰在 maxStacks
-
-    // 换目标：清零重计（a 死亡 → 打 b：首发无加成 10）
-    a.dead = true;
-    const b = makeEnemy(state, 360, 700, 1e6);
-    behavior.fire(state, 'rail_piercer', stats);
-    expect(b.hp).toBeCloseTo(1e6 - 10, 6);
-    const slot = state.meta['rail_charge:rail_piercer'] as { targetId: number; stacks: number };
-    expect(slot.targetId).toBe(b.id);
-    expect(slot.stacks).toBe(1);
-
-    // 无牌：不建槽、伤害恒定
-    const plain = createSimState(1);
-    const c = makeEnemy(plain, 360, 600, 1e6);
-    for (let i = 0; i < 3; i++) {
-      behavior.fire(plain, 'rail_piercer', makeStats());
-    }
-    expect(c.hp).toBeCloseTo(1e6 - 30, 6);
-    expect(plain.meta['rail_charge:rail_piercer']).toBeUndefined();
-  });
-});

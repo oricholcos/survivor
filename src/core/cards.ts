@@ -50,25 +50,29 @@ export interface WeaponCardDef {
   requiresCard?: string | null;
 }
 
+/** 武器默认等级上限（T5.3a 牌池制约定：10 级封顶）。 */
+export const MAX_WEAPON_LEVEL = 10;
+
 /** 读取某武器已持有的某张牌张数（未拥有武器/未持有 → 0）。 */
 export function getCardCount(state: SimState, weaponId: string, cardId: string): number {
   return state.weaponStates[weaponId]?.cards[cardId] ?? 0;
 }
 
 /** 武器是否满级（level >= maxLevel；数据表缺该武器 → 不视为满级）。 */
-export function isWeaponMaxed(state: SimState, weaponId: string, defs: Record<string, { maxLevel: number }>): boolean {
+export function isWeaponMaxed(state: SimState, weaponId: string, defs: Record<string, { maxLevel?: number }>): boolean {
   const def = defs[weaponId];
   if (!def) {
     return false;
   }
-  return state.weaponStates[weaponId].level >= def.maxLevel;
+  const max = typeof def.maxLevel === 'number' ? def.maxLevel : MAX_WEAPON_LEVEL;
+  return state.weaponStates[weaponId].level >= max;
 }
 
 /**
  * 无限牌池解锁判定（用户拍板）：拥有武器数 ≥ config.maxWeaponSlots 且【全部】达到 maxLevel。
  * 解锁后所有数量上限失效（once 布尔牌仍拿一次即移除）；武器栏上限不变。
  */
-export function allMaxedUnlocked(state: SimState, defs: Record<string, { maxLevel: number }>): boolean {
+export function allMaxedUnlocked(state: SimState, defs: Record<string, { maxLevel?: number }>): boolean {
   const owned = Object.keys(state.weaponStates);
   if (owned.length < state.config.maxWeaponSlots) {
     return false;
@@ -108,8 +112,8 @@ export function availableCards(def: { cards: WeaponCardDef[] }, ws: { cards: Rec
   for (let i = 0; i < def.cards.length; i++) {
     const card = def.cards[i];
     const count = held[card.id] ?? 0;
-    if (card.once && count > 0) {
-      continue; // 布尔机制牌：拿到一次即从池移除（解锁前后一致）
+    if ((card.once || card.id === 'split_shot') && count > 0) {
+      continue; // 布尔机制牌与分裂牌：拿到一次即从池移除（解锁前后一致，分裂不重复叠加）
     }
     if (!unlocked && card.maxCount !== undefined && count >= card.maxCount) {
       continue; // 解锁前：达数量上限（解锁后上限全失效）
@@ -125,21 +129,6 @@ export function availableCards(def: { cards: WeaponCardDef[] }, ws: { cards: Rec
   return out;
 }
 
-/** 应用一组参数注入一次（set/add/mul/div，见 CardParam）。缺省键按 0 起算（set/mul/div 直接覆盖）。 */
-function applyParams(stats: Record<string, number>, params: CardParam[]): void {
-  for (let i = 0; i < params.length; i++) {
-    const p = params[i];
-    if (p.op === 'set') {
-      stats[p.key] = p.value;
-    } else if (p.op === 'add') {
-      stats[p.key] = (stats[p.key] ?? 0) + p.value;
-    } else if (p.op === 'mul') {
-      stats[p.key] = (stats[p.key] ?? 0) * p.value;
-    } else {
-      stats[p.key] = (stats[p.key] ?? 0) / p.value;
-    }
-  }
-}
 
 /**
  * 由武器定义 + 武器状态（牌表）解析出 WeaponStats：base 拷贝 → 按 def.cards 目录序逐牌
@@ -162,8 +151,17 @@ export function buildWeaponStats(
       continue;
     }
     if (card.params) {
-      for (let n = 0; n < count; n++) {
-        applyParams(stats, card.params);
+      for (let pIdx = 0; pIdx < card.params.length; pIdx++) {
+        const p = card.params[pIdx];
+        if (p.op === 'set') {
+          stats[p.key] = p.value;
+        } else if (p.op === 'add') {
+          stats[p.key] = (stats[p.key] ?? 0) + p.value * count;
+        } else if (p.op === 'mul') {
+          stats[p.key] = (stats[p.key] ?? 0) * Math.pow(p.value, count);
+        } else {
+          stats[p.key] = (stats[p.key] ?? 0) / Math.pow(p.value, count);
+        }
       }
     }
     if (card.kind === 'range_mult' && typeof card.value === 'number') {
@@ -206,8 +204,6 @@ export function dotTickMultiplier(
 }
 
 // —— 连射波调度（T5.3b 弹道机制接线，burst_shot 通用牌的消费端） ——
-// TODO(handoff): T5.3b 在此暂停。该队列基础已实现，但所有适用武器的连射消费、与多射/分裂的组合行为及最终平衡仍需逐武器验证。
-//
 // 语义（锁定，与任务书一致）：
 // - burst_shot 每张给 stats.burstWaves +1（add 乘区，无牌时键缺失按 0）——语义为「跟发波数」：
 //   首波开火时即时发射，其后 burstWaves 波按 stats.burstIntervalMs（=150，表值）逐波延迟跟发；

@@ -12,7 +12,7 @@ import { updateProjectiles } from '../projectiles';
 import { createSimState } from '../simState';
 import { SpatialHash } from '../spatialHash';
 import type { Enemy, SimState } from '../types';
-import { addWeapon, getWeaponStats, updateWeapons } from '../weapons';
+import { addWeapon, getWeaponStats } from '../weapons';
 import type { WeaponDef, WeaponStats } from '../weapons';
 import { behavior } from './behavior_scatterShot';
 import { BURST_QUEUE_META_KEY, type BurstWaveEntry } from '../cards';
@@ -63,10 +63,11 @@ function sortedAngles(state: SimState): number[] {
   return state.projectiles.map(angleDeg).sort((a, b) => a - b);
 }
 
-/** 以真实数据表 scatter.json 的指定牌组开火一次（新建状态；无敌人也照喷）。 */
+/** 以真实数据表 scatter.json 的指定牌组开火一次（新建状态；自带射程内敌人防空放）。 */
 function fireWithCards(cards: string[] = []): { state: SimState; stats: WeaponStats } {
   const def = loadWeaponDefs().scatter;
   const state = createSimState(1); // 角色 (360, 1220)
+  makeEnemy(state, 360, 1000); // 射程内敌人以通过防空放判定
   state.weaponStates.scatter = { level: cards.length, cooldownMs: 0, cards: {} };
   const ws = state.weaponStates.scatter;
   for (const cardId of cards) {
@@ -139,7 +140,13 @@ describe('扇形发射（fire 普通态）', () => {
   });
 
   it('短程射程：飞行距离上限 = projectileSpeed × ttlMs，模拟至 ttl 耗尽全部消失且不越界', () => {
-    const { state, stats } = fireWithCards();
+    const def = loadWeaponDefs().scatter;
+    const state = createSimState(1);
+    makeEnemy(state, 600, 1000); // 射程内且不在主弹道线上，不阻挡弹丸飞行
+    state.weaponStates.scatter = { level: 0, cooldownMs: 0, cards: {} };
+    const stats = getWeaponStats(def, state, 'scatter');
+    behavior.fire(state, 'scatter', stats);
+
     const range = stats.projectileSpeed * (stats.ttlMs / 1000);
     expect(range).toBeCloseTo(455, 6); // 700 px/s × 650 ms = 455 px：远小于全场（墙距 1060+）
     for (const p of state.projectiles) {
@@ -198,11 +205,11 @@ describe('专属牌：burn_bullet 燃烧弹', () => {
 });
 
 describe('专属牌：knockback 击退', () => {
-  it('真实表牌组：正上敌人被中央弹命中后沿背向角色方向（正上）位移 knockbackForce=60', () => {
+  it('真实表牌组：正上敌人被中央弹命中后沿竖直向上方向位移（受 maxHp 抗性缩放：hp=100 时 res = 40/100 = 0.4，force = 60，位移 24）', () => {
     const def = loadWeaponDefs().scatter;
     const state = createSimState(1);
     state.weaponStates.scatter = { level: 1, cooldownMs: 0, cards: { knockback: 1 } };
-    const e = makeEnemy(state, 360, 800); // 正上 420px：仅中央弹命中（±3.89° 近轴弹垂直距 21.7 > 16）
+    const e = makeEnemy(state, 360, 800, 100); // 正上 420px，maxHp=100
     behavior.fire(state, 'scatter', getWeaponStats(def, state, 'scatter'));
 
     const grid = makeGrid();
@@ -211,13 +218,12 @@ describe('专属牌：knockback 击退', () => {
     }
     expect(e.hp).toBe(96); // 仅一次直击（base damage 4）
     expect(e.x).toBe(360);
-    expect(e.y).toBe(740); // 背向角色 = 正上，force 60（牌表值 knockbackForce）
+    expect(e.y).toBe(776); // 800 - 60 * (40/100) = 776
   });
 
-  it('击退方向 = 背向角色（弹来向）：单弹夹具验证非轴对齐方向', () => {
+  it('击退方向强制竖直向上（dirX=0, dirY=-1），受抗性缩放', () => {
     const state = createSimState(1);
-    // 偏 12px：仍在直射路径命中容差（6+10=16）内 → 击退方向 = (12, -320) 归一
-    const e = makeEnemy(state, 372, 900);
+    const e = makeEnemy(state, 372, 900, 100); // maxHp=100
     behavior.fire(state, 'scatter', {
       damage: 4, intervalMs: 1100, projectileSpeed: 700, pierce: 0, ttlMs: 650,
       projectileCount: 1, fanAngleDeg: 0, bounceRange: 200,
@@ -228,10 +234,9 @@ describe('专属牌：knockback 击退', () => {
     for (let f = 0; f < 70 && state.projectiles.length > 0; f++) {
       updateProjectiles(state, 10, grid);
     }
-    expect(e.hp).toBe(96); // 单弹一击
-    const d = Math.hypot(12, -320);
-    expect(e.x).toBeCloseTo(372 + (12 / d) * 60, 3); // force 60 沿背向角色方向
-    expect(e.y).toBeCloseTo(900 + (-320 / d) * 60, 3);
+    expect(e.hp).toBe(96);
+    expect(e.x).toBe(372); // 竖直向上不改变 x
+    expect(e.y).toBe(900 - 24); // 900 - 60 * 0.4 = 876
   });
 
   it('无击退牌：命中不位移', () => {
@@ -318,53 +323,6 @@ describe('专属牌：bounce_up 弹丸反弹', () => {
   });
 });
 
-describe('专属牌：dragon_breath_mode 龙息模式（质变：锥形持续，不发弹丸）', () => {
-  it('龙息模式 fire 不再发弹丸：锥内扣血、锥外/超射程/尸体不扣', () => {
-    const def = loadWeaponDefs().scatter;
-    const state = createSimState(1);
-    state.weaponStates.scatter = { level: 1, cooldownMs: 0, cards: { dragon_breath_mode: 1 } };
-    const inCone = makeEnemy(state, 360, 800); // 正上 420 ≤ 455
-    const inConeOffAxis = makeEnemy(state, 450, 900); // 距 332、偏角 ~16° < 40°
-    const outAngle = makeEnemy(state, 700, 1000); // 距 405 在射程内，但偏角 ~57° > 40°
-    const outRange = makeEnemy(state, 360, 700); // 距 520 > 455：方向对但超射程
-    const corpse = makeEnemy(state, 360, 900, 50);
-    corpse.dead = true;
-
-    const stats = getWeaponStats(def, state, 'scatter');
-    behavior.fire(state, 'scatter', stats);
-
-    expect(state.projectiles).toHaveLength(0); // 不对扇形发射弹丸
-    expect(inCone.hp).toBe(96); // 100 - 4（base damage）
-    expect(inConeOffAxis.hp).toBe(96);
-    expect(outAngle.hp).toBe(100);
-    expect(outRange.hp).toBe(100);
-    expect(corpse.hp).toBe(50);
-  });
-
-  it('维持 intervalMs 节奏的持续伤害（经 updateWeapons，base 间隔 1100ms 两跳）', () => {
-    const def = loadWeaponDefs().scatter;
-    const state = createSimState(1);
-    const e = makeEnemy(state, 360, 800);
-    addWeapon(state, 'scatter');
-    state.weaponStates.scatter.cards.dragon_breath_mode = 1;
-    state.weaponStates.scatter.level = 1;
-    const defs = { scatter: def };
-
-    updateWeapons(state, 100, defs); // 第 1 跳
-    expect(e.hp).toBe(96);
-    expect(state.projectiles).toHaveLength(0);
-
-    for (let i = 0; i < 9; i++) {
-      updateWeapons(state, 100, defs); // 累计 1000ms：间隔未到
-    }
-    expect(e.hp).toBe(96);
-
-    updateWeapons(state, 100, defs); // 累计 1100ms = intervalMs → 第 2 跳
-    expect(e.hp).toBe(92);
-    expect(state.projectiles).toHaveLength(0);
-  });
-});
-
 describe('数值全部来自 weapons/scatter.json（真实表驱动，T5.3a 牌池制）', () => {
   const def = loadWeaponDefs().scatter;
 
@@ -376,8 +334,8 @@ describe('数值全部来自 weapons/scatter.json（真实表驱动，T5.3a 牌�
     expect(getBehavior('scatter_shot')).toBe(behavior); // import.meta.glob 自动注册
   });
 
-  it('牌目录：专属牌在前（burn_bullet/knockback/bounce_up/dragon_breath_mode），通用牌合并追加', () => {
-    expect(def.cards.slice(0, 4).map((c) => c.id)).toEqual(['burn_bullet', 'knockback', 'bounce_up', 'dragon_breath_mode']);
+  it('牌目录：专属牌在前（burn_bullet/knockback/bounce_up），通用牌合并追加', () => {
+    expect(def.cards.slice(0, 3).map((c) => c.id)).toEqual(['burn_bullet', 'knockback', 'bounce_up']);
     const ids = def.cards.map((c) => c.id);
     for (const genericId of ['dmg_up', 'spd_up', 'multi_shot', 'burst_shot', 'split_shot', 'range_up', 'dot_freq']) {
       expect(ids).toContain(genericId);
@@ -385,10 +343,6 @@ describe('数值全部来自 weapons/scatter.json（真实表驱动，T5.3a 牌�
     const dot = def.cards.find((c) => c.id === 'dot_freq')!;
     expect(dot.requiresCard).toBe('burn_bullet'); // dot频率前置：燃烧弹
     expect(def.rangeKeys).toEqual(['fanAngleDeg']); // 范围强化乘扇角
-    // 龙息模式互斥声明（牌池侧排除多射/连射/分裂，见 core/cards 的 excludes 语义）。
-    const dragon = def.cards.find((c) => c.id === 'dragon_breath_mode')!;
-    expect(dragon.excludes).toEqual(['multi_shot', 'burst_shot', 'split_shot']);
-    expect(dragon.once).toBe(true);
   });
 
   it('base 数值随表；弹数/扇角/伤害随牌生效（改 json 即变）', () => {
@@ -402,10 +356,8 @@ describe('数值全部来自 weapons/scatter.json（真实表驱动，T5.3a 牌�
     expect(fireWithCards(['multi_shot', 'multi_shot']).stats.projectileCount).toBe(7);
     expect(fireWithCards(['range_up']).stats.fanAngleDeg).toBeCloseTo(84, 9); // 70 × 1.2
     expect(fireWithCards(['dmg_up']).stats.damage).toBeCloseTo(4 * 1.3, 9);
-    // 弹数随牌实际生效：1/2 张多射 → 6/7 枚；龙息模式 → 0 枚（质变）。
     expect(fireWithCards(['multi_shot']).state.projectiles).toHaveLength(6);
     expect(fireWithCards(['multi_shot', 'multi_shot']).state.projectiles).toHaveLength(7);
-    expect(fireWithCards(['dragon_breath_mode']).state.projectiles).toHaveLength(0);
   });
 
   it('改表即变：alt def（不同数值）驱动同一行为', () => {
@@ -422,6 +374,7 @@ describe('数值全部来自 weapons/scatter.json（真实表驱动，T5.3a 牌�
       cards: [{ id: 'multi_shot', name: '多射+1', description: '', params: [{ key: 'projectileCount', value: 1, op: 'add' }] }],
     };
     const state = createSimState(1);
+    makeEnemy(state, 360, 1100); // 距角色 120 ≤ effRange 150，在射程内
     state.weaponStates.alt_scatter = { level: 0, cooldownMs: 0, cards: {} };
     behavior.fire(state, 'alt_scatter', getWeaponStats(altDef, state, 'alt_scatter'));
     expect(state.projectiles).toHaveLength(3);
@@ -438,6 +391,7 @@ describe('数值全部来自 weapons/scatter.json（真实表驱动，T5.3a 牌�
 
     // 多射牌 ×1：3 → 4 枚（projectileCount +1）。
     const state2 = createSimState(1);
+    makeEnemy(state2, 360, 1100); // 确保射程内有怪物
     state2.weaponStates.alt_scatter = { level: 1, cooldownMs: 0, cards: { multi_shot: 1 } };
     behavior.fire(state2, 'alt_scatter', getWeaponStats(altDef, state2, 'alt_scatter'));
     expect(state2.projectiles).toHaveLength(4);
@@ -457,17 +411,28 @@ describe('可复现性（行为零随机：不依赖 rng，任意种子同结果
     expect(volley(42)).toEqual(volley(7));
   });
 
-  it('龙息结算可复现：同种子（乃至异种子）敌人扣血一致', () => {
-    const run = (seed: number) => {
-      const state = createSimState(seed);
-      state.weaponStates.scatter = { level: 1, cooldownMs: 0, cards: { dragon_breath_mode: 1 } };
-      makeEnemy(state, 360, 800);
-      makeEnemy(state, 700, 1000);
-      behavior.fire(state, 'scatter', getWeaponStats(loadWeaponDefs().scatter, state, 'scatter'));
-      return state.enemies.map((e) => e.hp);
-    };
-    expect(run(42)).toEqual([96, 100]);
-    expect(run(42)).toEqual(run(7));
+  it('防空放：射程内无存活怪物时不发射子弹、cooldownMs 归 0；怪物进入射程后开火', () => {
+    const def = loadWeaponDefs().scatter;
+    const state = createSimState(1);
+    addWeapon(state, 'scatter');
+    state.weaponStates.scatter.cooldownMs = 0;
+    const stats = getWeaponStats(def, state, 'scatter'); // effRange = 700 * 0.65 = 455 px
+
+    // 场上无怪物：开火被拦截，cooldownMs 归 0，无弹丸发射
+    behavior.fire(state, 'scatter', stats);
+    expect(state.projectiles).toHaveLength(0);
+    expect(state.weaponStates.scatter.cooldownMs).toBe(0);
+
+    // 怪物在射程外 (y = 500, dist from character 1220 - 500 = 720 > 455)
+    makeEnemy(state, 360, 500);
+    behavior.fire(state, 'scatter', stats);
+    expect(state.projectiles).toHaveLength(0);
+    expect(state.weaponStates.scatter.cooldownMs).toBe(0);
+
+    // 怪物进入射程内 (y = 1000, dist from character 1220 - 1000 = 220 <= 455)
+    makeEnemy(state, 360, 1000);
+    behavior.fire(state, 'scatter', stats);
+    expect(state.projectiles.length).toBeGreaterThan(0);
   });
 });
 
@@ -476,6 +441,20 @@ describe('可复现性（行为零随机：不依赖 rng，任意种子同结果
 /** 以真实数据表 scatter.json 的指定牌组在既有状态上开火一次（敌人由用例自行布置）。 */
 function fireScatter(state: SimState, cards: string[]): WeaponStats {
   const def = loadWeaponDefs().scatter;
+  const effRange = def.base.projectileSpeed * (def.base.ttlMs / 1000);
+  const cx = state.character.x;
+  const cy = state.character.y;
+  let hasEnemy = false;
+  for (const e of state.enemies) {
+    if (!e.dead && Math.hypot(e.x - cx, e.y - cy) <= effRange) {
+      hasEnemy = true;
+      break;
+    }
+  }
+  if (!hasEnemy) {
+    makeEnemy(state, 360, 1000);
+  }
+
   state.weaponStates.scatter = { level: cards.length, cooldownMs: 0, cards: {} };
   const ws = state.weaponStates.scatter;
   for (const cardId of cards) {
@@ -549,28 +528,6 @@ describe('分裂（split_shot 牌：弹丸首命中分裂次级弹丸）', () =>
       state.timeMs += 16;
     }
     expect(state.nextId - before).toBe(5);
-  });
-});
-
-describe('龙息模式互斥（行为侧兜底：多射/连射/分裂全部忽略）', () => {
-  it('先拿多射/连射/分裂再拿龙息模式：fire 走锥形（不发弹、不排波）', () => {
-    const state = createSimState(1);
-    const e = makeEnemy(state, 360, 1100, 1e6); // 锥内
-    fireScatter(state, ['multi_shot', 'burst_shot', 'split_shot', 'dragon_breath_mode']);
-    expect(state.projectiles).toHaveLength(0); // 不发弹丸
-    expect(state.meta[BURST_QUEUE_META_KEY]).toBeUndefined(); // 不排连射波
-    expect(e.hp).toBeCloseTo(1e6 - 4, 6); // 锥形直击照常
-  });
-
-  it('在途待发波：玩家转龙息后重放波作废（当前牌表兜底短路）', () => {
-    const state = createSimState(1);
-    fireScatter(state, ['multi_shot', 'burst_shot']); // 首波 6 枚 + 队列 1 波
-    expect(state.projectiles).toHaveLength(6);
-    state.weaponStates.scatter.cards.dragon_breath_mode = 1; // 转龙息（在途波未重放）
-    state.timeMs += 150;
-    behavior.update!(state, 16);
-    expect(state.projectiles).toHaveLength(6); // 重放波被作废：无新弹
-    expect((state.meta[BURST_QUEUE_META_KEY] as BurstWaveEntry[])).toHaveLength(0); // 波已消费（作废）
   });
 });
 

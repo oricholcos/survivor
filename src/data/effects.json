@@ -63,10 +63,9 @@
   "blackhole": {
     "id": "blackhole",
     "name": "黑洞",
-    "durationMs": 1500,
+    "durationMs": 0,
     "maxStacks": 1,
-    "refresh": "reset",
-    "pullPerSec": 220
+    "refresh": "reset"
   },
   "overheat": {
     "id": "overheat",

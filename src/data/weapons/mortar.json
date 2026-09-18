@@ -37,7 +37,7 @@
     {
       "id": "black_hole",
       "name": "黑洞",
-      "description": "爆炸后幸存敌人被持续拉向爆心",
+      "description": "爆炸后幸存敌人被瞬间拉至爆心",
       "once": true,
       "params": [{ "key": "blackHole", "value": 1, "op": "set" }]
     }

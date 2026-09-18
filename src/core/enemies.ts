@@ -5,6 +5,7 @@
 
 import { isStunned, speedMultiplier } from './effects';
 import { pushEvent } from './events';
+import { clamp } from './math';
 import type { SpatialHash } from './spatialHash';
 import type { Enemy, SimState } from './types';
 
@@ -38,11 +39,12 @@ export interface EnemyTypeData {
  * - pushEvent enemySpawned{typeId, isBoss}。
  */
 export function spawnEnemy(state: SimState, type: EnemyTypeData, x: number): Enemy {
+  const safeX = clamp(x, type.radius, state.layout.width - type.radius);
   const enemy: Enemy = {
     id: state.nextId++,
     typeId: type.id,
     name: type.name,
-    x,
+    x: safeX,
     y: state.layout.spawnLineY,
     radius: type.radius,
     hp: type.hp,
@@ -150,6 +152,9 @@ export function updateEnemies(state: SimState, dtMs: number, grid: SpatialHash<E
         a.x -= half;
         b.x += half;
       }
+      // x 坐标施加边界钳制：保证在左右边缘高密度怪群推挤时，绝不会被挤出屏幕边缘。
+      a.x = clamp(a.x, a.radius, state.layout.width - a.radius);
+      b.x = clamp(b.x, b.radius, state.layout.width - b.radius);
       // 攻击态不许被挤过墙；行军态不限制。
       if (a.state === 'attack' && a.y > wallLineY) {
         a.y = wallLineY;

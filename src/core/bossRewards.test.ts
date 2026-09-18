@@ -29,11 +29,11 @@ describe('Boss 数值来自 enemies.json', () => {
     const boss = TYPES['boss_1'] as BossTypeData;
     expect(boss).toBeDefined();
     expect(boss.isBoss).toBe(true);
-    expect(boss.hp).toBe(900);
+    expect(boss.hp).toBe(907);
     expect(boss.damage).toBe(36); // T3.6 校准：40 → 36
-    expect(boss.speed).toBe(40);
+    expect(boss.speed).toBe(22);
     expect(boss.attackIntervalMs).toBe(1200);
-    expect(boss.xp).toBe(30);
+    expect(boss.xp).toBe(80);
     expect(boss.radius).toBe(34);
     expect(boss.bossHealPct).toBe(0.055); // T3.6 校准：0.2 → 0.055
   });

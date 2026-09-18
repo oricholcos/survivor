@@ -21,15 +21,18 @@ describe('createSimState', () => {
     expect(state.layout).toEqual({ width: 720, height: 1280, wallLineY: 1160, spawnLineY: -40 });
     expect(state.config).toEqual({
       xpBase: 5,
-      xpGrowth: 1.4,
+      xpTier1Step: 4,
+      xpTier2Step: 8,
+      xpCapLevel: 40,
+      xpCap: 280,
       gemFlySpeed: 600,
       dropFlySpeed: 600,
       repairDropChance: 0.02,
       repairHeal: 30,
-      wallMaxHp: 3200,
+      wallMaxHp: 1600,
       maxWeaponSlots: 4,
     });
-    expect(state.wall).toEqual({ hp: 3200, maxHp: 3200 });
+    expect(state.wall).toEqual({ hp: 1600, maxHp: 1600 });
     expect(state.character).toEqual({ x: 360, y: 1220 }); // (width/2, height-60)
     expect(state.enemies).toEqual([]);
     expect(state.projectiles).toEqual([]);

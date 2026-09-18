@@ -25,12 +25,12 @@
 //   注入）——燃烧模板的 tick 间隔 ÷ 本值（effect.data.tickMs 逐实例覆盖；仅 mult>1 时写入，
 //   不给实例钉死与效果表无关的间隔）。
 
-import { applyEffect, dealDamage, getEffectDef } from '../effects';
-import { getCardCount, scheduleBurstWaves, consumeDueBurstWaves } from '../cards';
+import { applyEffect, getEffectDef } from '../effects';
+import { scheduleBurstWaves, consumeDueBurstWaves } from '../cards';
 import { normalize } from '../math';
 import { pickNearestDistinctEnemies, spawnProjectile } from '../projectiles';
-import { leadAim } from '../targeting';
 import type { EffectInstance, Enemy, Projectile, SimState } from '../types';
+import { leadAim } from '../targeting';
 import type { WeaponBehavior } from './registry';
 import type { WeaponStats } from '../weapons';
 
@@ -40,9 +40,6 @@ import type { WeaponStats } from '../weapons';
 
 /** 弹丸半径（px）：几何常量允许硬编码，数值类一律来自数据表。 */
 const SCATTER_RADIUS = 6;
-
-/** 龙息模式牌 id（互斥兜底的牌表检查用；与 weapons/scatter.json cards 段同步）。 */
-const DRAGON_MODE_CARD_ID = 'dragon_breath_mode';
 
 /** 击退力缺省值：stats.knockbackForce 缺失时的兜底（真实数值以 scatter.json L4 mods 为准）。 */
 const DEFAULT_KNOCKBACK_FORCE = 60;
@@ -66,49 +63,12 @@ function dotMult(stats: WeaponStats): number {
 }
 
 /**
- * 龙息（L8 unlock，mods 开关 dragonBreath=1）：锥形持续化——不发弹丸，改为对锥形范围内
- * 所有存活敌人逐个 dealDamage(stats.damage)，持续节奏由解释器按 intervalMs 反复调 fire 维持。
- * 锥形：顶点在角色、朝正上方、半角 fanAngleDeg/2、射程 coneRange = projectileSpeed × ttlMs（ms→s 换算成 px）。
- */
-function breathCone(state: SimState, stats: WeaponStats): void {
-  const cx = state.character.x;
-  const cy = state.character.y;
-  const halfRad = (stats.fanAngleDeg * Math.PI) / 180 / 2;
-  const coneRange = stats.projectileSpeed * stats.ttlMs * 0.001;
-  const cosHalf = Math.cos(halfRad);
-  const enemies = state.enemies;
-  for (let i = 0; i < enemies.length; i++) {
-    const e = enemies[i];
-    if (e.dead) {
-      continue;
-    }
-    const dx = e.x - cx;
-    const dy = e.y - cy;
-    const d = Math.sqrt(dx * dx + dy * dy);
-    if (d > coneRange || d <= 1e-9) {
-      continue; // 超射程 / 与角色重合无方向
-    }
-    // 与 -y 轴夹角 <= 半角 ⟺ (-dy)/d >= cos(半角)：正上方取 1，偏到水平线取 0，
-    // 角色下方为负——全部被不等式自然拒绝，无需额外分支。
-    if (-dy / d < cosHalf) {
-      continue;
-    }
-    dealDamage(state, e, stats.damage);
-  }
-}
-
-/**
  * 发射一波（完整 projectileCount 枚，连射重放共用）：从角色位置发射 projectileCount 枚弹丸：
  * 均匀参数 t ∈ [-1, 1] 经平方映射偏角 = 半扇角 × t×|t|，中心角度密度最高、边缘稀疏，
  * 奇数枚时正中一枚恰朝正上；ttl 用 stats.ttlMs（短程：飞行距离上限 = projectileSpeed × ttlMs / 1000 px）；
  * 每枚弹的 data 快照本波开关数值（命中/死亡钩子拿不到 stats，从弹上读回）。
- * 龙息模式双保险短路（stats 开关 + 当前牌表）：命中即发弹的路径绝不与锥形模式并存。
  */
-function fireVolley(state: SimState, weaponId: string, stats: WeaponStats): void {
-  if (stats.dragonBreath === 1 || getCardCount(state, weaponId, DRAGON_MODE_CARD_ID) > 0) {
-    return; // 龙息模式：不发弹丸（重放波在途时玩家转龙息 → 该波静默作废）
-  }
-
+function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats): void {
   const count = Math.max(0, Math.round(stats.projectileCount));
   const halfRad = (stats.fanAngleDeg * Math.PI) / 180 / 2;
 
@@ -143,6 +103,7 @@ function fireVolley(state: SimState, weaponId: string, stats: WeaponStats): void
     splitFactor: opt(stats, 'splitDamageFactor'),
     splitMax: opt(stats, 'splitMaxTargets'),
     splitDone: 0,
+    isSecondary: 0,
   };
 
   for (let i = 0; i < count; i++) {
@@ -169,15 +130,36 @@ export const behavior: WeaponBehavior = {
   name: 'scatter_shot',
 
   /**
-   * 发射一波（无条件开火，无目标也照喷——扇面压制不依赖索敌）：
-   * - dragonBreath=1 → 锥形持续伤害，不发弹丸（多射/连射/分裂全部忽略：互斥兜底）；
-   * - 否则发射完整一波弹丸，并把连射跟发波排入待发队列（重放再喷完整一波）。
+   * 发射一波：检查射程内是否有存活怪物（effRange = projectileSpeed * (ttlMs / 1000)），
+   * 若无则不发射、cooldownMs 归 0 并返回；若有则发射并排入连射波。
    */
   fire(state, weaponId, stats) {
-    if (stats.dragonBreath === 1) {
-      breathCone(state, stats);
+    const effRange = stats.projectileSpeed * (stats.ttlMs / 1000);
+    const cx = state.character.x;
+    const cy = state.character.y;
+    let hasEnemyInRange = false;
+    const enemies = state.enemies;
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      if (e.dead) {
+        continue;
+      }
+      const dx = e.x - cx;
+      const dy = e.y - cy;
+      const distSq = dx * dx + dy * dy;
+      if (distSq <= effRange * effRange) {
+        hasEnemyInRange = true;
+        break;
+      }
+    }
+    if (!hasEnemyInRange) {
+      const ws = state.weaponStates[weaponId];
+      if (ws) {
+        ws.cooldownMs = 0;
+      }
       return;
     }
+
     fireVolley(state, weaponId, stats);
     scheduleBurstWaves(state, weaponId, 'scatter_shot', stats);
   },
@@ -267,8 +249,8 @@ export const behavior: WeaponBehavior = {
  */
 function splitOnHit(state: SimState, proj: Projectile, hitEnemy: Enemy): void {
   const d = proj.data;
-  if (d.splitReady !== 1 || d.splitDone === 1) {
-    return; // 未拿分裂牌 / 已分裂过（每弹至多一次）
+  if (d.splitReady !== 1 || d.splitDone === 1 || d.isSecondary === 1) {
+    return; // 未拿分裂牌 / 已分裂过 / 次级弹（每弹至多一次）
   }
   d.splitDone = 1; // 抢先置位：次级弹与同帧后续命中都不再分裂
   const factor = dataNum(d, 'splitFactor');
@@ -305,6 +287,7 @@ function splitOnHit(state: SimState, proj: Projectile, hitEnemy: Enemy): void {
         splitFactor: d.splitFactor,
         splitMax: d.splitMax,
         splitDone: 1,
+        isSecondary: 1,
       },
     });
   }

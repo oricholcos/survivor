@@ -14,6 +14,7 @@ import {
   BURST_QUEUE_META_KEY,
   getCardCount,
   dotTickMultiplier,
+  MAX_WEAPON_LEVEL,
   isWeaponMaxed,
   scheduleBurstWaves,
   type BurstWaveEntry,
@@ -152,6 +153,10 @@ describe('getWeaponStats 委托（weapons.ts 入口）', () => {
 describe('isWeaponMaxed / allMaxedUnlocked（10 级封顶 + 解锁判定）', () => {
   const defs = { a: { maxLevel: 10 }, b: { maxLevel: 10 }, c: { maxLevel: 10 }, d: { maxLevel: 10 } };
 
+  it('MAX_WEAPON_LEVEL 常量导出且值为 10', () => {
+    expect(MAX_WEAPON_LEVEL).toBe(10);
+  });
+
   it('isWeaponMaxed：level 10 封顶（= maxLevel）为满；9 未满；def 缺失视为未满', () => {
     const state = createSimState(1);
     ownWithCards(state, 'a', [], 10);
@@ -159,6 +164,20 @@ describe('isWeaponMaxed / allMaxedUnlocked（10 级封顶 + 解锁判定）', ()
     expect(isWeaponMaxed(state, 'a', defs)).toBe(true);
     expect(isWeaponMaxed(state, 'b', defs)).toBe(false);
     expect(isWeaponMaxed(state, 'ghost', defs)).toBe(false);
+  });
+
+  it('isWeaponMaxed：def 未声明 maxLevel 时默认采用 MAX_WEAPON_LEVEL (10)', () => {
+    const state = createSimState(1);
+    ownWithCards(state, 'no_max', [], 9);
+    expect(isWeaponMaxed(state, 'no_max', { no_max: {} })).toBe(false);
+    state.weaponStates.no_max.level = 10;
+    expect(isWeaponMaxed(state, 'no_max', { no_max: {} })).toBe(true);
+  });
+
+  it('isWeaponMaxed：level > 10 时仍返回 true（满级判定不仅等于也大于）', () => {
+    const state = createSimState(1);
+    ownWithCards(state, 'a', [], 15);
+    expect(isWeaponMaxed(state, 'a', defs)).toBe(true);
   });
 
   it('3 把全满 ≠ 解锁（数量不足 maxWeaponSlots=4）', () => {
@@ -178,6 +197,15 @@ describe('isWeaponMaxed / allMaxedUnlocked（10 级封顶 + 解锁判定）', ()
     expect(allMaxedUnlocked(state, defs)).toBe(false);
 
     state.weaponStates.d.level = 10;
+    expect(allMaxedUnlocked(state, defs)).toBe(true);
+  });
+
+  it('4 把武器在解锁后继续吃牌升级（如 level 11, 12），解锁状态保持为 true', () => {
+    const state = createSimState(1);
+    ownWithCards(state, 'a', [], 12);
+    ownWithCards(state, 'b', [], 11);
+    ownWithCards(state, 'c', [], 10);
+    ownWithCards(state, 'd', [], 10);
     expect(allMaxedUnlocked(state, defs)).toBe(true);
   });
 
@@ -245,12 +273,47 @@ describe('availableCards 池规则', () => {
     expect(ids(def, { cards: { dragon_breath_mode: 1 } }, true)).toEqual(['dmg']);
   });
 
+  it('split_shot 分裂牌：持有一张后在解锁前后均从池中移除（不重复刷新）', () => {
+    const def = makeCardDef([
+      { id: 'split_shot', name: '分裂', description: '', once: true, params: [] },
+      { id: 'dmg', name: '伤害强化', description: '', params: [] },
+    ]);
+    expect(ids(def, { cards: {} }, false)).toEqual(['split_shot', 'dmg']);
+    expect(ids(def, { cards: { split_shot: 1 } }, false)).toEqual(['dmg']);
+    expect(ids(def, { cards: { split_shot: 1 } }, true)).toEqual(['dmg']); // 解锁后依然不进池
+  });
+
   it('目录序输出（确定性池序）：与 def.cards 声明顺序一致', () => {
     const def = makeCardDef([
       { id: 'b', name: 'B', description: '', params: [] },
       { id: 'a', name: 'A', description: '', params: [] },
     ]);
     expect(ids(def, { cards: {} }, false)).toEqual(['b', 'a']);
+  });
+
+  it('持有计数 <= 0 的脏键不触发 once / excludes 排除，也不满足 requiresCard', () => {
+    const def = makeCardDef([
+      { id: 'once_c', name: '一次性', description: '', once: true, params: [] },
+      { id: 'ex_c', name: '互斥源', description: '', excludes: ['target_c'], params: [] },
+      { id: 'target_c', name: '被互斥', description: '', params: [] },
+      { id: 'req_c', name: '需要前置', description: '', requiresCard: 'once_c', params: [] },
+    ]);
+    const ws = { cards: { once_c: 0, ex_c: 0 } };
+    // once_c count=0 → once_c 在池；ex_c count=0 → target_c 不被互斥；req_c requires once_c 但 once_c count=0 → req_c 不在池
+    expect(ids(def, ws, false)).toEqual(['once_c', 'ex_c', 'target_c']);
+  });
+
+  it('多重互斥并集：多张持有牌各自排除不同集合，全部生效', () => {
+    const def = makeCardDef([
+      { id: 'mod_a', name: '模式A', description: '', excludes: ['sub_1', 'sub_2'], params: [] },
+      { id: 'mod_b', name: '模式B', description: '', excludes: ['sub_3'], params: [] },
+      { id: 'sub_1', name: '子项1', description: '', params: [] },
+      { id: 'sub_2', name: '子项2', description: '', params: [] },
+      { id: 'sub_3', name: '子项3', description: '', params: [] },
+      { id: 'normal', name: '普通', description: '', params: [] },
+    ]);
+    const ws = { cards: { mod_a: 1, mod_b: 1 } };
+    expect(ids(def, ws, false)).toEqual(['mod_a', 'mod_b', 'normal']);
   });
 });
 

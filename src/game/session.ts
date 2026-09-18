@@ -86,8 +86,21 @@ const WAVES = loadWavesConfig();
 loadEffectDefs();
 const ENEMY_GRID = new SpatialHash<Enemy>(64);
 
-/** 灰盒首武器：轨道贯穿炮（自动瞄准最近敌人的直线穿透弹）。 */
-const FIRST_WEAPON_ID = 'rail_piercer';
+/** 开局排除的近程武器（射程过近，不适合作为首把武器）。 */
+export const EXCLUDED_INITIAL_WEAPONS = [
+  'dragon_breath',
+  'scatter',
+  'heat_beam',
+] as const;
+
+/** 开局候选初始武器池（5 把远程武器，按字典序固定）。 */
+export const INITIAL_WEAPON_CANDIDATES = [
+  'charge_sniper',
+  'homing_missile',
+  'mortar',
+  'prism',
+  'rail_piercer',
+] as const;
 
 /** 模块级一次性引导标志：setRngFactory 与 killHooks 全局表只能各做一次。 */
 let bootstrapped = false;
@@ -170,8 +183,9 @@ function buildState(seed: number, mode: GameMode): SimState {
     updateGems(s, dt);
   });
 
-  // 开局武器（灰盒首武器）。
-  addWeapon(state, FIRST_WEAPON_ID);
+  // 开局初始武器：从候选远程武器池中确定性抽取 1 把（同种子同序列）。
+  const initialWeaponId = state.rng.pick(INITIAL_WEAPON_CANDIDATES);
+  addWeapon(state, initialWeaponId);
 
   return state;
 }

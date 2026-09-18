@@ -231,4 +231,14 @@ describe('findTarget 四级优先级（boss > attack 贴墙 > fast > 最近）',
     makeEnemy(tie, 460, 1220, { speed: 45 }); // dist 100（并列，后入数组）
     expect(findTarget(tie)).toBe(first);
   });
+
+  it('maxRange 限制：超出 maxRange 的敌人被跳过，若全超范围返回 null', () => {
+    const state = createSimState(1); // character at (360, 1220)
+    const _farEnemy = makeEnemy(state, 360, 1020, { speed: 45 }); // dist 200
+    const nearEnemy = makeEnemy(state, 360, 1120, { speed: 45 }); // dist 100
+    expect(_farEnemy).toBeDefined();
+
+    expect(findTarget(state, { maxRange: 150 })).toBe(nearEnemy);
+    expect(findTarget(state, { maxRange: 50 })).toBeNull();
+  });
 });

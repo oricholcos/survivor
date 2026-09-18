@@ -161,31 +161,52 @@ function clampInArena(state: SimState, bearer: EffectBearer): void {
   b.y = clamp(b.y, state.layout.spawnLineY, state.layout.wallLineY);
 }
 
-/** 即时效果结算（durationMs <= 0）：有 force 参数即按 dirX/dirY × force 冲量位移。 */
+/** 即时效果结算（durationMs <= 0）：有 force 参数即按冲量位移。若为 knockback，方向强制竖直向上，且受 maxHp 抗性缩放。 */
 function applyInstant(
   state: SimState,
   bearer: EffectBearer,
   def: EffectDef,
   data?: Record<string, number>,
 ): void {
+  const b = bearer as { x?: number; y?: number; maxHp?: number; hp?: number };
+  if (typeof b.x !== 'number' || typeof b.y !== 'number') {
+    return; // 无位置载体（如武器）：位移无处作用
+  }
+
+  if (def.id === 'blackhole') {
+    const cx = data?.centerX;
+    const cy = data?.centerY;
+    if (typeof cx === 'number' && typeof cy === 'number' && Number.isFinite(cx) && Number.isFinite(cy)) {
+      b.x = cx;
+      b.y = cy;
+      clampInArena(state, b);
+    }
+    return;
+  }
+
   const dataForce = data?.force;
   const force =
     typeof dataForce === 'number' && Number.isFinite(dataForce) ? dataForce : def.force;
   if (typeof force !== 'number' || !Number.isFinite(force)) {
     return; // 无冲量参数：无即时位移语义
   }
-  const b = bearer as { x?: number; y?: number };
-  if (typeof b.x !== 'number' || typeof b.y !== 'number') {
-    return; // 无位置载体（如武器）：冲量无处作用
+  if (def.id === 'knockback') {
+    const maxHp = typeof b.maxHp === 'number' && Number.isFinite(b.maxHp)
+      ? b.maxHp
+      : (typeof b.hp === 'number' && Number.isFinite(b.hp) ? b.hp : 40);
+    const res = Math.min(1, 40 / Math.max(1, maxHp));
+    b.y -= force * res;
+    clampInArena(state, b);
+  } else {
+    const dirX = data?.dirX ?? 0;
+    const dirY = data?.dirY ?? 0;
+    if (dirX === 0 && dirY === 0) {
+      return; // 零向量无方向：不位移（方向契约由调用方提供，如背向来源的单位向量）
+    }
+    b.x += dirX * force;
+    b.y += dirY * force;
+    clampInArena(state, b);
   }
-  const dirX = data?.dirX ?? 0;
-  const dirY = data?.dirY ?? 0;
-  if (dirX === 0 && dirY === 0) {
-    return; // 零向量无方向：不位移（方向契约由调用方提供，如背向来源的单位向量）
-  }
-  b.x += dirX * force;
-  b.y += dirY * force;
-  clampInArena(state, b);
 }
 
 /** 黑洞拉扯：每帧向 data.centerX/centerY 位移 pullPerSec*dtSec（不越过中心，场地钳制）。 */
@@ -273,6 +294,9 @@ export function applyEffect(
     return;
   }
 
+  const isBoss = (bearer as { isBoss?: boolean }).isBoss === true;
+  const durationMs = defId === 'stun' && isBoss ? 400 : def.durationMs;
+
   const list = listOf(bearer);
 
   // 1) 同 kind：叠层 / 刷新。
@@ -288,7 +312,7 @@ export function applyEffect(
     } else {
       inst.stacks = 1;
     }
-    inst.untilMs = state.timeMs + def.durationMs;
+    inst.untilMs = state.timeMs + durationMs;
     if (data) {
       for (const k in data) {
         inst.data[k] = data[k];
@@ -318,7 +342,7 @@ export function applyEffect(
   // 3) 挂新实例（data 深拷贝：实例不持有调用方对象引用）。
   const inst: EffectInstance = {
     kind: defId,
-    untilMs: state.timeMs + def.durationMs,
+    untilMs: state.timeMs + durationMs,
     stacks: 1,
     data: {},
   };
@@ -475,9 +499,16 @@ function collectFactor(
     if (!def) {
       continue;
     }
-    const raw = paramNum(def, inst, key);
+    let raw = paramNum(def, inst, key);
     if (raw === undefined) {
       continue;
+    }
+    if (key === 'speedFactor' && (bearer as { isBoss?: boolean }).isBoss === true) {
+      if (inst.kind === 'slow') {
+        raw = 0.75; // Boss 减速：降低 25% 移速（普通怪降低 50%）
+      } else if (inst.kind === 'chill') {
+        raw = 0.875; // Boss 冰附着：每层降低 12.5% 移速（普通怪降低 25%）
+      }
     }
     any = true;
     const factor = Math.pow(raw, inst.stacks);

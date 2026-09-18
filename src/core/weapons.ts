@@ -100,20 +100,9 @@ export function updateWeapons(state: SimState, dtMs: number, defs: Record<string
     // 冷却到点开火 + 追加间隔。正常数据（间隔为正且有限）循环必然终止；脏数据
     // （间隔非正 / 冷却被推成非有限）下冷却无法前进到正数，限制为每帧至多开火一次
     // 并跳出，防死循环（与 wall.ts 同款约定）。
-    while (ws.cooldownMs <= 0) {
-      // 牌池数值解析（T5.3a）：伤害/攻速/范围乘区与专属牌开关全部由 ws.cards 决定。
-      // 牌 → stats 键映射约定（下一任务弹道机制实现的行为接线清单）：
-      //   通用牌 dmg_up/spd_up → damage ×1.3^n / intervalMs ÷1.3^n；
-      //   multi_shot → projectileCount +n（弹道五武器：狙击/霰弹/导弹/榴弹/棱镜）；
-      //   burst_shot → burstWaves = n（连射波数，波间隔 burstIntervalMs=150）；
-      //   split_shot → splitCount = n + splitDamageFactor/splitMaxTargets（次级弹参数）；
-      //   range_up → def.rangeKeys 逐键 ×1.2^n（数据驱动，见各武器 json 的 rangeKeys）；
-      //   dot_freq → 不写 stats，经 core/cards 的 dotTickMultiplier 在附着点消费；
-      //   专属牌 → params 直接命名 stats 键（trident/refract/pierce/ricochet/chargeDamage*/
-      //     headshot*/slowHit/pierceShot/stickyOil/blastIgnite/acidPool/pushBack/dualBeam/
-      //     scorch/refraction/coolPerSec/burnCloud/preferElite/burnGround/stunBlast/blackHole/
-      //     chainCount/chainLightning/frostVenom/boomerang/falloff/burnBullet/knockback*/
-      //     bounce*/dragonBreath），现有行为已读其中的开关键（如 stats.burnBullet）。
+    let fireCount = 0;
+    while (ws.cooldownMs <= 0 && fireCount < 20) {
+      fireCount++;
       const stats = getWeaponStats(def, state, weaponId);
       // 音效事件（T4.1）：仅真实开火 push 一次 shoot（每波一次）。
       // 空转判定用文档契约「fire 可改写 cooldownMs（如无目标归 0）」：全部带目标判定的
@@ -125,12 +114,16 @@ export function updateWeapons(state: SimState, dtMs: number, defs: Record<string
         pushEvent(state, { kind: 'sfx', name: 'shoot' });
       }
       // 效果槽消费：过热（overheat）惩罚乘区——开火间隔拉长（data 可逐实例覆盖定义值）。
-      const intervalMs = stats.intervalMs * overheatFactor(ws);
+      // 下限 16ms（防极高攻速无限牌池把间隔除到 ~0 导致单帧几千亿次循环爆掉执行时）。
+      const intervalMs = Math.max(16, stats.intervalMs * overheatFactor(ws));
       ws.cooldownMs += intervalMs;
 
       if (ws.cooldownMs <= 0 && !(intervalMs > 0 && Number.isFinite(ws.cooldownMs))) {
         break;
       }
+    }
+    if (ws.cooldownMs <= 0) {
+      ws.cooldownMs = 16;
     }
   }
 }

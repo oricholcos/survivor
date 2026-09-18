@@ -36,6 +36,17 @@ function pickWithoutReplacement<T>(pool: readonly T[], count: number, rng: Rng):
 }
 
 /**
+ * 突破上限后卡牌描述清洗：
+ * 剥除文案中包含的上限或叠下次限制说明（如“（可叠 4 次）”、“（上限 4 次）”、“（上限 2）”、“，上限4次”），
+ * 避免误导玩家（实际在突破上限后已可无限刷新），同时保留正常语义（如“（可叠加）”）。
+ */
+export function sanitizeUnlimitedCardDescription(desc: string): string {
+  let res = desc.replace(/[（(]\s*(?:可叠\s*\d+\s*次|上限\s*\d+\s*次?)\s*[）)]/g, '');
+  res = res.replace(/[,，、]\s*上限\s*\d+\s*次?/g, '');
+  return res.trim();
+}
+
+/**
  * 生成一次升级的选项列表（默认 3 个，互不重复）。
  *
  * 候选池构造（确定性：新武器按 defs 表序，牌按「defs 表序 × def.cards 目录序」）：
@@ -81,12 +92,13 @@ export function rollUpgradeOptions(state: SimState, defs: Record<string, WeaponD
     const cards = availableCards(def, ws, unlocked);
     for (let c = 0; c < cards.length; c++) {
       const card = cards[c];
+      const desc = unlocked ? sanitizeUnlimitedCardDescription(card.description) : card.description;
       candidates.push({
         kind: 'card',
         weaponId,
         cardId: card.id,
         name: `${def.name}·${card.name}`,
-        description: card.description,
+        description: desc,
       });
     }
   }

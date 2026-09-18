@@ -17,6 +17,7 @@ import type { HeatBeamVfx } from '../core/behaviors/behavior_heatBeam';
 import type { DragonBreathVfx } from '../core/behaviors/behavior_dragonBreath';
 import type { RailVfx } from '../core/behaviors/behavior_piercingBolt';
 import type { MortarBlastVfx } from '../core/behaviors/behavior_mortar';
+import type { PrismZapSegment } from '../core/behaviors/behavior_prismChain';
 import type { GameEvent } from '../core/events';
 import type { Enemy, Projectile, SimState } from '../core/types';
 import type { GameSession } from '../game/session';
@@ -28,13 +29,15 @@ import {
   HEAT_BEAM_VFX_PREFIX,
   MORTAR_BLAST_VFX_KEY,
   MuzzleFlashes,
+  PRISM_ZAP_COLORS,
+  PRISM_ZAP_VFX_KEY,
   RAIL_VFX_PREFIX,
   RingWaves,
+  STATUS_EFFECT_COLORS,
   darken,
   drawStaticBackground,
   fillPoly,
   projectileStyle,
-  strokePoly,
   zoneColor,
   type ProjectileStyle,
 } from './fx';
@@ -76,8 +79,6 @@ const COLOR_TRACK = 0x1a1f2e; // 血条/经验条底槽
 const COLOR_XP_FILL = 0x8be9fd;
 const COLOR_CHARACTER = 0xffe066;
 const COLOR_CHARACTER_STROKE = 0xfff6c0; // 角色亮描边（霓虹高光）
-const COLOR_GEM = 0x51ff7e;
-const COLOR_GEM_STROKE = 0xbdffd0;
 const COLOR_BOSS_RING = 0xffd24a; // Boss 旋转外圈光环
 const COLOR_BOSS_RING_INNER = 0xffe9b0;
 
@@ -332,6 +333,181 @@ function drawEnemy(
   g.fillRect(e.x - barW / 2, barY, barW, barH);
   g.fillStyle(hpBarColor(pct), 1);
   g.fillRect(e.x - barW / 2, barY, barW * pct, barH);
+}
+
+/**
+ * 绘制敌人状态异常视觉特效（纯几何、零 GC 分配、ADD 叠加发光层）：
+ * - 减速（slow / chill）：冰蓝微弱脉动冷光描边与外轮廓冰霜圈；
+ * - 冰毒 / 中毒（poison / chill+poison）：霓虹毒绿周身升腾消散微粒；若 chill+poison，外圈冰蓝，内侧绿雾微粒；
+ * - 灼烧（burn）：亮橙红高频脉动烈焰描边 + 向上抖动的微型火星菱形；
+ * - 眩晕（stun）：金黄暖白头顶悬浮双段旋转虚线光环与微型星辉，明确行动停摆反馈。
+ */
+export function drawEnemyStatusEffects(
+  glow: Phaser.GameObjects.Graphics,
+  e: Enemy,
+  timeMs: number,
+): void {
+  if (e.dead || e.effects.length === 0) {
+    return;
+  }
+
+  let hasSlow = false;
+  let hasChill = false;
+  let hasPoison = false;
+  let hasBurn = false;
+  let hasStun = false;
+
+  for (let i = 0; i < e.effects.length; i++) {
+    const k = e.effects[i].kind;
+    if (k === 'slow') {
+      hasSlow = true;
+    } else if (k === 'chill') {
+      hasChill = true;
+    } else if (k === 'poison') {
+      hasPoison = true;
+    } else if (k === 'burn') {
+      hasBurn = true;
+    } else if (k === 'stun') {
+      hasStun = true;
+    }
+  }
+
+  if (!hasSlow && !hasChill && !hasPoison && !hasBurn && !hasStun) {
+    return;
+  }
+
+  const r = e.isBoss ? e.radius * 1.15 : e.radius;
+
+  // 1) 减速 / 冰附着（slow / chill）：冰蓝微弱脉动冷光描边与外轮廓冰霜圈
+  if (hasSlow || hasChill) {
+    const pulse = 0.5 + 0.5 * Math.sin(timeMs * 0.005 + e.id * 0.7);
+    strokeEnemyShape(glow, e, r, 2, STATUS_EFFECT_COLORS.chillCore, 0.55 + 0.25 * pulse);
+    strokeEnemyShape(glow, e, r + 2.5, 4, STATUS_EFFECT_COLORS.chillOuter, 0.2 + 0.15 * pulse);
+
+    const frostR = r + 5 + 2 * pulse;
+    glow.lineStyle(1.5, STATUS_EFFECT_COLORS.chillOuter, 0.4 + 0.2 * pulse);
+    glow.strokeCircle(e.x, e.y, frostR);
+
+    // 冰霜结晶晶芒（6 芒）
+    const rot = (timeMs * 0.0008) % (Math.PI * 2);
+    for (let k = 0; k < 6; k++) {
+      const angle = rot + (k * Math.PI) / 3;
+      const cosA = Math.cos(angle);
+      const sinA = Math.sin(angle);
+      const r1 = frostR - 1.5;
+      const r2 = frostR + 3.5;
+      glow.lineStyle(1.2, STATUS_EFFECT_COLORS.chillCore, 0.45 + 0.2 * pulse);
+      glow.beginPath();
+      glow.moveTo(e.x + cosA * r1, e.y + sinA * r1);
+      glow.lineTo(e.x + cosA * r2, e.y + sinA * r2);
+      glow.strokePath();
+    }
+  }
+
+  // 2) 冰毒 / 中毒（poison / chill+poison）：霓虹毒绿升腾消散微粒；若同时持有 chill+poison，外圈冰蓝，内侧升腾绿雾微粒
+  if (hasPoison) {
+    if (!hasSlow && !hasChill) {
+      const poisonPulse = 0.5 + 0.5 * Math.sin(timeMs * 0.006 + e.id);
+      glow.lineStyle(1.5, STATUS_EFFECT_COLORS.poisonOuter, 0.35 + 0.15 * poisonPulse);
+      glow.strokeCircle(e.x, e.y, r + 2.5);
+    }
+
+    // 周身利用 timeMs 周期升腾消散的绿色毒素微粒（利用模数计算当前进度，零 GC 分配）
+    const cycleMs = 850;
+    for (let k = 0; k < 5; k++) {
+      const offset = (k * 170 + e.id * 113) % cycleMs;
+      const prog = ((timeMs + offset) % cycleMs) / cycleMs; // 0..1
+      const startY = e.y + r * 0.35;
+      const endY = e.y - r * 1.3;
+      const py = startY + (endY - startY) * prog;
+      const sway = Math.sin(prog * Math.PI * 2 + k * 1.25 + e.id) * (r * 0.3);
+      const spread = ((k - 2) / 2) * (r * 0.55);
+      const px = e.x + spread + sway;
+      const alpha = Math.sin(prog * Math.PI) * 0.75;
+      const pRadius = 1.2 + (1 - prog) * 1.6;
+      const pCol = k % 2 === 0 ? STATUS_EFFECT_COLORS.poisonCore : STATUS_EFFECT_COLORS.poisonOuter;
+      glow.fillStyle(pCol, alpha);
+      glow.fillCircle(px, py, pRadius);
+    }
+  }
+
+  // 3) 灼烧（burn）：亮橙红高频脉动烈焰描边 + 向上抖动的微型火星三角/细菱形
+  if (hasBurn) {
+    const burnPulse = 0.5 + 0.5 * Math.sin(timeMs * 0.024 + e.id * 4.3);
+    strokeEnemyShape(glow, e, r + 1.8 + burnPulse * 2, 2.5, STATUS_EFFECT_COLORS.burnOuter, 0.6 + 0.3 * burnPulse);
+    strokeEnemyShape(glow, e, r, 1.5, STATUS_EFFECT_COLORS.burnCore, 0.75 + 0.25 * burnPulse);
+
+    // 向上抖动的微型火星细菱形/三角
+    const sparkCycle = 420;
+    for (let k = 0; k < 4; k++) {
+      const offset = (k * 105 + e.id * 67) % sparkCycle;
+      const prog = ((timeMs + offset) % sparkCycle) / sparkCycle; // 0..1
+      const sy = e.y - r * 0.2 - prog * (r * 1.1 + 14);
+      const jitter = Math.sin(timeMs * 0.038 + k * 2.3 + e.id) * 3.5;
+      const sx = e.x + ((k - 1.5) / 1.5) * (r * 0.6) + jitter;
+      const sAlpha = (1 - prog) * 0.85;
+      const d = 2.0 + (1 - prog) * 1.2;
+
+      // 细菱形火星
+      glow.fillStyle(STATUS_EFFECT_COLORS.burnCore, sAlpha);
+      glow.beginPath();
+      glow.moveTo(sx, sy - d * 1.5);
+      glow.lineTo(sx + d * 0.7, sy);
+      glow.lineTo(sx, sy + d * 1.0);
+      glow.lineTo(sx - d * 0.7, sy);
+      glow.closePath();
+      glow.fillPath();
+
+      // 微型白热点
+      glow.fillStyle(0xffffff, sAlpha * 0.9);
+      glow.fillCircle(sx, sy - d * 0.3, 0.6);
+    }
+  }
+
+  // 4) 眩晕（stun）：金黄暖白头顶悬浮双段旋转虚线光环与微型星辉，明确行动停摆反馈
+  if (hasStun) {
+    const haloY = e.y - r - (e.isBoss ? 26 : 14);
+    const haloX = e.x;
+    const haloR = Math.max(9, r * 0.6);
+    const haloRy = haloR * 0.36;
+    const rot = (timeMs * 0.005) % (Math.PI * 2);
+
+    for (let seg = 0; seg < 2; seg++) {
+      const startAngle = rot + seg * Math.PI;
+      const endAngle = startAngle + Math.PI * 0.55;
+      glow.lineStyle(2, STATUS_EFFECT_COLORS.stunRing, 0.9);
+      glow.beginPath();
+      for (let s = 0; s <= 6; s++) {
+        const a = startAngle + ((endAngle - startAngle) * s) / 6;
+        const px = haloX + Math.cos(a) * haloR;
+        const py = haloY + Math.sin(a) * haloRy;
+        if (s === 0) {
+          glow.moveTo(px, py);
+        } else {
+          glow.lineTo(px, py);
+        }
+      }
+      glow.strokePath();
+
+      // 头顶微型星辉
+      const starAngle = endAngle + 0.15;
+      const sx = haloX + Math.cos(starAngle) * (haloR + 1.5);
+      const sy = haloY + Math.sin(starAngle) * (haloRy + 1);
+      const starPulse = 0.5 + 0.5 * Math.sin(timeMs * 0.012 + seg * 3);
+      const starSize = 2.2 + starPulse * 1.2;
+
+      glow.lineStyle(1.2, STATUS_EFFECT_COLORS.stunStar, 0.95);
+      glow.beginPath();
+      glow.moveTo(sx - starSize, sy);
+      glow.lineTo(sx + starSize, sy);
+      glow.moveTo(sx, sy - starSize);
+      glow.lineTo(sx, sy + starSize);
+      glow.strokePath();
+
+      glow.fillStyle(STATUS_EFFECT_COLORS.stunStar, 0.95);
+      glow.fillCircle(sx, sy, 0.8);
+    }
+  }
 }
 
 // —— 弹丸霓虹形态（behavior → 形状/颜色映射，配色表见 fx.ts） ——
@@ -728,11 +904,10 @@ export class MainScene extends Phaser.Scene {
     this.trackEnemyHits(s);
     this.detectNewProjectiles(s);
 
-    // —— 常规混合层：地面区域 → 榴弹落点提示 → 墙 → 宝石/修复包 → 敌人 → 角色 → HUD 条 ——
+    // —— 常规混合层：地面区域 → 榴弹落点提示 → 墙 → 修复包 → 敌人 → 角色 → HUD 条 ——
     this.drawZones(g, s);
     this.drawMortarGuides(g, s);
     this.drawWall(g, s);
-    this.drawGems(g, glow, s);
     this.drawDrops(g, glow, s);
 
     for (let i = 0; i < s.enemies.length; i++) {
@@ -747,8 +922,14 @@ export class MainScene extends Phaser.Scene {
 
     this.drawCharacter(g, glow, s);
 
-    // —— ADD 发光层：meta VFX（光束/龙息锥）→ 弹丸 → 池化粒子 → 红 vignette ——
+    // —— ADD 发光层：meta VFX（光束/龙息锥）→ 敌人状态特效 → 弹丸 → 池化粒子 → 红 vignette ——
     this.drawMetaVfx(glow, s);
+    for (let i = 0; i < s.enemies.length; i++) {
+      const e = s.enemies[i];
+      if (!e.dead && e.effects.length > 0) {
+        drawEnemyStatusEffects(glow, e, s.timeMs);
+      }
+    }
     for (let i = 0; i < s.projectiles.length; i++) {
       const p = s.projectiles[i];
       if (!p.dead) {
@@ -882,22 +1063,6 @@ export class MainScene extends Phaser.Scene {
     }
   }
 
-  /** 经验宝石：绿色菱形（旋转 45° 方块）+ 微光（ADD）+ 白色小芯。 */
-  private drawGems(
-    g: Phaser.GameObjects.Graphics,
-    glow: Phaser.GameObjects.Graphics,
-    s: SimState,
-  ): void {
-    for (let i = 0; i < s.gems.length; i++) {
-      const gem = s.gems[i];
-      glow.fillStyle(COLOR_GEM, 0.12 + 0.05 * Math.sin(s.timeMs / 300 + gem.id));
-      glow.fillCircle(gem.x, gem.y, 9);
-      fillPoly(g, gem.x, gem.y, 4.5, 4, Math.PI / 4, COLOR_GEM, 0.95);
-      strokePoly(g, gem.x, gem.y, 5.5, 4, Math.PI / 4, COLOR_GEM_STROKE, 0.9);
-      fillPoly(g, gem.x, gem.y, 1.8, 4, Math.PI / 4, 0xffffff, 0.8);
-    }
-  }
-
   /** 修复包：白底方块 + 红十字 + 淡蓝描边 + ADD 微光。 */
   private drawDrops(
     g: Phaser.GameObjects.Graphics,
@@ -952,6 +1117,7 @@ export class MainScene extends Phaser.Scene {
       }
     }
     this.drawMortarBlasts(g, s);
+    this.drawPrismZapArcs(g, s);
   }
 
   /**
@@ -1115,6 +1281,69 @@ export class MainScene extends Phaser.Scene {
       g.fillCircle(b.x, b.y, Math.max(4, b.radius * 0.14) * grow);
     }
     this.blastWatermark = maxUntil;
+  }
+
+  /**
+   * 弹射棱镜连锁闪电电弧（meta['prism_zap_vfx'] = PrismZapSegment[]）：
+   * 每次连锁闪电直击额外目标时记录一条线段，留存 100ms 线性淡出。
+   * 取两怪中点沿垂线法向量做抖动折点，绘制 3 段式折线电弧；
+   * 双层发光线：外圈粗线（width: 3.5, color: 0x8a3cff）+ 内芯亮线（width: 1.5, color: 0xffffff）+ 两端高亮光斑。
+   */
+  private drawPrismZapArcs(g: Phaser.GameObjects.Graphics, s: SimState): void {
+    const list = s.meta[PRISM_ZAP_VFX_KEY];
+    if (!Array.isArray(list)) {
+      return;
+    }
+    for (let i = 0; i < list.length; i++) {
+      const seg = list[i] as PrismZapSegment | undefined;
+      if (!seg || !Number.isFinite(seg.x1 + seg.y1 + seg.x2 + seg.y2 + seg.untilMs)) {
+        continue;
+      }
+      const remain = seg.untilMs - s.timeMs;
+      if (remain <= 0) {
+        continue;
+      }
+      const fade = clamp01(remain / 100);
+      const dx = seg.x2 - seg.x1;
+      const dy = seg.y2 - seg.y1;
+      const dist = Math.hypot(dx, dy);
+      if (dist < 1) {
+        continue;
+      }
+      const nx = -dy / dist;
+      const ny = dx / dist;
+      const jitter = Math.sin(s.timeMs * 0.05 + i * 2.3 + seg.x1) * Math.min(12, dist * 0.25);
+      const p1x = seg.x1 + dx * 0.33 + nx * jitter;
+      const p1y = seg.y1 + dy * 0.33 + ny * jitter;
+      const p2x = seg.x1 + dx * 0.67 - nx * jitter * 0.8;
+      const p2y = seg.y1 + dy * 0.67 - ny * jitter * 0.8;
+
+      // 外圈粗线（width: 3.5, color: 0x8a3cff, alpha 随 fade）
+      g.lineStyle(3.5, PRISM_ZAP_COLORS.outer, 0.85 * fade);
+      g.beginPath();
+      g.moveTo(seg.x1, seg.y1);
+      g.lineTo(p1x, p1y);
+      g.lineTo(p2x, p2y);
+      g.lineTo(seg.x2, seg.y2);
+      g.strokePath();
+
+      // 内芯亮线（width: 1.5, color: 0xffffff, alpha 随 fade）
+      g.lineStyle(1.5, PRISM_ZAP_COLORS.hot, fade);
+      g.beginPath();
+      g.moveTo(seg.x1, seg.y1);
+      g.lineTo(p1x, p1y);
+      g.lineTo(p2x, p2y);
+      g.lineTo(seg.x2, seg.y2);
+      g.strokePath();
+
+      // 两端高亮光斑
+      g.fillStyle(PRISM_ZAP_COLORS.core, 0.6 * fade);
+      g.fillCircle(seg.x1, seg.y1, 4);
+      g.fillCircle(seg.x2, seg.y2, 4);
+      g.fillStyle(PRISM_ZAP_COLORS.hot, 0.9 * fade);
+      g.fillCircle(seg.x1, seg.y1, 2);
+      g.fillCircle(seg.x2, seg.y2, 2);
+    }
   }
 
   /**

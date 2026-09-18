@@ -11,12 +11,15 @@ const DEFAULT_LAYOUT: Layout = { width: 720, height: 1280, wallLineY: 1160, spaw
 /** 默认配置（测试用缺省；正式数值后续来自 JSON，由引导层注入）。 */
 const DEFAULT_CONFIG: SimConfig = {
   xpBase: 5,
-  xpGrowth: 1.4,
+  xpTier1Step: 4,
+  xpTier2Step: 8,
+  xpCapLevel: 40,
+  xpCap: 280,
   gemFlySpeed: 600,
   dropFlySpeed: 600,
   repairDropChance: 0.02,
   repairHeal: 30,
-  wallMaxHp: 3200,
+  wallMaxHp: 1600,
   maxWeaponSlots: 4,
 };
 

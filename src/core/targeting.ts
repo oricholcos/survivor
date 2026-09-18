@@ -119,6 +119,8 @@ export interface FindTargetOpts {
   preferFast?: boolean;
   /** 快速怪速率阈值（px/s；与 charge_sniper 表键同名同语义，缺省 0 即全员算快速）。 */
   fastSpeedThreshold?: number;
+  /** 最大索敌射程（px）；设置时超出此距离的敌人不作为目标候选。 */
+  maxRange?: number;
 }
 
 /**
@@ -140,6 +142,7 @@ export function findTarget(state: SimState, opts?: FindTargetOpts): Enemy | null
   const preferBoss = opts?.preferBoss === true;
   const preferFast = opts?.preferFast === true;
   const threshold = opts?.fastSpeedThreshold ?? 0;
+  const maxRangeSq = opts?.maxRange !== undefined && opts.maxRange > 0 ? opts.maxRange * opts.maxRange : Infinity;
 
   let boss: Enemy | null = null;
   let bossDistSq = Infinity;
@@ -157,6 +160,9 @@ export function findTarget(state: SimState, opts?: FindTargetOpts): Enemy | null
       continue;
     }
     const d = distSq(state.character, e);
+    if (d > maxRangeSq) {
+      continue;
+    }
     if (preferBoss && e.isBoss && d < bossDistSq) {
       bossDistSq = d;
       boss = e;

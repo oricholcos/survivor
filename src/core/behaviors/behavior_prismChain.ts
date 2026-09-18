@@ -1,12 +1,12 @@
 // src/core/behaviors/behavior_prismChain.ts —— 弹射棱镜：命中后在附近敌人间弹跳、伤害递减。
-// 升级节点（连锁闪电/冰毒附着/回旋返回）全部以 JSON mods 数值开关表达（chainLightning/
-// frostVenom/boomerang = 1），unlock 字符串仅供生成器展示，行为只读 stats 开关——M2 统一约定。
+// 升级节点（连锁闪电/冰毒附着/聚能折返/棱镜往复）全部以 JSON mods 数值开关表达（chainLightning/
+// frostVenom/focusReturn/prismRecurse = 1），unlock 字符串仅供生成器展示，行为只读 stats 开关——M2 统一约定。
 // 数值契约：伤害/射速/弹速/穿透/寿命/弹跳次数/弹跳范围/递减系数/闪电半径/闪电伤害全部来自
-// WeaponStats（weapons/prism.json）；几何量（弹丸半径）与任务书锁定的回旋弹固定语义常量
-// （ttl 1500 / pierce 2 / 每跳至多 zap 2 个）允许硬编码。
+// WeaponStats（weapons/prism.json）；几何量（弹丸半径）与任务书锁定的折返弹固定语义常量
+// （ttl 1500 / pierce 999 / 半径 16 / 每跳至多 zap 2 个）允许硬编码。
 // 弹上快照约定：fire 时把本波数值/开关快照进弹 data，钩子从弹上读回（升级瞬间已飞行的
-// 旧弹按发射时数值结算）；chainCount 单列一份（chainsLeft 会逐跳消耗，回旋伤害公式用初值）。
-// 随机契约：零随机（目标选择/弹跳寻的/回旋方向全为确定性映射，任意种子可复现）。
+// 旧弹按发射时数值结算）；chainCount 单列一份（chainsLeft 会逐跳消耗）。
+// 随机契约：零随机（目标选择/弹跳寻的/折返方向全为确定性映射，任意种子可复现）。
 // 纯 TypeScript，禁止 import phaser 与任何 DOM/BOM。
 //
 // 弹跳链语义（锁定）：
@@ -21,24 +21,24 @@
 //   4) 伤害递减：为下一跳重写 proj.damage = baseDamage × falloff^(已命中次数)
 //      （已命中次数 = proj.hitIds.length，框架每次直击恰好 push 一个 id）。框架在钩子前
 //      已按旧 damage 结算本次，故第 1 跳全额、第 2 跳 ×falloff、第 3 跳 ×falloff²。
-// - 续跳：chainsLeft > 0 → 找弹当前位置 chainRange 内（圆心距 ≤ range，与 scatter_shot
-//   反弹同款）最近一个不在 hitIds 的存活敌人（distSq 扫描、平距取数组先出现者）；无 →
-//   弹亡；有 → 速度大小不变、重设速度朝它。
+// - 续跳：chainsLeft > 0 →
+//   第一优先级：chainRange 内最近一个不在 hitIds 的存活敌人；
+//   第二优先级（无第一优先级且 prismRecurse=1）：chainRange 内最近一个非刚命中目标自身的存活敌人；
+//   无候选 → 弹跳链终结；有 → 速度大小不变、重设速度朝它。
 // - 瞄准与预测的分工（T5.2a 锁定）：首跳（fire）对主目标 leadAim 加移动预测提前量（行军
 //   怪必中）；弹跳跳转【不加预测】——朝目标当前位置直线飞（弹跳速度快、距离短，且这正是
 //   与追踪武器的区分点：追踪弹逐帧转向制导，本弹一旦跳转就不再修正方向）。
-// - 回旋：chainsLeft 用尽（恰为 chainCount 次直击后）且 boomerang=1 → 在死亡点 spawn
-//   回旋弹（朝角色方向、速度同、ttl 1500、damage = baseDamage × falloff^chainCount、
-//   pierce 2、hitIds 清空——可再打已打过的敌人、data.returning = 1）；否则弹亡。
-// - 回旋弹（data.returning=1）：命中只吃框架统一结算（新 hitIds 可再打已打过的敌人——
-//   回旋扫过人群的语义），到 ttl / pierce 用尽正常死亡，不再弹跳/闪电/附着/回旋。
+// - 聚能折返：弹跳链终结（chainsLeft 用尽或寻的无候选）且 focusReturn=1 → 在死亡点 spawn
+//   宽体贯穿光梭（朝角色方向、速度同、ttl 1500、damage = baseDamage × (1 + 0.25 × N)、
+//   pierce 999、radius 16、hitIds 清空——可贯穿扫过敌人、data.returning = 1）；否则弹亡。
+// - 折返弹（data.returning=1）：命中只吃框架统一结算（新 hitIds 可再打已打过的敌人——
+//   贯穿扫过人群的语义），到 ttl / pierce 用尽正常死亡，不再弹跳/闪电/附着/折返。
 // - pierce 给大值（表 999）：弹寿命由 chainsLeft 控制，hitIds 防重复直击；框架穿透路径
 //   兜底防永不销毁。
 //
 // T5.3b 弹道机制接线（牌 → 行为）：
-// - 多射（multi_shot 通用牌 → stats.projectileCount +1/张）：一波发射 N 条链弹，对主目标
-//   leadAim 方向小角度扇形错开（「同目标错角」——链弹的横向覆盖本就由弹跳链负责；扇角为
-//   本行为锁定的几何常量），每条弹独立结算整条弹跳链。
+// - 多射（multi_shot 通用牌 → stats.projectileCount +1/张）：一波发射 N 条链弹，采用
+//   “主轴保底 + 侧翼交替展开”（单弹间距 6°，第 0 发锁定主目标方向），每条弹独立结算整条弹跳链。
 // - 连射（burst_shot 通用牌 → stats.burstWaves 跟发波数 + stats.burstIntervalMs 波间隔）：
 //   首波即时发射，跟发波经 core/cards 的 scheduleBurstWaves 入 meta 待发队列，由 update 钩子
 //   consumeDueBurstWaves 到点重放 fireVolley——「重放时重新执行 fire 的目标选择与散射逻辑」
@@ -53,6 +53,7 @@
 //   poisonTickMs，命中钩子按快照逐实例覆盖（chill 无 tick，不涉及）；mult<=1 不写覆盖。
 
 import { applyEffect, dealDamage, getEffectDef } from '../effects';
+import { pushEvent } from '../events';
 import { scheduleBurstWaves, consumeDueBurstWaves } from '../cards';
 import { distSq, normalize } from '../math';
 import { pickNearestDistinctEnemies, spawnProjectile } from '../projectiles';
@@ -64,15 +65,28 @@ import type { WeaponStats } from '../weapons';
 /** 行为分支名（弹丸 behavior 字段与注册表键一致）。 */
 const BEHAVIOR_NAME = 'prism_chain';
 
+/** 连锁闪电 VFX 共享 meta 键（值为 PrismZapSegment[] 滚动数组）。 */
+export const PRISM_ZAP_VFX_KEY = 'prism_zap_vfx';
+
+/** 连锁闪电单段电弧：起点、终点、留存截止时刻。 */
+export interface PrismZapSegment {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  untilMs: number;
+}
+
 /** 弹丸半径（px）：几何常量允许硬编码，数值类一律来自数据表。 */
 const PRISM_RADIUS = 6;
 
-/** 多射扇形全角（度）：主弹 leadAim 方向 ±半角的确定性小角度扇形（行为锁定的几何常量）。 */
-const MULTI_VOLLEY_SPREAD_DEG = 12;
+/** 多射单弹间距角（度）：主轴保底 + 侧翼交替展开步长（行为锁定的几何常量）。 */
+const MULTI_VOLLEY_SPREAD_STEP_DEG = 6;
 
-/** 回旋弹固定语义常量（任务书锁定）：ttl 1500ms、pierce 2（折返路上可再扫 2 个敌人）。 */
-const BOOMERANG_TTL_MS = 1500;
-const BOOMERANG_PIERCE = 2;
+/** 聚能折返固定语义常量（任务书锁定）：ttl 1500ms、pierce 999、宽体半径 16。 */
+const FOCUS_RETURN_TTL_MS = 1500;
+const FOCUS_RETURN_PIERCE = 999;
+const FOCUS_RETURN_RADIUS = 16;
 
 /** 连锁闪电每跳至多 zap 的额外敌人数（任务书锁定）。 */
 const ZAP_MAX_TARGETS = 2;
@@ -112,6 +126,11 @@ function zapNearby(
 ): void {
   let zapped = 0;
   const enemies = state.enemies;
+  const prev = state.meta[PRISM_ZAP_VFX_KEY];
+  const list: PrismZapSegment[] = Array.isArray(prev)
+    ? (prev as PrismZapSegment[]).filter((seg) => Number.isFinite(seg?.untilMs) && seg.untilMs > state.timeMs)
+    : [];
+
   for (let i = 0; i < enemies.length && zapped < ZAP_MAX_TARGETS; i++) {
     const e = enemies[i];
     if (e.dead || proj.hitIds.indexOf(e.id) !== -1) {
@@ -122,19 +141,38 @@ function zapNearby(
       continue; // 闪电半径外
     }
     dealDamage(state, e, zapDamage);
+    list.push({
+      x1: source.x,
+      y1: source.y,
+      x2: e.x,
+      y2: e.y,
+      untilMs: state.timeMs + 100,
+    });
+    pushEvent(state, { kind: 'sfx', name: 'hit' });
     zapped += 1;
   }
+  state.meta[PRISM_ZAP_VFX_KEY] = list;
 }
 
 /**
- * 续跳寻的：弹当前位置 chainRange 内（圆心距 ≤ range，与 scatter_shot 反弹同款语义）
- * 最近一个不在 hitIds 的存活敌人；无 → null。
+ * 续跳寻的：
+ * - 第一优先级：在 chainRange 内寻找未曾命中（proj.hitIds.indexOf(e.id) === -1）的最近存活敌人。
+ * - 第二优先级（当且仅当第一优先级无候选且 allowRecurse === true）：在 chainRange 内寻找非刚命中目标自身（e.id !== currentHitEnemyId）的最近存活敌人。
+ * - 若两者均不存在，返回 null。
  */
-function nearestChainTarget(state: SimState, proj: Projectile, chainRange: number): Enemy | null {
+export function nearestChainTarget(
+  state: SimState,
+  proj: Projectile,
+  chainRange: number,
+  currentHitEnemyId: number | string,
+  allowRecurse: boolean,
+): Enemy | null {
   const rangeSq = chainRange * chainRange;
   let best: Enemy | null = null;
   let bestDistSq = Infinity;
   const enemies = state.enemies;
+
+  // 第一优先级：在 chainRange 内寻找未曾命中的最近存活敌人
   for (let i = 0; i < enemies.length; i++) {
     const e = enemies[i];
     if (e.dead || proj.hitIds.indexOf(e.id) !== -1) {
@@ -149,7 +187,33 @@ function nearestChainTarget(state: SimState, proj: Projectile, chainRange: numbe
       best = e;
     }
   }
-  return best;
+  if (best !== null) {
+    return best;
+  }
+
+  // 第二优先级（当且仅当第一优先级无候选且 allowRecurse === true）：
+  // 在 chainRange 内寻找非刚命中目标自身的最近存活敌人
+  if (allowRecurse) {
+    let recurseBest: Enemy | null = null;
+    let recurseDistSq = Infinity;
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      if (e.dead || String(e.id) === String(currentHitEnemyId)) {
+        continue;
+      }
+      const d = distSq(proj, e);
+      if (d > rangeSq) {
+        continue;
+      }
+      if (d < recurseDistSq) {
+        recurseDistSq = d;
+        recurseBest = e;
+      }
+    }
+    return recurseBest;
+  }
+
+  return null;
 }
 
 /**
@@ -169,7 +233,7 @@ function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats): boo
   // 弹数约定（schema：prism.json base 不含 projectileCount 键——「无键 = 单体」）：
   // 多射牌以 add 从 0 起算累加（每张 +1），故链弹数 = 1 + stats.projectileCount。
   const count = 1 + Math.max(0, Math.round(numOr0(stats.projectileCount)));
-  const halfSpread = ((MULTI_VOLLEY_SPREAD_DEG / 2) * Math.PI) / 180;
+  const stepRad = (MULTI_VOLLEY_SPREAD_STEP_DEG * Math.PI) / 180;
   const data: Record<string, number> = {
     chainsLeft: numOr0(stats.chainCount),
     chainCount: numOr0(stats.chainCount), // 初值单列：回旋弹伤害公式 baseDamage × falloff^chainCount 用
@@ -179,7 +243,8 @@ function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats): boo
     chainLightning: stats.chainLightning === 1 ? 1 : 0,
     zapRadius: numOr0(stats.zapRadius),
     zapDamage: numOr0(stats.zapDamage),
-    boomerang: stats.boomerang === 1 ? 1 : 0,
+    focusReturn: stats.focusReturn === 1 ? 1 : 0,
+    prismRecurse: stats.prismRecurse === 1 ? 1 : 0,
     frostVenom: stats.frostVenom === 1 ? 1 : 0,
     poisonTickMs: poisonTickOverride(stats),
     speed: numOr0(stats.projectileSpeed),
@@ -188,11 +253,16 @@ function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats): boo
     splitFactor: numOr0(stats.splitDamageFactor),
     splitMax: numOr0(stats.splitMaxTargets),
     splitDone: 0,
+    isSecondary: 0,
   };
 
   for (let i = 0; i < count; i++) {
-    const t = count === 1 ? 0 : (2 * i) / (count - 1) - 1; // [-1, 1] 均匀（奇数条正中恰为主方向）
-    const ang = baseAng + halfSpread * t;
+    let ang = baseAng;
+    if (i > 0) {
+      const pair = Math.ceil(i / 2);
+      const sign = i % 2 === 1 ? 1 : -1;
+      ang = baseAng + sign * pair * stepRad;
+    }
     spawnProjectile(state, {
       behavior: BEHAVIOR_NAME,
       x: state.character.x,
@@ -221,8 +291,8 @@ function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats): boo
  */
 function splitOnHit(state: SimState, proj: Projectile, hitEnemy: Enemy): void {
   const d = proj.data;
-  if (numOr0(d.splitReady) !== 1 || numOr0(d.splitDone) === 1) {
-    return; // 未拿分裂牌 / 已分裂过（每弹至多一次）
+  if (numOr0(d.splitReady) !== 1 || numOr0(d.splitDone) === 1 || numOr0(d.isSecondary) === 1) {
+    return; // 未拿分裂牌 / 已分裂过 / 次级弹（每弹至多一次）
   }
   d.splitDone = 1; // 抢先置位：次级弹与同帧后续命中都不再分裂
   const factor = numOr0(d.splitFactor);
@@ -252,12 +322,14 @@ function splitOnHit(state: SimState, proj: Projectile, hitEnemy: Enemy): void {
         ...d, // 同弹种：冰毒附着/连锁闪电/递减参数随行
         chainsLeft: 0, // 简化单体：命中一次即亡（不弹跳、不回旋）
         chainCount: 0,
-        boomerang: 0,
+        focusReturn: 0,
+        prismRecurse: 0,
         baseDamage: damage, // 次级弹自己的伤害基准（递减重写公式用）
         speed,
         ttlMs,
         splitReady: 0, // 封死再分裂
         splitDone: 1,
+        isSecondary: 1,
       },
     });
   }
@@ -335,13 +407,12 @@ export const behavior: WeaponBehavior = {
     //    第 n 次命中后 proj.damage = baseDamage × falloff^n（第 1 跳全额、第 2 跳 ×falloff…）。
     proj.damage = numOr0(d.baseDamage) * Math.pow(numOr0(d.falloff), proj.hitIds.length);
 
-    if (d.chainsLeft > 0) {
-      // 续跳：chainRange 内最近一个未打过的存活敌人；无 → 弹亡。
-      const next = nearestChainTarget(state, proj, numOr0(d.chainRange));
-      if (!next) {
-        proj.dead = true;
-        return;
-      }
+    const next =
+      d.chainsLeft > 0
+        ? nearestChainTarget(state, proj, numOr0(d.chainRange), enemy.id, numOr0(d.prismRecurse) === 1)
+        : null;
+
+    if (d.chainsLeft > 0 && next !== null) {
       // 速度大小不变，重设速度朝新目标的【当前位置】直线飞——弹跳不加预测（T5.2a 锁定：
       // 与追踪武器的区分点；弹跳速度快、距离短，跳转后不再修正方向）。
       const speed = Math.hypot(proj.vx, proj.vy);
@@ -351,9 +422,10 @@ export const behavior: WeaponBehavior = {
       return;
     }
 
-    // 次数用尽（恰为 chainCount 次直击后）：boomerang=1 → 在死亡点 spawn 回旋弹
-    // （朝角色方向、速度同、hitIds 清空可再扫人群、returning=1 封死再回旋）；否则弹亡。
-    if (numOr0(d.boomerang) === 1) {
+    // 弹跳终止（d.chainsLeft <= 0 || next === null）：
+    if (numOr0(d.focusReturn) === 1) {
+      const n = proj.hitIds.length;
+      const damage = numOr0(d.baseDamage) * (1 + 0.25 * n);
       const speed = Math.hypot(proj.vx, proj.vy);
       const dir = normalize({ x: state.character.x - proj.x, y: state.character.y - proj.y });
       spawnProjectile(state, {
@@ -362,14 +434,14 @@ export const behavior: WeaponBehavior = {
         y: proj.y,
         vx: dir.x * speed,
         vy: dir.y * speed,
-        radius: PRISM_RADIUS,
-        damage: numOr0(d.baseDamage) * Math.pow(numOr0(d.falloff), numOr0(d.chainCount)),
-        pierceLeft: BOOMERANG_PIERCE,
+        radius: FOCUS_RETURN_RADIUS,
+        damage,
+        pierceLeft: FOCUS_RETURN_PIERCE,
         bouncesLeft: 0,
-        hitIds: [], // 清空：回旋扫过人群，可再打已打过的敌人
-        ttlMs: BOOMERANG_TTL_MS,
+        hitIds: [],
+        ttlMs: FOCUS_RETURN_TTL_MS,
         effectsOnHit: [],
-        data: { ...d, returning: 1 }, // 随行母弹快照 + returning=1：只吃框架结算，不再回旋
+        data: { ...d, focusReturn: 0, prismRecurse: 0, returning: 1 },
       });
     }
     proj.dead = true;

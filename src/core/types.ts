@@ -34,9 +34,12 @@ export interface Layout {
 
 /** 一局的可调参数（数值契约：正式数值来自 JSON，由引导层注入；这里的默认值仅供测试）。 */
 export interface SimConfig {
-  /** 经验曲线：升到 level+1 需要 xpBase * xpGrowth^(level-1)。 */
   xpBase: number;
-  xpGrowth: number;
+  xpTier1Step: number;
+  xpTier2Step: number;
+  xpCapLevel: number;
+  xpCap: number;
+  xpGrowth?: number;
   /** 宝石自动飞向角色 / 掉落物飞向城墙的速度 px/s。 */
   gemFlySpeed: number;
   dropFlySpeed: number;

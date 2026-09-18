@@ -9,15 +9,15 @@
 import { describe, expect, it } from 'vitest';
 import { loadEffectDefs } from '../../data/effects';
 import { loadWeaponDefs } from '../../data/weapons';
-import { updateEffects } from '../effects';
+import { dealDamage, updateEffects } from '../effects';
 import { normalize, scale } from '../math';
 import { spawnProjectile, updateProjectiles } from '../projectiles';
 import { createSimState } from '../simState';
 import { SpatialHash } from '../spatialHash';
-import type { Enemy, SimState } from '../types';
+import type { Enemy, Projectile, SimState } from '../types';
 import { addWeapon, getWeaponStats, updateWeapons } from '../weapons';
 import type { WeaponStats } from '../weapons';
-import { behavior } from './behavior_prismChain';
+import { PRISM_ZAP_VFX_KEY, behavior, type PrismZapSegment } from './behavior_prismChain';
 import './index'; // 副作用：自动发现注册
 import { getBehavior } from './registry';
 
@@ -91,14 +91,15 @@ function prismData(overrides?: Record<string, number>): Record<string, number> {
     chainLightning: 0,
     zapRadius: 90,
     zapDamage: 4,
-    boomerang: 0,
+    focusReturn: 0,
+    prismRecurse: 0,
     frostVenom: 0,
     ...overrides,
   };
 }
 
 describe('弹跳链基础（无牌：chainCount=3 / falloff=0.8 / 无机制牌）', () => {
-  it('三连跳各次伤害 10 / 8 / 6.4（第 n 次命中 × falloff^(n-1)），次数用尽弹消失、无 boomerang 不产回旋', () => {
+  it('三连跳各次伤害 10 / 8 / 6.4（第 n 次命中 × falloff^(n-1)），次数用尽弹消失、无 focusReturn 不产折返', () => {
     const state = createSimState(1); // 角色 (360, 1220)
     const e1 = makeEnemy(state, 360, 1120); // 距角色 100，纵列排布、间距 120 < chainRange 150
     const e2 = makeEnemy(state, 360, 1000);
@@ -115,7 +116,7 @@ describe('弹跳链基础（无牌：chainCount=3 / falloff=0.8 / 无机制牌�
     expect(e1.hp).toBeCloseTo(100 - 10, 6);
     expect(e2.hp).toBeCloseTo(100 - 8, 6);
     expect(e3.hp).toBeCloseTo(100 - 6.4, 6);
-    expect(state.nextId - nextIdAfterSetup).toBe(1); // 全程只产 1 枚弹：无回旋、无续弹
+    expect(state.nextId - nextIdAfterSetup).toBe(1); // 全程只产 1 枚弹：无折返、无续弹
   });
 
   it('伤害递减实现直证：钩子在每次直击后为下一跳重写 proj.damage = baseDamage × falloff^已命中次数', () => {
@@ -309,6 +310,75 @@ describe('连锁闪电（chain_lightning 牌）', () => {
     // a1：hop1 zap 4 + 直击 6.4（第 3 跳）。hop3 的 zap：e1/a2 均已在 hitIds。
     expect(a1.hp).toBeCloseTo(1000 - 4 - 6.4, 6);
   });
+
+  it('连锁闪电反馈闭环：伤害结算、meta[PRISM_ZAP_VFX_KEY] 坐标记录、sfx: hit 事件触发及过期清理', () => {
+    const state = createSimState(1);
+    state.timeMs = 100;
+    // 注入一条已过期的旧 VFX 条目（untilMs = 50 <= state.timeMs），验证会被过滤淘汰
+    state.meta[PRISM_ZAP_VFX_KEY] = [
+      { x1: 0, y1: 0, x2: 10, y2: 10, untilMs: 50 },
+    ];
+
+    const e1 = makeEnemy(state, 360, 1120, 100); // 直击目标
+    const z1 = makeEnemy(state, 360, 1060, 50); // 距 e1 60px，在 zapRadius 90 内
+    const proj: Projectile = {
+      id: 1,
+      behavior: 'prism_chain',
+      x: e1.x,
+      y: e1.y,
+      vx: 0,
+      vy: -800,
+      radius: 6,
+      damage: 10,
+      pierceLeft: 999,
+      bouncesLeft: 0,
+      hitIds: [],
+      ttlMs: 4000,
+      effectsOnHit: [],
+      dead: false,
+      data: {
+        chainsLeft: 3,
+        chainCount: 3,
+        baseDamage: 10,
+        falloff: 0.8,
+        chainRange: 150,
+        chainLightning: 1,
+        zapRadius: 90,
+        zapDamage: 4,
+      },
+    };
+
+    proj.hitIds.push(e1.id);
+    dealDamage(state, e1, proj.damage);
+    behavior.onProjectileHit!(state, proj, e1);
+
+    // 1. 伤害结算验证（e1 直击 10，z1 受 zap 伤害 4）
+    expect(e1.hp).toBeCloseTo(90, 6);
+    expect(z1.hp).toBeCloseTo(50 - 4, 6);
+
+    // 2. meta[PRISM_ZAP_VFX_KEY] 坐标记录与过期清理验证
+    const vfxList = state.meta[PRISM_ZAP_VFX_KEY] as PrismZapSegment[];
+    expect(Array.isArray(vfxList)).toBe(true);
+    // 旧的 untilMs=50 条目已被过滤淘汰
+    expect(vfxList.some((seg) => seg.untilMs === 50)).toBe(false);
+    // 包含新记录的 z1 zap 段：起点 e1、终点 z1、untilMs = timeMs + 100
+    const seg = vfxList.find((s) => s.x1 === e1.x && s.y1 === e1.y && s.x2 === z1.x && s.y2 === z1.y);
+    expect(seg).toBeDefined();
+    expect(seg!.untilMs).toBe(100 + 100);
+
+    // 3. sfx: hit 事件触发验证
+    const hitEvents = state.events.filter((ev) => ev.kind === 'sfx' && ev.name === 'hit');
+    expect(hitEvents.length).toBeGreaterThanOrEqual(1);
+
+    // 4. 过期清理再次验证：推进时间至现有条目过期（> 200），再次触发 zap 确认旧条目被清理
+    state.timeMs = 300;
+    const z2 = makeEnemy(state, 360, 1050, 50);
+    behavior.onProjectileHit!(state, proj, e1);
+    const afterList = state.meta[PRISM_ZAP_VFX_KEY] as PrismZapSegment[];
+    expect(afterList.every((s) => s.untilMs > 300)).toBe(true);
+    expect(afterList.some((s) => s.x2 === z2.x && s.y2 === z2.y)).toBe(true);
+    expect(afterList.some((s) => s.untilMs === 200)).toBe(false);
+  });
 });
 
 describe('冰/毒附着（frost_venom 牌）', () => {
@@ -380,8 +450,8 @@ describe('冰/毒附着（frost_venom 牌）', () => {
   });
 });
 
-describe('回旋返回（boomerang 牌）', () => {
-  it('直调钩子：链条用尽 → 死亡点 spawn 朝角色的回旋弹（damage=baseDamage×falloff^chainCount、pierce 2、ttl 1500、hitIds 清空、returning=1），原弹标记死亡', () => {
+describe('聚能折返（focus_return 牌）', () => {
+  it('直调钩子与属性契约：宽体光梭属性（radius=16、pierce=999、ttl=1500、hitIds清空、飞向角色、returning=1）', () => {
     const state = createSimState(1); // 角色 (360, 1220)
     const e = makeEnemy(state, 360, 1120, 10000);
     const proj = spawnProjectile(state, {
@@ -393,63 +463,108 @@ describe('回旋返回（boomerang 牌）', () => {
       damage: 6.4,
       pierceLeft: 999,
       ttlMs: 4000,
-      data: prismData({ chainsLeft: 1, boomerang: 1 }), // 第 3 跳后 chainsLeft 恰为 0
+      data: prismData({ chainsLeft: 1, focusReturn: 1 }), // 第 3 跳后 chainsLeft 恰为 0
     });
-    proj.hitIds.push(e.id); // 模拟框架直击结算
+    proj.hitIds.push(1001, 1002, e.id); // 模拟框架已直击 3 次
 
     behavior.onProjectileHit!(state, proj, e);
 
-    expect(proj.dead).toBe(true); // 原弹走死亡路径（框架：onProjectileDeath → 回池）
+    expect(proj.dead).toBe(true); // 原弹走死亡路径
     expect(state.projectiles).toHaveLength(2);
-    const boomerang = state.projectiles[1];
-    expect(boomerang.behavior).toBe('prism_chain');
-    expect(boomerang.x).toBe(500); // 死亡点出生
-    expect(boomerang.y).toBe(800);
+    const beam = state.projectiles[1];
+    expect(beam.behavior).toBe('prism_chain');
+    expect(beam.x).toBe(500); // 死亡点出生
+    expect(beam.y).toBe(800);
     const expected = scale(normalize({ x: state.character.x - 500, y: state.character.y - 800 }), 800);
-    expect(boomerang.vx).toBeCloseTo(expected.x, 9); // 朝角色方向、速度大小不变
-    expect(boomerang.vy).toBeCloseTo(expected.y, 9);
-    expect(Math.hypot(boomerang.vx, boomerang.vy)).toBeCloseTo(800, 9);
-    expect(boomerang.damage).toBeCloseTo(10 * Math.pow(0.8, 3), 9); // baseDamage × falloff^chainCount = 5.12
-    expect(boomerang.pierceLeft).toBe(2);
-    expect(boomerang.ttlMs).toBe(1500);
-    expect(boomerang.hitIds).toEqual([]); // 清空：可再打已打过的敌人
-    expect(boomerang.data.returning).toBe(1);
-    expect(boomerang.data.boomerang).toBe(1); // 随母弹快照（被 returning 拦截，不再回旋）
-    expect(boomerang.radius).toBe(6);
+    expect(beam.vx).toBeCloseTo(expected.x, 9); // 朝角色方向、速度大小不变
+    expect(beam.vy).toBeCloseTo(expected.y, 9);
+    expect(Math.hypot(beam.vx, beam.vy)).toBeCloseTo(800, 9);
+    expect(beam.radius).toBe(16); // 宽体贯穿光梭
+    expect(beam.pierceLeft).toBe(999);
+    expect(beam.ttlMs).toBe(1500);
+    expect(beam.hitIds).toEqual([]); // 清空：可贯穿扫过敌人
+    expect(beam.data.returning).toBe(1);
+    expect(beam.data.focusReturn).toBe(0);
+    expect(beam.data.prismRecurse).toBe(0);
   });
 
-  it('端到端：链条用尽 → 回旋弹折返再扫人群（重打已打过的敌人）、不再生成回旋（产弹恰 2 枚）', () => {
-    // 2 张弹跳+1（chainCount 5）+ 冰毒 + 回旋：纵列 5 个敌人恰好在第 5 跳用尽次数 → 回旋触发。
+  it('伤害公式：命中 1 次为 1.25 倍基础伤害，命中 3 次为 1.75 倍（baseDamage × (1 + 0.25 × N)）', () => {
+    // 命中 1 次: N=1 -> 10 * 1.25 = 12.5
+    const state1 = createSimState(1);
+    const e1 = makeEnemy(state1, 360, 1120, 10000);
+    const proj1 = spawnProjectile(state1, {
+      behavior: 'prism_chain',
+      x: 360,
+      y: 1120,
+      vx: 0,
+      vy: -800,
+      damage: 10,
+      pierceLeft: 999,
+      ttlMs: 4000,
+      data: prismData({ chainsLeft: 0, focusReturn: 1 }),
+    });
+    proj1.hitIds.push(e1.id);
+    behavior.onProjectileHit!(state1, proj1, e1);
+    expect(state1.projectiles).toHaveLength(2);
+    expect(state1.projectiles[1].damage).toBeCloseTo(10 * 1.25, 9);
+
+    // 命中 3 次: N=3 -> 10 * 1.75 = 17.5
+    const state3 = createSimState(1);
+    const e3 = makeEnemy(state3, 360, 880, 10000);
+    const proj3 = spawnProjectile(state3, {
+      behavior: 'prism_chain',
+      x: 360,
+      y: 880,
+      vx: 0,
+      vy: -800,
+      damage: 6.4,
+      pierceLeft: 999,
+      ttlMs: 4000,
+      data: prismData({ chainsLeft: 1, focusReturn: 1 }),
+    });
+    proj3.hitIds.push(101, 102, e3.id);
+    behavior.onProjectileHit!(state3, proj3, e3);
+    expect(state3.projectiles).toHaveLength(2);
+    expect(state3.projectiles[1].damage).toBeCloseTo(10 * 1.75, 9);
+  });
+
+  it('重点测试：怪群不足导致提前终止（如只有 1 个怪，打单体 Boss/孤立怪）时，也能稳定生成折返弹（验证修复截断漏洞）', () => {
+    const state = createSimState(1); // 角色 (360, 1220)
+    const boss = makeEnemy(state, 360, 1120, 100000); // 孤立 Boss，周围无任何其他怪
+    const nextIdAfterSetup = state.nextId;
+
+    fireWithCards(state, ['focus_return']); // 初始 chainsLeft=3
+    // 主弹发射并命中 boss
+    simulate(state, 120);
+
+    // 截断漏洞修复验证：主弹命中 1 次后虽然 chainsLeft 仍大于 0，但因无后续目标弹跳提前终止，依然成功生成折返弹！
+    // 弹丸总数自增：主弹 1 枚 + 折返弹 1 枚 = 2 枚
+    expect(state.nextId - nextIdAfterSetup).toBe(2);
+    // 折返光梭从 boss 命中点 (360, 1120) 飞向角色 (360, 1220)，因 hitIds 清空且贯穿，再扫 boss 一次：
+    // 首跳 10 伤，折返光梭 10 * (1 + 0.25 * 1) = 12.5 伤，boss 总扣血 22.5
+    expect(boss.hp).toBeCloseTo(100000 - 10 - 12.5, 6);
+  });
+
+  it('端到端：弹跳耗尽触发折返并在折返路上以宽体贯穿扫过敌人', () => {
+    // 3 个敌人纵列排布，刚好弹完 3 跳耗尽次数触发折返
     const state = createSimState(1);
     const e1 = makeEnemy(state, 360, 1120, 10000);
     const e2 = makeEnemy(state, 360, 1000, 10000);
     const e3 = makeEnemy(state, 360, 880, 10000);
-    const e4 = makeEnemy(state, 360, 760, 10000);
-    const e5 = makeEnemy(state, 360, 640, 10000);
     const nextIdAfterSetup = state.nextId;
 
-    fireWithCards(state, ['bounce_up', 'bounce_up', 'frost_venom', 'boomerang']);
-    // 主链 5 跳直击（10/8/6.4/5.12/4.096）+ 每跳 frostVenom；间距 120 > zap 判定径 100：无 zap
-    simulate(state, 300);
+    fireWithCards(state, ['focus_return']);
+    simulate(state, 200);
 
-    expect(state.projectiles).toHaveLength(0); // 回旋弹 pierce 2 用尽后正常死亡，无第三代
-    // 第 n 次直击 = 10 × 0.8^(n-1)；回旋弹（10 × 0.8^5 = 3.2768）从 e5 命中点折返朝角色：
-    // 先扫到 e4、再扫到 e3（新 hitIds 可再打已打过的），pierce 2 用尽后亡。
-    expect(e1.hp).toBeCloseTo(10000 - 10, 6);
-    expect(e2.hp).toBeCloseTo(10000 - 10 * 0.8, 6);
-    expect(e3.hp).toBeCloseTo(10000 - 10 * 0.8 * 0.8 - 10 * Math.pow(0.8, 5), 6);
-    expect(e4.hp).toBeCloseTo(10000 - 10 * Math.pow(0.8, 3) - 10 * Math.pow(0.8, 5), 6);
-    expect(e5.hp).toBeCloseTo(10000 - 10 * Math.pow(0.8, 4), 6);
-    // 回旋弹只吃框架结算：不再附着（chill/poison 不因回旋再扫而叠层/刷新）。
-    for (const e of [e1, e2, e3, e4, e5]) {
-      expect(e.effects.map((x) => x.kind)).toEqual(['chill', 'poison']);
-      expect(e.effects[0].stacks).toBe(1);
-      expect(e.effects[1].stacks).toBe(1);
-    }
-    expect(state.nextId - nextIdAfterSetup).toBe(2); // 主链 1 枚 + 回旋 1 枚，不再回旋
+    expect(state.projectiles).toHaveLength(0); // 折返光梭飞过角色后超时销毁
+    // 3 跳直击：10, 8, 6.4；折返光梭伤害 10 * (1 + 0.25 * 3) = 17.5 从 e3 折返飞向角色，沿途贯穿 e2、e1
+    expect(e3.hp).toBeCloseTo(10000 - 6.4 - 17.5, 6);
+    expect(e2.hp).toBeCloseTo(10000 - 8 - 17.5, 6);
+    expect(e1.hp).toBeCloseTo(10000 - 10 - 17.5, 6);
+    expect(state.nextId - nextIdAfterSetup).toBe(2); // 主弹 1 枚 + 折返光梭 1 枚
   });
 
-  it('次数用尽且无回旋牌不产回旋弹；回旋弹被 returning 拦截后走框架死亡路径（无 onProjectileDeath 副作用）', () => {
+  it('次数用尽且无折返牌不产折返弹；折返弹被 returning 拦截后走框架死亡路径（无二次折返）', () => {
     const state = createSimState(1);
     makeEnemy(state, 360, 1120, 100000);
     makeEnemy(state, 360, 1000, 100000);
@@ -458,7 +573,84 @@ describe('回旋返回（boomerang 牌）', () => {
     fireWithCards(state);
     simulate(state, 300);
     expect(state.projectiles).toHaveLength(0);
-    expect(state.nextId - nextIdAfterSetup).toBe(1); // 仅主弹：无回旋
+    expect(state.nextId - nextIdAfterSetup).toBe(1); // 仅主弹：无折返
+  });
+});
+
+describe('棱镜往复（prism_recurse 牌）', () => {
+  it('场上只有 2 个敌人时，棱镜在两怪之间往返弹跳，弹满预定跳数（例如 3 跳与 5 跳）', () => {
+    // 3 跳测试（默认无额外弹跳牌）
+    const state3 = createSimState(1);
+    const a3 = makeEnemy(state3, 360, 1120, 10000);
+    const b3 = makeEnemy(state3, 360, 1020, 10000); // 间距 100 < chainRange 150
+    fireWithCards(state3, ['prism_recurse']);
+    simulate(state3, 200);
+
+    expect(state3.projectiles).toHaveLength(0);
+    // 3 跳：a3(10) -> b3(8) -> a3(6.4)
+    expect(a3.hp).toBeCloseTo(10000 - 10 - 6.4, 6);
+    expect(b3.hp).toBeCloseTo(10000 - 8, 6);
+
+    // 5 跳测试（2 张 bounce_up，chainCount=5）
+    const state5 = createSimState(1);
+    const a5 = makeEnemy(state5, 360, 1120, 10000);
+    const b5 = makeEnemy(state5, 360, 1020, 10000);
+    fireWithCards(state5, ['prism_recurse', 'bounce_up', 'bounce_up']);
+    simulate(state5, 300);
+
+    expect(state5.projectiles).toHaveLength(0);
+    // 5 跳：
+    // 第 1 跳 a5: 10
+    // 第 2 跳 b5: 10 * 0.8 = 8
+    // 第 3 跳 a5: 10 * 0.8^2 = 6.4
+    // 第 4 跳 b5: 10 * 0.8^3 = 5.12
+    // 第 5 跳 a5: 10 * 0.8^4 = 4.096
+    expect(a5.hp).toBeCloseTo(10000 - (10 + 6.4 + 4.096), 6);
+    expect(b5.hp).toBeCloseTo(10000 - (8 + 5.12), 6);
+  });
+
+  it('优先弹射未命中过的敌人，只有无新敌人时才往复折返', () => {
+    // 场上有 3 个敌人排成一列：e1(360, 1120), e2(360, 1040), e3(360, 960)
+    // 间距 80 < chainRange 150。当从 e2 寻的时，e1(已命中) 和 e3(未命中) 距离均为 80
+    // 棱镜必须优先弹向未命中的 e3，只有当周围无新敌人时才往复折返到已命中敌人
+    const state = createSimState(1);
+    const e1 = makeEnemy(state, 360, 1120, 10000);
+    const e2 = makeEnemy(state, 360, 1040, 10000);
+    const e3 = makeEnemy(state, 360, 960, 10000);
+    // 给 4 跳（1 张 bounce_up），验证前 3 跳必须是 e1, e2, e3，第 4 跳才折返到 e2
+    fireWithCards(state, ['prism_recurse', 'bounce_up']);
+    simulate(state, 300);
+
+    expect(state.projectiles).toHaveLength(0);
+    // 第 1 跳 e1: 10
+    // 第 2 跳 e2: 8
+    // 第 3 跳 e3: 6.4（优先选新目标 e3，而非折返 e1）
+    // 第 4 跳 e2: 5.12（无新目标，折返到非自身的最近存活怪 e2）
+    expect(e1.hp).toBeCloseTo(10000 - 10, 6);
+    expect(e2.hp).toBeCloseTo(10000 - 8 - 5.12, 6);
+    expect(e3.hp).toBeCloseTo(10000 - 6.4, 6);
+  });
+
+  it('联动：同时拥有【棱镜往复】和【聚能折返】时，两怪互弹满 K 次后，触发带蓄能 1 + 0.25 * K 倍伤害的宽体贯穿光梭飞向角色', () => {
+    // 2 怪互弹满 3 次（K=3）
+    const state = createSimState(1);
+    const e1 = makeEnemy(state, 360, 1120, 10000);
+    const e2 = makeEnemy(state, 360, 1020, 10000);
+    const nextIdAfterSetup = state.nextId;
+
+    fireWithCards(state, ['prism_recurse', 'focus_return']);
+    simulate(state, 300);
+
+    expect(state.projectiles).toHaveLength(0);
+    expect(state.nextId - nextIdAfterSetup).toBe(2); // 主弹 1 枚 + 折返光梭 1 枚
+    // K = 3 跳：
+    // 主弹结算：e1 挨第 1 跳(10)、第 3 跳(6.4)；e2 挨第 2 跳(8)
+    // 弹跳结束生成折返光梭，damage = 10 * (1 + 0.25 * 3) = 17.5
+    // 从 e1 (360, 1120) 折返飞向角色 (360, 1220)：
+    // e1 在出生点被折返光梭贯穿再中一次 17.5 伤
+    // e2 在 (360, 1020)，折返光梭向角色 (360, 1220) 飞，不会向上打 e2
+    expect(e1.hp).toBeCloseTo(10000 - 10 - 6.4 - 17.5, 6);
+    expect(e2.hp).toBeCloseTo(10000 - 8, 6);
   });
 });
 
@@ -473,9 +665,9 @@ describe('数值全部来自 weapons/prism.json（真实表驱动，T5.3a 牌池
     expect(getBehavior('prism_chain')).toBe(behavior); // import.meta.glob 自动注册
   });
 
-  it('牌目录：专属牌在前（bounce_up/chain_lightning/frost_venom/boomerang/link_stable），通用牌合并追加', () => {
-    expect(def.cards.slice(0, 5).map((c) => c.id)).toEqual([
-      'bounce_up', 'chain_lightning', 'frost_venom', 'boomerang', 'link_stable',
+  it('牌目录：专属牌在前（bounce_up/chain_lightning/frost_venom/focus_return/prism_recurse/link_stable），通用牌合并追加', () => {
+    expect(def.cards.slice(0, 6).map((c) => c.id)).toEqual([
+      'bounce_up', 'chain_lightning', 'frost_venom', 'focus_return', 'prism_recurse', 'link_stable',
     ]);
     const ids = def.cards.map((c) => c.id);
     for (const genericId of ['dmg_up', 'spd_up', 'multi_shot', 'burst_shot', 'split_shot', 'range_up', 'dot_freq']) {
@@ -513,20 +705,21 @@ describe('数值全部来自 weapons/prism.json（真实表驱动，T5.3a 牌池
     expect(p1.radius).toBe(6);
     expect(p1.data).toMatchObject({
       chainsLeft: 3, chainCount: 3, baseDamage: 10, falloff: 0.8, chainRange: 150,
-      chainLightning: 0, zapRadius: 90, zapDamage: 4, boomerang: 0, frostVenom: 0,
+      chainLightning: 0, zapRadius: 90, zapDamage: 4, focusReturn: 0, prismRecurse: 0, frostVenom: 0,
     });
 
     expect(statsOf(['bounce_up', 'bounce_up']).chainCount).toBe(5); // 弹跳+1 ×2
     const pMax = statsOf([
       'bounce_up', 'bounce_up', 'bounce_up',
       'link_stable', 'link_stable', 'link_stable',
-      'chain_lightning', 'frost_venom', 'boomerang', 'range_up',
+      'chain_lightning', 'frost_venom', 'focus_return', 'prism_recurse', 'range_up',
     ]);
     expect(pMax.chainCount).toBe(6); // 3 + 3（弹跳+1）
     expect(pMax.falloff).toBeCloseTo(0.95, 9); // 0.8 + 0.05×3
     expect(pMax.chainLightning).toBe(1);
     expect(pMax.frostVenom).toBe(1);
-    expect(pMax.boomerang).toBe(1);
+    expect(pMax.focusReturn).toBe(1);
+    expect(pMax.prismRecurse).toBe(1);
     expect(pMax.chainRange).toBeCloseTo(180, 9); // 150 × 1.2（范围强化乘弹跳距离）
   });
 
@@ -555,7 +748,7 @@ describe('数值全部来自 weapons/prism.json（真实表驱动，T5.3a 牌池
     expect(Math.hypot(p.vx, p.vy)).toBeCloseTo(600, 9);
     expect(p.data).toMatchObject({
       chainsLeft: 2, chainCount: 2, baseDamage: 30, falloff: 0.5, chainRange: 200,
-      zapRadius: 60, zapDamage: 9, chainLightning: 0, boomerang: 0, frostVenom: 0,
+      zapRadius: 60, zapDamage: 9, chainLightning: 0, focusReturn: 0, prismRecurse: 0, frostVenom: 0,
     });
   });
 
@@ -591,16 +784,16 @@ describe('数值全部来自 weapons/prism.json（真实表驱动，T5.3a 牌池
 });
 
 describe('可复现（行为零随机：不读 rng，任意种子同结果）', () => {
-  /** 固定场景：弹跳×2+冰毒+回旋（chainCount=5）打满 300 帧的全量结果快照。 */
+  /** 固定场景：弹跳×2+冰毒+折返+往复（chainCount=5）打满 300 帧的全量结果快照。 */
   function scenario(seed: number): { hp: number[]; nextId: number; leftover: number } {
     const state = createSimState(seed);
     makeEnemy(state, 360, 1120);
     makeEnemy(state, 360, 1000);
     makeEnemy(state, 360, 880);
     makeEnemy(state, 360, 760);
-    makeEnemy(state, 360, 640); // 5 连跳恰用尽次数 → 触发回旋
-    makeEnemy(state, 700, 300); // 远处旁观者：链与回旋均不及
-    fireWithCards(state, ['bounce_up', 'bounce_up', 'frost_venom', 'boomerang']);
+    makeEnemy(state, 360, 640); // 5 连跳恰用尽次数 → 触发折返
+    makeEnemy(state, 700, 300); // 远处旁观者：链与折返均不及
+    fireWithCards(state, ['bounce_up', 'bounce_up', 'frost_venom', 'focus_return', 'prism_recurse']);
     simulate(state, 300);
     return { hp: state.enemies.map((e) => e.hp), nextId: state.nextId, leftover: state.projectiles.length };
   }
@@ -613,15 +806,16 @@ describe('可复现（行为零随机：不读 rng，任意种子同结果）', 
 
 // —— T5.3b 弹道机制接线：多射错角 / 连射 / 分裂单体次级弹 / dot 频率 ——
 
-describe('多射（multi_shot 牌：主方向 ±6° 小角度扇形错开——同目标错角）', () => {
-  it('1 张多射发 2 条链弹（-96°/-84°）、各自独立弹跳链；无牌恒 1 条', () => {
+describe('多射（multi_shot 牌：主轴保底 0° + 侧翼 6° 交替展开）', () => {
+  it('1 张多射发 2 条链弹（第 0 发 -90°，第 1 发 -84°）、各自独立弹跳链；无牌恒 1 条', () => {
     const two = createSimState(1);
     makeEnemy(two, 360, 1100, 1e6); // 静止主目标正上：主方向 -90°
     fireWithCards(two, ['multi_shot']);
     expect(two.projectiles).toHaveLength(2);
-    const angles = two.projectiles.map((p) => (Math.atan2(p.vy, p.vx) * 180) / Math.PI).sort((a, b) => a - b);
-    expect(angles[0]).toBeCloseTo(-96, 6);
-    expect(angles[1]).toBeCloseTo(-84, 6);
+    const ang0 = (Math.atan2(two.projectiles[0].vy, two.projectiles[0].vx) * 180) / Math.PI;
+    const ang1 = (Math.atan2(two.projectiles[1].vy, two.projectiles[1].vx) * 180) / Math.PI;
+    expect(ang0).toBeCloseTo(-90, 6);
+    expect(ang1).toBeCloseTo(-84, 6);
     for (const p of two.projectiles) {
       expect(p.damage).toBe(10);
       expect(p.data.chainsLeft).toBe(3); // 各自独立整条弹跳链

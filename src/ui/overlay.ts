@@ -30,6 +30,7 @@ import { applyUpgrade, rollUpgradeOptions, type UpgradeOption } from '../core/up
 import type { GameSession } from '../game/session';
 import { loadRecords, recordResult } from '../game/records';
 import { loadWeaponDefs } from '../data/weapons';
+import { allMaxedUnlocked } from '../core/cards';
 import { OVERLAY_CSS } from './styles';
 
 // —— 数据表：只加载一次（内容共享只读；与 game/session.ts 同款约定） ——
@@ -88,7 +89,7 @@ function formatTime(timeMs: number): string {
 function kindBadge(option: UpgradeOption): { text: string; className: string } {
   switch (option.kind) {
     case 'new_weapon':
-      return { text: '新武器', className: 'ov-kind ov-kind--new' };
+      return { text: '新武器', className: 'ov-kind ov-kind--weapon' };
     case 'card':
       return { text: '武器牌', className: 'ov-kind ov-kind--up' };
   }
@@ -137,6 +138,8 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
   const levelupPanel = el('div', 'ov-panel ov-hidden');
   const levelupCard = el('div', 'ov-card');
   levelupCard.appendChild(el('div', 'ov-title', '升级！选择一项'));
+  const levelupSub = el('div', 'ov-sub');
+  levelupCard.appendChild(levelupSub);
   const optionsBox = el('div', 'ov-options');
   levelupCard.appendChild(optionsBox);
   levelupPanel.appendChild(levelupCard);
@@ -211,16 +214,46 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
 
   // —— 三选一：打开一次（含选项渲染）。保持暂停，直到队列清空。 ——
   function renderOptions(s: GameSession, options: UpgradeOption[]): void {
+    const unlocked = allMaxedUnlocked(s.state, WEAPON_DEFS);
+    if (unlocked) {
+      levelupSub.textContent = '无限牌池已激活（突破上限）';
+      levelupSub.className = 'ov-sub ov-sub--unlimited';
+    } else {
+      levelupSub.textContent = '';
+      levelupSub.className = 'ov-sub';
+    }
+
     optionsBox.textContent = '';
     for (let i = 0; i < options.length; i++) {
       const option = options[i];
-      const badge = kindBadge(option);
       const card = el('button', 'ov-option');
       const top = el('div', 'ov-option-top');
-      top.appendChild(el('span', badge.className, badge.text));
-      top.appendChild(el('span', 'ov-name', option.name));
-      card.appendChild(top);
-      card.appendChild(el('div', 'ov-desc', option.description));
+
+      if (option.kind === 'new_weapon') {
+        const badge = kindBadge(option);
+        top.appendChild(el('span', badge.className, badge.text));
+        top.appendChild(el('span', 'ov-name', `解锁新武器 · ${option.name}`));
+        card.appendChild(top);
+        card.appendChild(el('div', 'ov-desc', option.description));
+        card.appendChild(el('div', 'ov-level-indicator ov-level-indicator--init', '初始等级 Lv.0'));
+      } else {
+        const curLv = s.state.weaponStates[option.weaponId]?.level ?? 0;
+        const nextLv = curLv + 1;
+        if (curLv >= 10) {
+          top.appendChild(el('span', 'ov-kind ov-kind--break', '突破上限'));
+          top.appendChild(el('span', 'ov-name', option.name));
+          card.appendChild(top);
+          card.appendChild(el('div', 'ov-desc', option.description));
+          card.appendChild(el('div', 'ov-level-indicator ov-level-indicator--break', `等级突破 Lv.${curLv} → Lv.${nextLv}`));
+        } else {
+          top.appendChild(el('span', 'ov-kind ov-kind--up', '武器牌'));
+          top.appendChild(el('span', 'ov-name', option.name));
+          card.appendChild(top);
+          card.appendChild(el('div', 'ov-desc', option.description));
+          card.appendChild(el('div', 'ov-level-indicator', `强化升级 Lv.${curLv} → Lv.${nextLv}`));
+        }
+      }
+
       card.addEventListener('click', () => {
         onOptionPicked(s, option);
       });

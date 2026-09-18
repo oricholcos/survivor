@@ -19,7 +19,7 @@ import type { Enemy, SimState } from '../types';
 import { addWeapon, getWeaponStats, updateWeapons } from '../weapons';
 import type { WeaponStats } from '../weapons';
 import { behavior } from './behavior_chargeSniper';
-import { BURST_QUEUE_META_KEY, type BurstWaveEntry } from '../cards';
+import { availableCards, BURST_QUEUE_META_KEY, type BurstWaveEntry } from '../cards';
 import './index'; // 副作用：自动发现注册
 import { getBehavior } from './registry';
 
@@ -486,6 +486,19 @@ describe('数值全部来自 weapons/charge_sniper.json（真实表驱动，T5.3
       { key: 'headshotHpFactor', value: 0.6, op: 'set' },
       { key: 'headshotMultiplier', value: 1.5, op: 'set' },
     ]);
+
+    const executeUp = def.cards.find((c) => c.id === 'execute_up')!;
+    expect(executeUp.requiresCard).toBe('headshot');
+  });
+
+  it('升级池前置依赖：未持有 headshot 时 execute_up 绝对不出现；持有 headshot（≥1）时正常进入可选池', () => {
+    const wsWithout = { level: 0, cooldownMs: 0, cards: {} };
+    const poolWithout = availableCards(def, wsWithout, false).map((c) => c.id);
+    expect(poolWithout).not.toContain('execute_up');
+
+    const wsWith = { level: 1, cooldownMs: 0, cards: { headshot: 1 } };
+    const poolWith = availableCards(def, wsWith, false).map((c) => c.id);
+    expect(poolWith).toContain('execute_up');
   });
 
   it('牌组 stats 注入：伤害乘区与开关全部随牌（改 json 即变）', () => {
@@ -506,15 +519,16 @@ describe('数值全部来自 weapons/charge_sniper.json（真实表驱动，T5.3
 
 // —— T5.3b 弹道机制接线：多射 / 连射 / 分裂 ——
 
-describe('多射（multi_shot 牌：主方向 ±4° 小角度扇形错开）', () => {
-  it('1 张多射发 2 枚（-94°/-86°）；同伤害同效果模板；2 张多射发 3 枚', () => {
+describe('多射（multi_shot 牌：主轴保底 0° + 侧翼 4° 交替展开）', () => {
+  it('1 张多射发 2 枚（第 0 发 -90°，第 1 发 -86°）；同伤害同效果模板；2 张多射发 3 枚', () => {
     const two = createSimState(1);
     makeEnemy(two, 360, 1020, { hp: 1e6 }); // 静止主目标正上：主方向 -90°
     fireOnce(two, ['multi_shot']);
     expect(two.projectiles).toHaveLength(2);
-    const angles = two.projectiles.map((p) => (Math.atan2(p.vy, p.vx) * 180) / Math.PI).sort((a, b) => a - b);
-    expect(angles[0]).toBeCloseTo(-94, 6); // 主方向 -90° ± MULTI_VOLLEY_SPREAD_DEG/2
-    expect(angles[1]).toBeCloseTo(-86, 6);
+    const ang0 = (Math.atan2(two.projectiles[0].vy, two.projectiles[0].vx) * 180) / Math.PI;
+    const ang1 = (Math.atan2(two.projectiles[1].vy, two.projectiles[1].vx) * 180) / Math.PI;
+    expect(ang0).toBeCloseTo(-90, 6); // 第 0 发严格锁定主目标方向（0 偏差必中）
+    expect(ang1).toBeCloseTo(-86, 6); // 第 1 发侧翼 +4°
     for (const p of two.projectiles) {
       expect(p.damage).toBeCloseTo(60, 9); // 整波同一伤害快照
       expect(p.effectsOnHit.map((t) => t.kind)).toEqual(['mark']);

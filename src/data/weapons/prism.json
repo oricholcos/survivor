@@ -39,11 +39,18 @@
       "params": [{ "key": "frostVenom", "value": 1, "op": "set" }]
     },
     {
-      "id": "boomerang",
-      "name": "回旋返回",
-      "description": "弹跳次数用尽后生成朝角色折返的回旋弹",
+      "id": "focus_return",
+      "name": "聚能折返",
+      "description": "弹跳链终结时朝角色发射宽体贯穿光梭；基础伤害100%，每跳额外增伤25%",
       "once": true,
-      "params": [{ "key": "boomerang", "value": 1, "op": "set" }]
+      "params": [{ "key": "focusReturn", "value": 1, "op": "set" }]
+    },
+    {
+      "id": "prism_recurse",
+      "name": "棱镜往复",
+      "description": "解除单次命中限制；周围无新敌人时可在已命中敌人间折返弹跳",
+      "once": true,
+      "params": [{ "key": "prismRecurse", "value": 1, "op": "set" }]
     },
     {
       "id": "link_stable",

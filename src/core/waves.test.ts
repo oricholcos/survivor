@@ -11,7 +11,7 @@ import wavesJson from '../data/waves.json';
 import type { EnemyTypeData } from './enemies';
 import { createSimState } from './simState';
 import type { Enemy, SimState } from './types';
-import { updateWaves, type WavesConfig } from './waves';
+import { calculateSpawnMargin, updateWaves, type WavesConfig } from './waves';
 
 /** 测试夹具敌人表：mook=杂兵 hp10、brute=爆发怪 hp40、bigboss=首领 hp900。 */
 const TYPES: Record<string, EnemyTypeData> = {
@@ -58,14 +58,14 @@ const REAL = wavesJson as unknown as WavesConfig;
 const REAL_TYPES = loadEnemyTypes();
 
 describe('匀速段：给定时间点刷怪构成符合表', () => {
-  it('真实 waves.json：开局 ≤3s 见怪（T3.6b 修复：静默开局被试玩否决）——首段 fromSec=0、runner、perSec 0.4~0.7 温和开场', () => {
-    // 结构面：首段必须从 0s 起刷 runner，perSec 0.4~0.7（开局 ≤3s 见怪 + 前 2 分钟墙压温和）。
+  it('真实 waves.json：开局 ≤3s 见怪（T3.6b 修复：静默开局被试玩否决）——首段 fromSec=0、runner、perSec 0.6~1.2 温和开场', () => {
+    // 结构面：首段必须从 0s 起刷 runner，perSec 0.6~1.2（开局 ≤3s 见怪 + 前 2 分钟墙压温和）。
     const first = REAL.timeline[0]!;
     expect(first.fromSec).toBe(0);
     expect(first.spawn!.enemy).toBe('runner');
-    expect(first.spawn!.perSec).toBeGreaterThanOrEqual(0.4);
-    expect(first.spawn!.perSec).toBeLessThanOrEqual(0.7);
-    // 行为面：perSec=0.6 → 累加器约 1.7s 攒出首只，3s 内必见怪且全是 runner。
+    expect(first.spawn!.perSec).toBeGreaterThanOrEqual(0.6);
+    expect(first.spawn!.perSec).toBeLessThanOrEqual(1.2);
+    // 行为面：perSec=0.9 → 累加器约 1.1s 攒出首只，3s 内必见怪且全是 runner。
     // 「前 10s 墙不掉血」不由本测试保证——由 balance.test.ts 的行军下界断言兜底
     // （首怪从刷怪线行军至墙线 ≥13s，10s 内任何刷怪都不可能抵墙）。
     const state = createSimState(42);
@@ -78,25 +78,25 @@ describe('匀速段：给定时间点刷怪构成符合表', () => {
     }
   });
 
-  it('真实 waves.json：t=85 首个爆发波帧恰好 6 个 standard、无 boss（前期爆发波刻意不带 Boss）；t=195 首个带 Boss 的爆发波 = 7 runner + 1 boss_1', () => {
+  it('真实 waves.json：t=85 首个爆发波帧恰好 8 个 standard、无 boss（前期爆发波刻意不带 Boss）；t=195 首个带 Boss 的爆发波 = 10 standard + 1 boss_1', () => {
     const state = createSimState(42);
     for (let i = 0; i < 84; i++) {
       frame(state, 1000, REAL, REAL_TYPES);
     }
     expect(countBy(state, 'standard')).toBe(0);
     frame(state, 1000, REAL, REAL_TYPES); // t=85：跨过首个爆发波节点
-    expect(countBy(state, 'standard')).toBe(6);
+    expect(countBy(state, 'standard')).toBe(8);
     expect(countBy(state, 'runner')).toBeGreaterThan(0); // 0s 起的匀速段照常推进
     expect(bossesOf(state).length).toBe(0);
     for (let i = 0; i < 110; i++) {
       frame(state, 1000, REAL, REAL_TYPES); // t=86..195
     }
     expect(countBy(state, 'boss_1')).toBe(1);
-    expect(countBy(state, 'runner')).toBeGreaterThanOrEqual(7); // 爆发 7 runner + 匀速段 runner
+    expect(countBy(state, 'runner')).toBeGreaterThanOrEqual(7); // 爆发 10 standard + 匀速段 runner
     expect(bossesOf(state).length).toBe(1);
   });
 
-  it('真实 waves.json：301~329s 新增全是 tank（tank 段混入），t=330 切回 standard', () => {
+  it('真实 waves.json：301~329s 新增全是 tank（tank 段混入），t=330 切到 runner', () => {
     const state = createSimState(7);
     for (let i = 0; i < 300; i++) {
       frame(state, 1000, REAL, REAL_TYPES);
@@ -110,10 +110,10 @@ describe('匀速段：给定时间点刷怪构成符合表', () => {
       expect(state.enemies[i].typeId).toBe('tank');
     }
     const mark2 = state.enemies.length;
-    frame(state, 1000, REAL, REAL_TYPES); // t=330：当前段切到 standard@330
+    frame(state, 1000, REAL, REAL_TYPES); // t=330：当前段切到 runner@330
     expect(state.enemies.length).toBeGreaterThan(mark2);
     for (let i = mark2; i < state.enemies.length; i++) {
-      expect(state.enemies[i].typeId).toBe('standard');
+      expect(state.enemies[i].typeId).toBe('runner');
     }
   });
 
@@ -265,6 +265,15 @@ describe('clock 参数（T3.4 消费面）', () => {
     expect(state.enemies.length).toBe(1);
     expect(state.enemies[0].maxHp).toBeCloseTo(11.1, 9); // 10 × (1 + 0.01×11)：证明用的是 timeMs/1000
   });
+
+  it('loopScale > 1 时敌人 xp 按比例缩放', () => {
+    const config = makeConfig([{ fromSec: 0, spawn: { enemy: 'mook', perSec: 1 } }], 0);
+    const state = createSimState(13);
+    updateWaves(state, 1000, config, TYPES, { timelineSec: 1, loopCount: 1, loopScale: 2.0 });
+    expect(state.enemies.length).toBe(2);
+    expect(state.enemies[0].xp).toBe(2); // mook base xp 1 * 2.0 = 2
+    expect(state.enemies[1].xp).toBe(2);
+  });
 });
 
 describe('dt 追补', () => {
@@ -317,14 +326,22 @@ describe('结束停摆与可复现', () => {
     const snap = (s: SimState): Array<{ typeId: string; x: number; y: number; maxHp: number; isBoss: boolean }> =>
       s.enemies.map((e) => ({ typeId: e.typeId, x: e.x, y: e.y, maxHp: e.maxHp, isBoss: e.isBoss }));
     expect(snap(a)).toEqual(snap(b));
-    // 序列非平凡：数量可观、恰含 195s 一只 Boss、x 全在 [40, width-40)
+    // 序列非平凡：数量可观、恰含 195s 一只 Boss、x 全在 [margin, width-margin)
     expect(a.enemies.length).toBeGreaterThan(50);
     expect(countBy(a, 'boss_1')).toBe(1);
     for (const e of a.enemies) {
-      expect(e.x).toBeGreaterThanOrEqual(40);
-      expect(e.x).toBeLessThan(a.layout.width - 40);
+      const margin = calculateSpawnMargin(REAL_TYPES[e.typeId]!);
+      expect(e.x).toBeGreaterThanOrEqual(margin);
+      expect(e.x).toBeLessThan(a.layout.width - margin);
       expect(e.y).toBe(a.layout.spawnLineY);
     }
+  });
+
+  it('calculateSpawnMargin: 普通怪 Math.max(radius + 10, 32)，Boss Math.max(radius * 1.5 + 24, 72)', () => {
+    expect(calculateSpawnMargin({ ...TYPES.mook, radius: 10, isBoss: false })).toBe(32); // max(20, 32) = 32
+    expect(calculateSpawnMargin({ ...TYPES.mook, radius: 30, isBoss: false })).toBe(40); // max(40, 32) = 40
+    expect(calculateSpawnMargin({ ...TYPES.bigboss, radius: 20, isBoss: true })).toBe(72); // max(54, 72) = 72
+    expect(calculateSpawnMargin({ ...TYPES.bigboss, radius: 40, isBoss: true })).toBe(84); // max(84, 72) = 84
   });
 });
 
@@ -332,9 +349,9 @@ describe('waves.json 数据契约护栏（T3.6 平衡校准后的结构约束）
   it('顶层字段与时间轴有序、引用的敌人 id 全部存在', () => {
     expect(REAL.campaignDurationSec).toBe(600);
     // T5.2b 重校准：轨道炮 hitscan 化后整体清场能力上调，血量膨胀系数 0.0042 → 0.0052
-    // （末段 hp ×4.12，让满级 build 也会被爆发波咬到），endless 循环参数保持不变。
-    expect(REAL.scaling).toEqual({ hpPerSec: 0.0052 });
-    expect(REAL.endlessLoop).toEqual({ loopFromSec: 560, scalingPerLoop: 1.08 });
+    // M3 翻倍重校准：血量膨胀系数 0.0052 → 0.008，endless 循环参数 1.08 → 1.22
+    expect(REAL.scaling).toEqual({ hpPerSec: 0.0096 });
+    expect(REAL.endlessLoop).toEqual({ loopFromSec: 560, scalingPerLoop: 2.0 });
     expect(REAL.timeline.length).toBeGreaterThan(0);
     let prev = -Infinity;
     for (const entry of REAL.timeline) {
@@ -356,21 +373,19 @@ describe('waves.json 数据契约护栏（T3.6 平衡校准后的结构约束）
     }
   });
 
-  it('爆发波节奏：9 个、count 6~45、间隔 25~130s；195s 前与 555s 波不带 Boss，其余带 boss_1', () => {
+  it('爆发波节奏：9 个、count 6~55、间隔 25~130s；195s 前与 550s/575s 脉冲不带 Boss，其余带 boss_1', () => {
     const bursts = REAL.timeline.filter((e) => e.burst !== undefined);
     expect(bursts.length).toBeGreaterThanOrEqual(8);
     expect(bursts.length).toBeLessThanOrEqual(11);
     for (let i = 0; i < bursts.length; i++) {
       const b = bursts[i].burst!;
       expect(b.count).toBeGreaterThanOrEqual(6);
-      // T3.6c 校准：585 压哨脉冲加量到 44 —— 后期自动 build 清场能力大幅提升，
-      // 大脉冲既压满防御又能被三种子防住不破墙。
-      expect(b.count).toBeLessThanOrEqual(45);
+      expect(b.count).toBeLessThanOrEqual(55);
       expect(b.strengthFactor).toBeGreaterThanOrEqual(0.4);
       expect(b.strengthFactor).toBeLessThanOrEqual(1);
-      if (bursts[i].fromSec < 195 || bursts[i].fromSec === 555) {
+      if (bursts[i].fromSec < 195 || bursts[i].fromSec === 550 || bursts[i].fromSec === 575) {
         // 前期爆发波刻意无 Boss：Boss 33/s 的墙压在蓄能狙成型前不可反制。
-        // 555 波去 Boss 是 T3.6c 校准：其击杀 +55 回墙治疗会垫高末段压力地板。
+        // 550 与 575 为纯群怪脉冲无 boss
         expect(b.boss).toBeUndefined();
       } else {
         expect(b.boss).toBe('boss_1');
@@ -383,15 +398,15 @@ describe('waves.json 数据契约护栏（T3.6 平衡校准后的结构约束）
     }
   });
 
-  it('前松后紧：开局即刷怪（首段 fromSec=0、perSec 0.4~0.7 温和起步）、前段温和（runner/standard ≤ 1.5）、中段上压（≤ 2.5 且 300s 起混入 tank）、尾段以爆发波为主（3 条且逐波到 600s）', () => {
+  it('前松后紧：开局即刷怪（首段 fromSec=0、perSec 0.6~1.2 温和起步）、前段温和（runner/standard ≤ 2.25）、中段上压（≤ 3.75 且 300s 起混入 tank）、尾段以爆发波为主（3 条且逐波到 600s）', () => {
     const spawns = REAL.timeline.filter((e) => e.spawn !== undefined);
     const first = spawns[0]!;
     // 开局不空场：首段从 0s 起刷（T3.6b 修复：47s 静默开局被试玩否决）。
-    // perSec ≥ 0.34 保证首刷期望 ≤3s；≤0.7 保证前 2 分钟墙压温和（行军 ≥13s + 首攻冷却）。
+    // perSec ≥ 0.34 保证首刷期望 ≤3s；≤1.2 保证前 2 分钟墙压温和（行军 ≥13s + 首攻冷却）。
     expect(first.fromSec).toBe(0);
     expect(first.spawn!.enemy).toBe('runner');
-    expect(first.spawn!.perSec).toBeGreaterThanOrEqual(0.4);
-    expect(first.spawn!.perSec).toBeLessThanOrEqual(0.7);
+    expect(first.spawn!.perSec).toBeGreaterThanOrEqual(0.6);
+    expect(first.spawn!.perSec).toBeLessThanOrEqual(1.2);
 
     const front = spawns.filter((e) => e.fromSec < 180);
     const mid = spawns.filter((e) => e.fromSec >= 180 && e.fromSec < 420);
@@ -399,18 +414,18 @@ describe('waves.json 数据契约护栏（T3.6 平衡校准后的结构约束）
 
     for (const e of front) {
       expect(['runner', 'standard']).toContain(e.spawn!.enemy);
-      expect(e.spawn!.perSec).toBeLessThanOrEqual(1.5);
+      expect(e.spawn!.perSec).toBeLessThanOrEqual(2.25);
     }
     for (const e of mid) {
-      expect(e.spawn!.perSec).toBeLessThanOrEqual(2.5);
+      expect(e.spawn!.perSec).toBeLessThanOrEqual(3.75);
     }
     expect(mid.some((e) => e.spawn!.enemy === 'tank')).toBe(true);
     for (const e of climax) {
       if (e.spawn!.enemy !== 'tank') {
         // 尾段匀速密度让位于爆发波：温和的底线密度 + 高频爆发波构成高潮。
-        // T3.6c 校准：570 段提至 1.5 —— 首刷提前让自动玩家后期升级加速，匀速密度同步上调。
+        // 怪物提升 1.5 倍后尾段高潮 perSec 提升到了 7.5
         expect(e.spawn!.perSec).toBeGreaterThanOrEqual(0.7);
-        expect(e.spawn!.perSec).toBeLessThanOrEqual(1.5);
+        expect(e.spawn!.perSec).toBeLessThanOrEqual(7.5);
       }
     }
     expect(climax.some((e) => e.spawn!.enemy === 'tank')).toBe(true);

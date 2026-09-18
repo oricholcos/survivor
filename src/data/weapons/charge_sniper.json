@@ -38,6 +38,7 @@
       "id": "execute_up",
       "name": "处决强化",
       "description": "斩首倍率 +0.25（可重复获取）",
+      "requiresCard": "headshot",
       "maxCount": 2,
       "params": [{ "key": "headshotMultiplier", "value": 0.25, "op": "add" }]
     },

@@ -225,7 +225,7 @@ describe('爆炸 AoE（onProjectileDeath）', () => {
 });
 
 describe('多射（multi_shot 牌：projectileCount +1/张）', () => {
-  it('无牌发 1 枚正对目标；1 张多射发 2 枚按 volleySpreadDeg=24 扇形错开（±12°）', () => {
+  it('无牌发 1 枚正对目标；1 张多射发 2 枚主轴保底 0°（-90°）与侧翼 +12°（-78°）', () => {
     const base = createSimState(1);
     makeEnemy(base, 360, 700);
     fireWithCards(base);
@@ -237,7 +237,9 @@ describe('多射（multi_shot 牌：projectileCount +1/张）', () => {
     const stats2 = fireWithCards(multi, ['multi_shot']);
     expect(stats2.projectileCount).toBe(2);
     expect(multi.projectiles).toHaveLength(2);
-    expect(multi.projectiles.map(angleDeg).sort((a, b) => a - b)).toEqual([-102, -78]);
+    expect(angleDeg(multi.projectiles[0])).toBeCloseTo(-90, 9);
+    expect(angleDeg(multi.projectiles[1])).toBeCloseTo(-78, 9);
+    expect(multi.projectiles.map(angleDeg).sort((a, b) => a - b)).toEqual([-90, -78]);
     for (const p of multi.projectiles) {
       expect(p.behavior).toBe('homing_missile');
       expect(p.x).toBe(360);
@@ -380,7 +382,7 @@ describe('优先精英（prefer_elite 牌）', () => {
     expect(state.projectiles.map((p) => p.data.targetId)).toEqual([farBoss.id, farBoss.id]);
     expect(state.projectiles.map((p) => p.data.targetId)).not.toContain(near.id);
     const angles = state.projectiles.map(angleDeg).sort((x, y) => x - y);
-    expect(angles[0]).toBeCloseTo(-102, 6);
+    expect(angles[0]).toBeCloseTo(-90, 6);
     expect(angles[1]).toBeCloseTo(-78, 6);
 
     // 两个 Boss 取最近。

@@ -420,7 +420,7 @@ describe('眩晕（stun_blast 专属牌）', () => {
 });
 
 describe('黑洞（black_hole 专属牌）', () => {
-  it('幸存者挂 blackhole（centerX/Y = 落点、pullPerSec 随表）；效果引擎逐帧朝落点拉拽（不越过中心）', () => {
+  it('幸存者被瞬间拉至落点（centerX/Y = 落点）；即时效果不占效果槽', () => {
     const state = createSimState(1);
     const victim = makeEnemy(state, 595, 800); // 距爆心 95 ≤ 100：吃 18 幸存
     const bystander = makeEnemy(state, 500, 1000); // 距 200：半径外
@@ -428,30 +428,12 @@ describe('黑洞（black_hole 专属牌）', () => {
     shell.dead = true;
     behavior.onProjectileDeath!(state, shell);
 
-    // 效果槽实例：先炸（18）后挂 stun、再挂 blackhole（次序锁定：先炸后拉）。
+    // 效果槽实例：先炸（18）后挂 stun；黑洞为即时效果（瞬间拉拽至中心，不占效果槽）
     expect(victim.hp).toBeCloseTo(100 - 18, 6);
-    expect(victim.effects.map((e) => e.kind)).toEqual(['stun', 'blackhole']);
-    const bh = victim.effects[1];
-    expect(bh.stacks).toBe(1);
-    expect(bh.untilMs).toBe(state.timeMs + 1500); // 效果表 durationMs
-    expect(bh.data.centerX).toBe(500); // 拉拽中心 = 落点
-    expect(bh.data.centerY).toBe(800);
-    expect(bh.data.pullPerSec).toBe(300); // 表值 blackHolePullPerSec
+    expect(victim.effects.map((e) => e.kind)).toEqual(['stun']);
+    expect(victim.x).toBe(500); // 瞬间拉拽到落点 x
+    expect(victim.y).toBe(800); // 瞬间拉拽到落点 y
 
-    // 拉拽位移：300px/s × 0.1s = 30px/步，朝落点（-x 方向）、y 不动。
-    for (let step = 0; step < 3; step++) {
-      state.timeMs += 100;
-      updateEffects(state, 100);
-      expect(victim.x).toBeCloseTo(595 - 30 * (step + 1), 6);
-      expect(victim.y).toBe(800);
-    }
-    // 第 4 步（dt 1s）：距中心仅剩 5px → 拉满即停（不越过中心），恰落在落点上。
-    state.timeMs += 1000;
-    updateEffects(state, 1000);
-    expect(victim.x).toBe(500);
-    expect(victim.y).toBe(800);
-    // 眩晕（800ms）已到期移除；黑洞（1500ms）仍在槽。
-    expect(victim.effects.map((e) => e.kind)).toEqual(['blackhole']);
     // 半径外旁观者：无效果、无位移。
     expect(bystander.hp).toBe(100);
     expect(bystander.effects).toHaveLength(0);
@@ -459,7 +441,7 @@ describe('黑洞（black_hole 专属牌）', () => {
     expect(bystander.y).toBe(1000);
   });
 
-  it('端到端（全专属牌全开）：弹上快照 blackHole=1，落地后目标挂 blackhole 且中心 = 落点', () => {
+  it('端到端（全专属牌全开）：弹上快照 blackHole=1，落地后目标瞬间拉至落点且挂 stun 与留燃烧地', () => {
     const state = createSimState(1);
     const a1 = makeEnemy(state, 360, 500);
     makeEnemy(state, 365, 505);
@@ -473,11 +455,9 @@ describe('黑洞（black_hole 专属牌）', () => {
 
     simulate(state, 100);
 
-    expect(a1.effects.map((e) => e.kind)).toEqual(['stun', 'blackhole']); // 次序锁定：先 stun 后黑洞
-    const bh = a1.effects[1];
-    expect(bh.data.centerX).toBe(360); // 母弹落点
-    expect(bh.data.centerY).toBe(500);
-    expect(bh.data.pullPerSec).toBe(300);
+    expect(a1.effects.map((e) => e.kind)).toEqual(['stun']); // stun 挂槽，blackhole 为即时拉拽
+    expect(a1.x).toBe(360); // 母弹落点
+    expect(a1.y).toBe(500);
     expect(listZones(state)).toHaveLength(1); // 燃烧地照常（无集束：恰 1 片）
   });
 });
@@ -556,7 +536,7 @@ describe('数值全部来自 weapons/mortar.json（真实表驱动，T5.3a 牌�
     for (const key of ['burnGround', 'stunBlast', 'blackHole'] as const) {
       expect(shell.data[key]).toBe(1);
     }
-    // 死亡 → 燃烧地参数随 alt 表（radius = 120×0.5 = 60）、黑洞拉拽 999、无集束分裂。
+    // 死亡 → 燃烧地参数随 alt 表（radius = 120×0.5 = 60）、黑洞即时拉拽（不占效果槽）、无集束分裂。
     shell.dead = true;
     behavior.onProjectileDeath!(alt, shell);
     const zone = listZones(alt)[0];
@@ -564,8 +544,9 @@ describe('数值全部来自 weapons/mortar.json（真实表驱动，T5.3a 牌�
     expect(zone.durationMs).toBe(1000);
     expect(zone.tickMs).toBe(250);
     expect(zone.damagePerTick).toBe(5);
-    const bh = alt.enemies[0].effects.find((e) => e.kind === 'blackhole');
-    expect(bh?.data.pullPerSec).toBe(999);
+    expect(alt.enemies[0].effects.find((e) => e.kind === 'blackhole')).toBeUndefined();
+    expect(alt.enemies[0].x).toBe(400);
+    expect(alt.enemies[0].y).toBe(800);
     expect(alt.projectiles).toHaveLength(1); // 仅夹具壳：无集束分裂
   });
 });

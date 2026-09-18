@@ -464,7 +464,8 @@ describe('酸池（acid_pool 专属牌）', () => {
 describe('推退（push_back 专属牌）', () => {
   it('正上敌人沿背向角色方向（-y）位移 pushForce 25，且直击照常结算', () => {
     const state = createSimState(1);
-    const e = makeEnemy(state, 360, 1000, 1e6); // 距 220
+    const e = makeEnemy(state, 360, 1000, 1e6);
+    e.maxHp = 40; // res=1
     const stats = fireOnce(state, ['push_back']);
 
     expect(stats.pushBack).toBe(1);
@@ -474,14 +475,13 @@ describe('推退（push_back 专属牌）', () => {
     expect(e.y).toBeCloseTo(975, 9); // 1000 - 25
   });
 
-  it('斜向敌人沿径向单位向量推（归一化方向 × force）', () => {
+  it('斜向敌人受击退：方向竖直向上（dirX=0, dirY=-1），受 maxHp 抗性缩放', () => {
     const state = createSimState(1);
     const p = conePoint(20, 100);
-    const e = makeEnemy(state, p.x, p.y, 1e6);
+    const e = makeEnemy(state, p.x, p.y, 40); // maxHp = 40 -> res = 1
     fireOnce(state, ['push_back']);
-    const rad = (20 * Math.PI) / 180;
-    expect(e.x).toBeCloseTo(p.x + 25 * Math.sin(rad), 9);
-    expect(e.y).toBeCloseTo(p.y - 25 * Math.cos(rad), 9);
+    expect(e.x).toBeCloseTo(p.x, 9); // x 不变（竖直向上）
+    expect(e.y).toBeCloseTo(p.y - 25, 9); // y 向上位移 25
   });
 
   it('无推退牌：位置不动（开关随牌生效）', () => {
@@ -594,20 +594,19 @@ describe('数值全部来自 weapons/dragon_breath.json（真实表驱动，T5.3
     state.weaponStates.alt_dragon = { level: 0, cooldownMs: 0, cards: {} };
     const altStats = getWeaponStats(altDef, state, 'alt_dragon');
 
-    const hit = makeEnemy(state, conePoint(40, 100).x, conePoint(40, 100).y, 1e6); // 40° < 45°
-    const wide = makeEnemy(state, conePoint(50, 100).x, conePoint(50, 100).y, 1e6); // 50° > 45°
-    const far = makeEnemy(state, 360, 1060, 1e6); // 距 160 > 150
+    const hit = makeEnemy(state, conePoint(40, 100).x, conePoint(40, 100).y, 40); // 40° < 45°
+    const wide = makeEnemy(state, conePoint(50, 100).x, conePoint(50, 100).y, 40); // 50° > 45°
+    const far = makeEnemy(state, 360, 1060, 40); // 距 160 > 150
 
     behavior.fire(state, 'alt_dragon', altStats); // 第 1 tick：命中 + 推退 40
-    expect(hit.hp).toBeCloseTo(1e6 - 4, 6);
-    expect(wide.hp).toBe(1e6);
-    expect(far.hp).toBe(1e6);
-    const rad = (40 * Math.PI) / 180;
-    expect(hit.x).toBeCloseTo(conePoint(40, 100).x + 40 * Math.sin(rad), 9);
-    expect(hit.y).toBeCloseTo(conePoint(40, 100).y - 40 * Math.cos(rad), 9);
+    expect(hit.hp).toBeCloseTo(40 - 4, 6);
+    expect(wide.hp).toBe(40);
+    expect(far.hp).toBe(40);
+    expect(hit.x).toBeCloseTo(conePoint(40, 100).x, 9);
+    expect(hit.y).toBeCloseTo(conePoint(40, 100).y - 40, 9);
 
     behavior.fire(state, 'alt_dragon', altStats); // 第 2 tick：达 everyTicks=2 → 落区
-    expect(hit.hp).toBeCloseTo(1e6 - 8, 6);
+    expect(hit.hp).toBeCloseTo(32, 6);
     const zones = listZones(state);
     expect(zones).toHaveLength(1);
     expect(zones[0]).toMatchObject({

@@ -37,7 +37,7 @@ import { applyEffect, dealDamage, getEffectDef } from '../effects';
 import { getCardCount } from '../cards';
 import { distSq, normalize } from '../math';
 import { SpatialHash } from '../spatialHash';
-import type { Enemy, SimState } from '../types';
+import type { Enemy, SimState, Vec } from '../types';
 import type { WeaponBehavior } from './registry';
 
 // 瞄准说明（T5.2a，不接 targeting.leadAim 的原因）：灼热光束是无弹丸的瞬时线段激光
@@ -229,36 +229,68 @@ function castBeam(
   if (refractLayers <= 0) {
     return;
   }
-  // 折射段：主方向旋转固定 +30°、长度 range×0.5，同宽同伤同灼烧、独立完整判定；
-  // 可叠层：每层从上一段终点再偏转 +30° 续射一段（链式）。
+  beamGridTimeMs = NaN; // Invalidate grid cache so refraction sees newly spawned/modified enemies
   const rad = (REFRACT_ANGLE_DEG * Math.PI) / 180;
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
   const rLen = range * REFRACT_LENGTH_FACTOR;
-  let rx = dir.x * cos - dir.y * sin;
-  let ry = dir.x * sin + dir.y * cos;
+  let prevDir = dir;
   let ox = ex;
   let oy = ey;
   for (let l = 0; l < refractLayers; l++) {
-    const fx = ox + rx * rLen;
-    const fy = oy + ry * rLen;
+    const hits = ensureBeamGrid(state).queryCircle(ox, oy, 300);
+    let best: Enemy | null = null;
+    let bestDistSq = Infinity;
+    let bestDiff: Enemy | null = null;
+    let bestDiffDistSq = Infinity;
+
+    for (let i = 0; i < hits.length; i++) {
+      const e = hits[i];
+      if (e.dead) {
+        continue;
+      }
+      const d = distSq({ x: ox, y: oy }, e);
+      if (d > 300 * 300) {
+        continue;
+      }
+      if (d < bestDistSq) {
+        bestDistSq = d;
+        best = e;
+      }
+      if (e.id !== target.id && d < bestDiffDistSq) {
+        bestDiffDistSq = d;
+        bestDiff = e;
+      }
+    }
+
+    const chosen = bestDiff || best;
+    let rDir: Vec;
+    if (chosen) {
+      rDir = normalize({ x: chosen.x - ox, y: chosen.y - oy });
+      if (rDir.x === 0 && rDir.y === 0) {
+        rDir = { x: prevDir.x * cos - prevDir.y * sin, y: prevDir.x * sin + prevDir.y * cos };
+      }
+    } else {
+      rDir = { x: prevDir.x * cos - prevDir.y * sin, y: prevDir.x * sin + prevDir.y * cos };
+    }
+
+    const fx = ox + rDir.x * rLen;
+    const fy = oy + rDir.y * rLen;
     segments.push({ x1: ox, y1: oy, x2: fx, y2: fy });
     damageAlongSegment(state, ox, oy, fx, fy, halfWidth, damage, scorch, scorchTickMs);
     ox = fx;
     oy = fy;
-    const nx = rx * cos - ry * sin;
-    const ny = rx * sin + ry * cos;
-    rx = nx;
-    ry = ny;
+    prevDir = rDir;
   }
 }
 
 /** 距角色最近与次近的存活敌人（distSq 单趟扫描；平距取数组先出现者，确定性）。 */
-function twoNearest(state: SimState): [Enemy | null, Enemy | null] {
+function twoNearest(state: SimState, maxRange: number): [Enemy | null, Enemy | null] {
   let best: Enemy | null = null;
   let bestDistSq = Infinity;
   let second: Enemy | null = null;
   let secondDistSq = Infinity;
+  const maxRangeSq = maxRange > 0 ? maxRange * maxRange : Infinity;
   const enemies = state.enemies;
   for (let i = 0; i < enemies.length; i++) {
     const e = enemies[i];
@@ -266,6 +298,9 @@ function twoNearest(state: SimState): [Enemy | null, Enemy | null] {
       continue;
     }
     const d = distSq(state.character, e);
+    if (d > maxRangeSq) {
+      continue;
+    }
     if (d < bestDistSq) {
       second = best;
       secondDistSq = bestDistSq;
@@ -286,10 +321,11 @@ export const behavior: WeaponBehavior = {
    * 每 tick 开火：选最近敌人定主束方向（过目标延伸到 beamRange），结算线上所有敌人；
    * dualBeam=1 且存在第二近敌人 → 对其方向再发一条同样的光束（不折射）。
    * 折射层数 = 折射+1 牌张数（getCardCount；alt def 无牌时 stats.refraction 开关兜底 1 层）。
-   * 无存活敌人：不开火、冷却归 0（重试标记）。随后写入 VFX meta、积累过热（达阈值泄能）。
+   * 无存活敌人或超出射程：不开火、冷却归 0（重试标记）。随后写入 VFX meta、积累过热（达阈值泄能）。
    */
   fire(state, weaponId, stats) {
-    const [primary, secondTarget] = twoNearest(state);
+    const range = numOr0(stats.beamRange);
+    const [primary, secondTarget] = twoNearest(state, range);
     if (!primary) {
       const ws = state.weaponStates[weaponId];
       if (ws) {
@@ -299,7 +335,6 @@ export const behavior: WeaponBehavior = {
     }
 
     const halfWidth = numOr0(stats.beamWidth) / 2;
-    const range = numOr0(stats.beamRange);
     const scorch = stats.scorch === 1;
     const refractLayers = Math.max(stats.refraction === 1 ? 1 : 0, getCardCount(state, weaponId, 'refract_up'));
     // dot 频率（dot_freq 牌，requiresCard=scorch）：灼烧 tick 间隔 ÷ stats.dotTickMult

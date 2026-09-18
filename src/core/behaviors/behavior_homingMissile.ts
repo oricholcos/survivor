@@ -159,8 +159,8 @@ function burnTickOverride(stats: WeaponStats): number {
 
 /**
  * 发射一波（完整 projectileCount 枚，连射重放共用）：选目标（见 selectTarget）→ 发射
- * stats.projectileCount 枚导弹，初始方向朝目标、多发按 stats.volleySpreadDeg 小角度扇形错开
- * （均匀参数 t ∈ [-1, 1]）。无存活目标 → 返回 false（fire 据此写冷却归 0；重放波静默跳过）。
+ * stats.projectileCount 枚导弹，采用“主轴保底 + 侧翼交替展开”（单弹间距 stats.volleySpreadDeg / 2 或 12°，第 0 发锁定目标）。
+ * 无存活目标 → 返回 false（fire 据此写冷却归 0；重放波静默跳过）。
  * pierce 恒 0（命中即毁，爆炸在死亡钩子统一结算）；每枚弹 data 快照本波数值/开关。
  */
 function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats): boolean {
@@ -171,7 +171,8 @@ function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats): boo
 
   const count = Math.max(0, Math.round(numOr0(stats.projectileCount)));
   const aim = Math.atan2(target.y - state.character.y, target.x - state.character.x);
-  const halfSpread = (numOr0(stats.volleySpreadDeg) * Math.PI) / 180 / 2;
+  const spreadStepDeg = numOr0(stats.volleySpreadDeg) > 0 ? numOr0(stats.volleySpreadDeg) / 2 : 12;
+  const stepRad = (spreadStepDeg * Math.PI) / 180;
 
   // 弹上快照：追踪/爆炸/分裂所需的本波数值与开关（死亡钩子拿不到 stats，从弹上读回）。
   const data: Record<string, number> = {
@@ -186,11 +187,17 @@ function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats): boo
     splitReady: numOr0(stats.splitCount) >= 1 ? 1 : 0,
     splitFactor: numOr0(stats.splitDamageFactor),
     splitMax: numOr0(stats.splitMaxTargets),
+    splitDone: 0,
+    isSecondary: 0,
   };
 
   for (let i = 0; i < count; i++) {
-    const t = count === 1 ? 0 : (2 * i) / (count - 1) - 1; // [-1, 1] 均匀
-    const ang = aim + halfSpread * t;
+    let ang = aim;
+    if (i > 0) {
+      const pair = Math.ceil(i / 2);
+      const sign = i % 2 === 1 ? 1 : -1;
+      ang = aim + sign * pair * stepRad;
+    }
     spawnProjectile(state, {
       behavior: BEHAVIOR_NAME,
       x: state.character.x,
@@ -317,9 +324,11 @@ export const behavior: WeaponBehavior = {
 
     // 2) 分裂（split_shot 牌）：爆炸点向「最近且互不相同」的至多 splitMax 个存活敌人
     //    各发一枚次级导弹（初速 leadAim 预测、其后 update 钩子照常追踪制导）。
-    if (numOr0(d.splitReady) !== 1) {
+    if (numOr0(d.splitReady) !== 1 || numOr0(d.splitDone) === 1 || numOr0(d.isSecondary) === 1) {
       return;
     }
+    d.splitDone = 1;
+    d.splitReady = 0;
     const speed = numOr0(d.projectileSpeed);
     const ttlMs = numOr0(d.ttlMs);
     // 排除刚被炸的目标 + 次级弹 hitIds 预置该 id：穿越出生重叠圈后奔向各自目标
@@ -356,6 +365,8 @@ export const behavior: WeaponBehavior = {
           turnRateDegPerSec: numOr0(d.turnRateDegPerSec),
           projectileSpeed: speed,
           splitReady: 0, // 封死再分裂：次级弹不再分裂
+          splitDone: 1,
+          isSecondary: 1,
           splitFactor: numOr0(d.splitFactor),
           splitMax: numOr0(d.splitMax),
         },

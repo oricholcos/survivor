@@ -123,6 +123,20 @@ describe('持续 tick 伤害（无弹丸瞬时线段）', () => {
     updateWeapons(state, 16, { heat_beam: loadWeaponDefs().heat_beam });
     expect(state.weaponStates.heat_beam.cooldownMs).toBe(120); // 0 → fire 归 0 → += 120
   });
+
+  it('当所有敌人都超出 beamRange 时不开火、不积热、冷却归 0', () => {
+    const state = createSimState(1);
+    addWeapon(state, 'heat_beam');
+    const enemy = makeEnemy(state, 360, 600); // distance 1220 - 600 = 620 > beamRange (520)
+    state.weaponStates.heat_beam.cooldownMs = 500;
+
+    fireOnce(state);
+
+    expect(enemy.hp).toBe(100);
+    expect(vfxOf(state)).toBeUndefined();
+    expect(heatOf(state)).toBe(0);
+    expect(state.weaponStates.heat_beam.cooldownMs).toBe(0);
+  });
 });
 
 describe('穿透宽度判定（点到线段距离 ≤ 半宽 + radius）', () => {
@@ -369,7 +383,7 @@ describe('折射（refract_up 折射+1 牌）', () => {
     const state = createSimState(1);
     const main = makeEnemy(state, 360, 900, 1e6); // 主目标（竖直向上）
     const onRefract = makeEnemy(state, REFRACT_MID.x, REFRACT_MID.y, 1e6);
-    const mirrored = makeEnemy(state, 295, REFRACT_MID.y, 1e6); // -30° 侧（无双束：只作几何对照）
+    const mirrored = makeEnemy(state, 200, 500, 1e6); // -30° 侧放在更远处（300px外或不干扰）
     fireRefract(state);
 
     expect(main.hp).toBeCloseTo(1e6 - 3, 6);
@@ -554,55 +568,36 @@ describe('可复现（行为零随机：不读 rng，任意种子同结果）', 
 
 // —— T5.3b 接线：折射叠层（按牌张数循环）/ dot 频率（灼痕 tick 间隔 ÷1.3） ——
 
-describe('折射叠层（T5.3b：折射+1 牌按张数循环，每层再偏转 +30° 续射一段）', () => {
-  it('2 张折射+1 → VFX 3 段（主束 + 2 段链式折射）；第 2 折射段上的敌人受伤', () => {
+describe('折射叠层与智能寻敌（refract_up 牌：300px内最近寻敌，无敌人时回退 +30°）', () => {
+  it('2 张折射+1 → VFX 3 段（主束 + 2 段链式折射）；300px内无敌人时回退 +30° 旋转续射', () => {
     const state = createSimState(1);
-    const a = makeEnemy(state, 360, 900); // 主束竖直向上（最近目标）
+    makeEnemy(state, 360, 1100); // 主束目标（距 (360,700) 400px > 300px）
     fireOnce(state, ['refract_up', 'refract_up']);
 
     const vfx = vfxOf(state)!;
     expect(vfx.segments).toHaveLength(3); // 主束 + 折射段×2
     const [m, r1, r2] = vfx.segments;
-    // 主束：角色 (360,1220) → 正上 520 → (360,700)
     expect(m.x2).toBeCloseTo(360, 6);
     expect(m.y2).toBeCloseTo(700, 6);
     const rad30 = (30 * Math.PI) / 180;
-    // 折射段 1：主束终点、方向 (sin30, -cos30)、长 260
     expect(r1.x1).toBeCloseTo(360, 6);
     expect(r1.y1).toBeCloseTo(700, 6);
     expect(r1.x2).toBeCloseTo(360 + 260 * Math.sin(rad30), 6);
     expect(r1.y2).toBeCloseTo(700 - 260 * Math.cos(rad30), 6);
-    // 折射段 2：上一段终点再 +30°（累计 60°）
     const rad60 = (60 * Math.PI) / 180;
     expect(r2.x1).toBeCloseTo(r1.x2, 6);
     expect(r2.y1).toBeCloseTo(r1.y2, 6);
     expect(r2.x2).toBeCloseTo(r1.x2 + 260 * Math.sin(rad60), 6);
     expect(r2.y2).toBeCloseTo(r1.y2 - 260 * Math.cos(rad60), 6);
-    expect(a.hp).toBeCloseTo(97, 6); // 主束照常结算
   });
 
-  it('第 2 折射段独立结算：段中点敌人受伤；1 张牌时同一点不受伤（层数驱动）', () => {
-    const mid = (): { x: number; y: number } => {
-      // 第 2 折射段中点 = 主束终点 (360,700) + 260×(sin30,-cos30)【段1】 + 130×(sin60,-cos60)【段2 半程】
-      const rad30 = (30 * Math.PI) / 180;
-      const rad60 = (60 * Math.PI) / 180;
-      return {
-        x: 360 + 260 * Math.sin(rad30) + 130 * Math.sin(rad60),
-        y: 700 - 260 * Math.cos(rad30) - 130 * Math.cos(rad60),
-      };
-    };
+  it('智能寻敌：折射段在300px内搜寻距端点最近的存活敌人并发射', () => {
+    const state = createSimState(1);
+    makeEnemy(state, 360, 1100, 1e6); // 主目标（在远处，300px内无干扰）
+    const targetNearRefract = makeEnemy(state, 425, 587.4166, 1e6); // 在折射 300px 内
+    fireOnce(state, ['refract_up']);
 
-    const two = createSimState(1);
-    makeEnemy(two, 360, 900);
-    const second = makeEnemy(two, mid().x, mid().y);
-    fireOnce(two, ['refract_up', 'refract_up']);
-    expect(second.hp).toBeCloseTo(97, 6); // 第 2 折射段照到
-
-    const one = createSimState(1);
-    makeEnemy(one, 360, 900);
-    const onlyFirst = makeEnemy(one, mid().x, mid().y);
-    fireOnce(one, ['refract_up']); // 1 层：只有第 1 折射段
-    expect(onlyFirst.hp).toBe(100); // 第 2 折射段不存在
+    expect(targetNearRefract.hp).toBeCloseTo(1e6 - 3, 6);
   });
 });
 

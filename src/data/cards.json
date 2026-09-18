@@ -41,7 +41,7 @@
       { "key": "splitDamageFactor", "value": 0.2, "op": "set" },
       { "key": "splitMaxTargets", "value": 4, "op": "set" }
     ],
-    "maxCount": 1,
+    "once": true,
     "applyTo": ["charge_sniper", "scatter", "homing_missile", "mortar", "prism"]
   },
   {

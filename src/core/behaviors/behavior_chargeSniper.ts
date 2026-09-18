@@ -9,9 +9,8 @@
 // 无存活敌人不开火，且该武器 cooldownMs 归 0（解释器随后 += interval 推进节奏，下帧重试）。
 //
 // T5.3b 弹道机制接线（牌 → 行为）：
-// - 多射（multi_shot 通用牌 → stats.projectileCount +1/张）：每波发射 N 枚，对主目标
-//   leadAim 方向做小角度扇形错开（均匀参数 t ∈ [-1,1]；扇角为本行为锁定的几何常量——
-//   狙击 json 无扇角键，数值类参数才必须来自数据表）。整波共享同一伤害快照与效果模板
+// - 多射（multi_shot 通用牌 → stats.projectileCount +1/张）：每波发射 N 枚，采用
+//   “主轴保底 + 侧翼交替展开”（单弹间距 4°，第 0 发严格锁定主目标方向）。整波共享同一伤害快照与效果模板
 //   （同一开火瞬间结算，爆头判定对整波一致）。
 // - 连射（burst_shot 通用牌 → stats.burstWaves 跟发波数 + stats.burstIntervalMs 波间隔）：
 //   首波即时发射，跟发波经 core/cards 的 scheduleBurstWaves 入 meta 待发队列，由 update 钩子
@@ -46,8 +45,8 @@ import type { WeaponStats } from '../weapons';
 /** 弹丸半径（px）：几何常量允许硬编码，数值类一律来自数据表。 */
 const SNIPER_RADIUS = 6;
 
-/** 多射扇形全角（度）：主弹 leadAim 方向 ±半角的确定性小角度扇形（行为锁定的几何常量）。 */
-const MULTI_VOLLEY_SPREAD_DEG = 8;
+/** 多射单弹间距角（度）：主轴保底 + 侧翼交替展开步长（行为锁定的几何常量）。 */
+const MULTI_VOLLEY_SPREAD_STEP_DEG = 4;
 
 /** mark 效果模板（可标记）：untilMs/stacks 由效果引擎按当前时刻重算，模板值不参与结算。 */
 const MARK_TEMPLATE: EffectInstance = { kind: 'mark', untilMs: 0, stacks: 1, data: {} };
@@ -91,6 +90,7 @@ function projectileData(stats: WeaponStats): Record<string, number> {
     speed: stats.projectileSpeed,
     ttlMs: stats.ttlMs,
     splitDone: 0,
+    isSecondary: 0,
   };
 }
 
@@ -123,13 +123,17 @@ function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats): boo
   // 多射牌以 add 从 0 起算累加（每张 +1），故完整弹数 = 1 + stats.projectileCount。
   // （scatter/homing 的 base 显式带键：弹数 = 键值本身，不经此公式。）
   const count = 1 + Math.max(0, Math.round(opt(stats, 'projectileCount')));
-  const halfSpread = ((MULTI_VOLLEY_SPREAD_DEG / 2) * Math.PI) / 180;
+  const stepRad = (MULTI_VOLLEY_SPREAD_STEP_DEG * Math.PI) / 180;
   const data = projectileData(stats);
   const pierceLeft = opt(stats, 'pierceShot') === 1 ? stats.pierce : 0;
 
   for (let i = 0; i < count; i++) {
-    const t = count === 1 ? 0 : (2 * i) / (count - 1) - 1; // [-1, 1] 均匀（奇数枚正中恰为主方向）
-    const ang = baseAng + halfSpread * t;
+    let ang = baseAng;
+    if (i > 0) {
+      const pair = Math.ceil(i / 2);
+      const sign = i % 2 === 1 ? 1 : -1;
+      ang = baseAng + sign * pair * stepRad;
+    }
     spawnProjectile(state, {
       behavior: 'charge_sniper',
       x: state.character.x,
@@ -187,8 +191,8 @@ export const behavior: WeaponBehavior = {
    */
   onProjectileHit(state, proj, enemy) {
     const d = proj.data;
-    if (dataNum(d, 'splitReady') !== 1 || dataNum(d, 'splitDone') === 1) {
-      return; // 未拿分裂牌 / 已分裂过（每弹至多一次，贯穿弹的后续命中不再分裂）
+    if (dataNum(d, 'splitReady') !== 1 || dataNum(d, 'splitDone') === 1 || dataNum(d, 'isSecondary') === 1) {
+      return; // 未拿分裂牌 / 已分裂过 / 次级弹（每弹至多一次，贯穿弹的后续命中不再分裂）
     }
     const factor = dataNum(d, 'splitFactor');
     const maxTargets = dataNum(d, 'splitMax');
@@ -215,7 +219,7 @@ export const behavior: WeaponBehavior = {
         hitIds: [enemy.id], // 预置主弹命中目标：穿越出生重叠圈不重复结算
         ttlMs,
         effectsOnHit: proj.effectsOnHit, // 同弹种：mark/slow 模板随行（spawnProjectile 浅拷贝）
-        data: { splitReady: 0, speed, ttlMs, splitDone: 1 },
+        data: { splitReady: 0, speed, ttlMs, splitDone: 1, isSecondary: 1 },
       });
     }
   },

@@ -100,8 +100,6 @@ export function spawnProjectile(
 /** 敌人死亡钩子（击杀掉宝石/修复包/Boss 奖励等后续注册）：死亡结算时按注册顺序依次调用。 */
 export const killHooks: Array<(state: SimState, enemy: Enemy) => void> = [];
 
-// TODO(handoff): T5.3b 的分裂目标选择 helper 已落地，但各武器的次级弹生成、牌组合语义和完整回归仍需接手 Agent 继续核验。
-
 /**
  * 分裂次级弹目标选取（T5.3b split_shot 通用牌的共用助手，五把弹道武器共用）：
  * 从分裂点 (x, y) 出发，取「最近且互不相同」的至多 maxTargets 个存活敌人——逐轮 distSq
@@ -208,8 +206,14 @@ export function updateProjectiles(state: SimState, dtMs: number, grid: SpatialHa
         if (enemy.dead) {
           continue; // 本帧已被其他弹击杀：跳过
         }
-        if (p.hitIds.indexOf(enemy.id) !== -1) {
-          continue; // hitIds 去重：同一弹不重复伤害同一敌人
+        if (p.data.prismRecurse === 1 && p.data.returning !== 1) {
+          if (p.hitIds.length > 0 && p.hitIds[p.hitIds.length - 1] === enemy.id) {
+            continue;
+          }
+        } else {
+          if (p.hitIds.indexOf(enemy.id) !== -1) {
+            continue; // hitIds 去重：同一弹不重复伤害同一敌人
+          }
         }
 
         p.hitIds.push(enemy.id);

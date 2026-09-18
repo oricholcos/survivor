@@ -226,45 +226,28 @@ describe('burn 燃烧：逐 tick 结算', () => {
 });
 
 describe('knockback 击退：即时冲量', () => {
-  it('沿 data.dir 单位向量位移 force 像素；不占用效果槽', () => {
+  it('击退方向强制竖直向上，受 maxHp 抗性缩放（默认 hp=100 时 res = 40/100 = 0.4，force=60，位移 24）；不占用效果槽', () => {
     const state = createSimState(1);
-    const e = makeEnemy(state, 360, 600);
-    // 来源在正下方 (360, 700)：背向来源的方向 = (0, -1)
-    applyEffect(state, e, 'knockback', { dirX: 0, dirY: -1 });
+    const e = makeEnemy(state, 360, 600); // 默认 hp=100, maxHp=100 -> res = 0.4
+    applyEffect(state, e, 'knockback', {});
     expect(e.x).toBe(360);
-    expect(e.y).toBe(540); // 600 - force 60
+    expect(e.y).toBe(576); // 600 - 60 * 0.4 = 576
     expect(hasEffect(e, 'knockback')).toBe(false); // durationMs=0：即时结算不挂实例
   });
 
-  it('data.force 覆盖定义值', () => {
+  it('data.force 覆盖定义值，高血量怪物抗性衰减（maxHp=200 -> res=0.2）', () => {
     const state = createSimState(1);
-    const e = makeEnemy(state, 360, 600);
-    applyEffect(state, e, 'knockback', { dirX: 1, dirY: 0, force: 200 });
-    expect(e.x).toBe(560);
+    const e = makeEnemy(state, 360, 600, 200); // maxHp = 200 -> res = 40/200 = 0.2
+    applyEffect(state, e, 'knockback', { force: 200 });
+    expect(e.x).toBe(360); // 竖直向上不改变 x
+    expect(e.y).toBe(600 - 200 * 0.2); // 600 - 40 = 560
   });
 
-  it('钳制：不穿墙线、不出场地边界（x 与上方出生线）', () => {
+  it('钳制：不越过上方出生线 spawnLineY (-40)', () => {
     const state = createSimState(1);
-    // 向墙方向推：钳在 wallLineY
-    const atWall = makeEnemy(state, 360, 1150);
-    applyEffect(state, atWall, 'knockback', { dirX: 0, dirY: 1 });
-    expect(atWall.y).toBe(state.layout.wallLineY);
-    // 向上推过出生线：钳在 spawnLineY
-    const atTop = makeEnemy(state, 360, -30);
-    applyEffect(state, atTop, 'knockback', { dirX: 0, dirY: -1 });
-    expect(atTop.y).toBe(state.layout.spawnLineY);
-    // 向左推出左边界：钳在 0
-    const atLeft = makeEnemy(state, 10, 600);
-    applyEffect(state, atLeft, 'knockback', { dirX: -1, dirY: 0 });
-    expect(atLeft.x).toBe(0);
-  });
-
-  it('零方向向量不位移（方向契约由调用方提供）', () => {
-    const state = createSimState(1);
-    const e = makeEnemy(state, 360, 600);
-    applyEffect(state, e, 'knockback');
-    expect(e.x).toBe(360);
-    expect(e.y).toBe(600);
+    const atTop = makeEnemy(state, 360, 10, 40);
+    applyEffect(state, atTop, 'knockback', { force: 100 });
+    expect(atTop.y).toBe(state.layout.spawnLineY); // spawnLineY 是 -40
   });
 });
 
@@ -317,6 +300,19 @@ describe('slow/chill 减速乘区', () => {
     updateEnemies(state, 1000, grid);
     expect(e.y).toBeCloseTo(-40 + 50 + 80 + 100, 9); // 恢复全速
   });
+
+  it('Boss 减速抗性：slow 降低 25%（speedMultiplier = 0.75），chill 降低 12.5%（单层 0.875，两层 0.765625）', () => {
+    const state = createSimState(7);
+    const boss = spawnEnemy(state, makeType({ id: 'boss_test', isBoss: true, speed: 100 }), 360);
+    applyEffect(state, boss, 'slow');
+    expect(speedMultiplier(boss)).toBe(0.75); // 普通怪为 0.5，Boss 为 0.75
+
+    const bossChill = spawnEnemy(state, makeType({ id: 'boss_chill', isBoss: true, speed: 100 }), 360);
+    applyEffect(state, bossChill, 'chill');
+    expect(speedMultiplier(bossChill)).toBe(0.875); // 普通怪为 0.75，Boss 为 0.875
+    applyEffect(state, bossChill, 'chill');
+    expect(speedMultiplier(bossChill)).toBeCloseTo(0.765625, 6); // 0.875^2
+  });
 });
 
 describe('stun 眩晕：停行动', () => {
@@ -351,6 +347,16 @@ describe('stun 眩晕：停行动', () => {
     updateWallCombat(state, 100); // 剩余冷却走完 → 恰好一击
     expect(state.wall.hp).toBe(995);
     expect(e.attackCooldownMs).toBe(1000); // 0 + attackIntervalMs
+  });
+
+  it('Boss 眩晕抗性：持续时间缩短为 400ms（普通怪 800ms）', () => {
+    const state = createSimState(7);
+    const boss = spawnEnemy(state, makeType({ id: 'boss_stun', isBoss: true, speed: 100 }), 360);
+    applyEffect(state, boss, 'stun');
+    expect(isStunned(boss)).toBe(true);
+
+    advance(state, 400); // 400ms 后即到期
+    expect(isStunned(boss)).toBe(false);
   });
 });
 
@@ -407,36 +413,27 @@ describe('mark/corrode 受伤加成（dealDamage 乘区）', () => {
   });
 });
 
-describe('blackhole 黑洞：向心位移', () => {
-  it('每帧向 data 中心位移 pullPerSec×dtSec；到期移除；不越过中心', () => {
+describe('blackhole 黑洞：即时向心拉拽', () => {
+  it('施加瞬间将敌人坐标直接拉拽到 data 中心；不占效果槽', () => {
     const state = createSimState(1);
     const e = makeEnemy(state, 300, 600);
-    applyEffect(state, e, 'blackhole', { centerX: 800, centerY: 600 });
+    applyEffect(state, e, 'blackhole', { centerX: 500, centerY: 600 });
 
-    advance(state, 500);
-    expect(e.x).toBeCloseTo(410, 9); // 300 + 220×0.5
-    advance(state, 500);
-    expect(e.x).toBeCloseTo(520, 9);
-    advance(state, 500); // t=1500：最后一帧拉扯后到期
-    expect(e.x).toBeCloseTo(630, 9);
+    // 施加瞬间即移至中心，且不占效果槽
+    expect(e.x).toBe(500);
+    expect(e.y).toBe(600);
     expect(hasEffect(e, 'blackhole')).toBe(false);
-    advance(state, 500);
-    expect(e.x).toBeCloseTo(630, 9); // 到期后不再拉扯
-
-    // 距中心近：位移钳到中心，不越过
-    const near = makeEnemy(state, 350, 600);
-    applyEffect(state, near, 'blackhole', { centerX: 400, centerY: 600 });
-    advance(state, 5000);
-    expect(near.x).toBe(400);
-    expect(near.y).toBe(600);
   });
 
-  it('拉扯受场地钳制：攻击态敌人贴墙不被拉过墙线', () => {
+  it('拉扯受场地边界钳制：贴墙攻击态不被拉过墙线，两侧不超出屏幕', () => {
     const state = createSimState(1);
     const e = makeAttacker(state, {}); // y = wallLineY
     applyEffect(state, e, 'blackhole', { centerX: e.x, centerY: 1300 });
-    advance(state, 1000);
-    expect(e.y).toBe(state.layout.wallLineY); // 被向下拉但钳回墙线
+    expect(e.y).toBe(state.layout.wallLineY); // 钳回墙线
+
+    const e2 = makeEnemy(state, 100, 500);
+    applyEffect(state, e2, 'blackhole', { centerX: -50, centerY: 500 });
+    expect(e2.x).toBe(0); // 钳制在 0
   });
 });
 

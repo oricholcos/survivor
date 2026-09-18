@@ -184,6 +184,8 @@ function blastData(d: Record<string, number>): Record<string, number> {
     splitReady: numOr0(d.splitReady),
     splitFactor: numOr0(d.splitFactor),
     splitMax: numOr0(d.splitMax),
+    splitDone: numOr0(d.splitDone),
+    isSecondary: numOr0(d.isSecondary),
     burnRadiusFactor: numOr0(d.burnRadiusFactor),
     burnDurationMs: numOr0(d.burnDurationMs),
     burnTickMs: numOr0(d.burnTickMs),
@@ -336,7 +338,7 @@ export const behavior: WeaponBehavior = {
       }
     }
 
-    // ③ 黑洞：幸存者挂 blackhole，中心 = 落点、拉拽速度 = 表值（先炸后拉：聚怪）。
+    // ③ 黑洞：幸存者即时拉拽至落点（先炸后拉：瞬间聚怪，无持续时间）。
     if (d.blackHole === 1) {
       for (let i = 0; i < hits.length; i++) {
         const e = hits[i];
@@ -344,7 +346,6 @@ export const behavior: WeaponBehavior = {
           applyEffect(state, e, 'blackhole', {
             centerX: tx,
             centerY: ty,
-            pullPerSec: numOr0(d.pullPerSec),
           });
         }
       }
@@ -368,9 +369,11 @@ export const behavior: WeaponBehavior = {
     //    各发一枚次级榴弹——leadAim 预测落点（短飞行 = 爆炸点到预测落点的实际距离 ÷ 主弹
     //    落速）、AoE = 母弹 × splitFactor（小 AoE）、伤害 = 母弹 × splitFactor、
     //    燃烧地/眩晕/黑洞随行（①~④ 继承）、splitReady=0 封死再分裂。
-    if (numOr0(d.splitReady) !== 1) {
+    if (numOr0(d.splitReady) !== 1 || numOr0(d.splitDone) === 1 || numOr0(d.isSecondary) === 1) {
       return;
     }
+    d.splitDone = 1;
+    d.splitReady = 0;
     const speed = Math.hypot(proj.vx, proj.vy); // 与主弹同落速（同弹种；飞行时间制弹速即落地速度）
     const factor = numOr0(d.splitFactor);
     const targets = pickNearestDistinctEnemies(state, tx, ty, numOr0(d.splitMax));
@@ -403,6 +406,8 @@ export const behavior: WeaponBehavior = {
           stunBlast: numOr0(d.stunBlast),
           blackHole: numOr0(d.blackHole),
           splitReady: 0, // 封死再分裂：次级榴弹不再分裂
+          splitDone: 1,
+          isSecondary: 1,
           splitFactor: factor,
           splitMax: numOr0(d.splitMax),
           burnRadiusFactor: numOr0(d.burnRadiusFactor),

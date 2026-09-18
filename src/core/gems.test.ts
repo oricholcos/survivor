@@ -1,10 +1,10 @@
-// src/core/gems.test.ts —— 经验宝石 / 修复包 / 升级信号的行为契约。
-// 覆盖：击杀掉落（宝石字段、概率修复包）→ 追踪飞行（距离单调递减）→ 到达结算
-// （加经验 / 回墙血）→ 升级信号（恰好 levelUp、先扣后升、单帧连升）。
+// src/core/gems.test.ts —— 经验结算 / 修复包 / 升级信号的行为契约。
+// 覆盖：击杀即时结算经验（无 Gem 实体直接加 xp、升级信号、先扣后升、单帧连升）→
+// 修复包掉落（概率掉落、朝墙线飞行、到达回血）。
 import { describe, expect, it } from 'vitest';
 import { loadSimConfig } from '../data/config';
 import { drainEvents } from './events';
-import { onEnemyKilled, updateGems, xpToNext } from './gems';
+import { checkLevelUp, onEnemyKilled, updateGems, xpToNext } from './gems';
 import { dist } from './math';
 import { createSimState } from './simState';
 import type { Enemy, Rng } from './types';
@@ -44,50 +44,62 @@ describe('src/data/config 加载层', () => {
   it('loadSimConfig 返回 config.json 的数值契约（字段与 SimConfig 一致）', () => {
     expect(loadSimConfig()).toEqual({
       xpBase: 5,
-      xpGrowth: 1.4,
+      xpTier1Step: 4,
+      xpTier2Step: 8,
+      xpCapLevel: 40,
+      xpCap: 280,
       gemFlySpeed: 600,
       dropFlySpeed: 600,
       repairDropChance: 0.02,
       repairHeal: 30,
-      wallMaxHp: 3200,
+      wallMaxHp: 1600,
       maxWeaponSlots: 4,
     });
   });
 });
 
 describe('xpToNext 经验曲线', () => {
-  it('xpBase * xpGrowth^(level-1)，level 从 1 起', () => {
+  it('两段线性递增与软上限：Lv.1=5, Lv.2=9, Lv.10=41, Lv.11=49, Lv.40=281, Lv.41=280, Lv.42=280 等', () => {
     const state = createSimState(1);
     expect(state.progress.level).toBe(1);
-    expect(xpToNext(state)).toBe(5); // 5 * 1.4^0
+    expect(xpToNext(state)).toBe(5); // Lv.1
 
     state.progress.level = 2;
-    expect(xpToNext(state)).toBeCloseTo(7, 10); // 5 * 1.4^1
+    expect(xpToNext(state)).toBe(9); // Lv.2
 
-    state.progress.level = 3;
-    expect(xpToNext(state)).toBeCloseTo(9.8, 10); // 5 * 1.4^2
+    state.progress.level = 10;
+    expect(xpToNext(state)).toBe(41); // Lv.10
 
-    // 自定义 config：整数曲线精确断言
-    const s2 = createSimState(1, { xpBase: 10, xpGrowth: 2 });
+    state.progress.level = 11;
+    expect(xpToNext(state)).toBe(49); // Lv.11
+
+    state.progress.level = 40;
+    expect(xpToNext(state)).toBe(281); // Lv.40
+
+    state.progress.level = 41;
+    expect(xpToNext(state)).toBe(280); // Lv.41 cap
+
+    state.progress.level = 42;
+    expect(xpToNext(state)).toBe(280); // Lv.42 cap
+
+    // 旧指数配置回退：若显式配置 xpGrowth 且 xpTier1Step 为 undefined
+    const s2 = createSimState(1, { xpBase: 10, xpGrowth: 2, xpTier1Step: undefined as unknown as number });
     s2.progress.level = 4;
     expect(xpToNext(s2)).toBe(80); // 10 * 2^3
   });
 });
 
-describe('onEnemyKilled 击杀掉落', () => {
-  it('必掉 1 颗经验宝石：value=敌 xp、位置=敌人位置、speed=config.gemFlySpeed', () => {
+describe('onEnemyKilled 击杀掉落与经验结算', () => {
+  it('直接增加经验且 gems 为空：progress.xp 立即增加并产生 levelUp 事件，不产生 Gem 实体', () => {
     const state = createSimState(1, { repairDropChance: 0 });
     onEnemyKilled(state, makeEnemy({ id: 7, x: 123, y: 456, xp: 9 }));
 
-    expect(state.gems).toHaveLength(1);
+    expect(state.gems).toHaveLength(0);
     expect(state.drops).toHaveLength(0);
-    const gem = state.gems[0];
-    expect(gem.id).toBe(1); // nextId 从 1 起自增
-    expect(gem.value).toBe(9);
-    expect(gem.x).toBe(123);
-    expect(gem.y).toBe(456);
-    expect(gem.speed).toBe(600);
-    expect(gem.dead).toBe(false);
+    // level1 需 5：9 xp 直接到账并升级，结转 9-5=4
+    expect(state.progress.level).toBe(2);
+    expect(state.progress.xp).toBe(4);
+    expect(drainEvents(state)).toEqual([{ kind: 'levelUp', level: 2 }]);
   });
 
   it('repairDropChance=1 + 恒 0 rng → 必掉修复包，kind/value/speed 取 config', () => {
@@ -95,10 +107,10 @@ describe('onEnemyKilled 击杀掉落', () => {
     state.rng = zeroRng();
     onEnemyKilled(state, makeEnemy({ id: 7, x: 200, y: 500, xp: 3 }));
 
-    expect(state.gems).toHaveLength(1);
+    expect(state.gems).toHaveLength(0);
     expect(state.drops).toHaveLength(1);
     const drop = state.drops[0];
-    expect(drop.id).toBe(2); // 宝石先占 1，修复包占 2
+    expect(drop.id).toBe(1);
     expect(drop.kind).toBe('repair');
     expect(drop.value).toBe(30);
     expect(drop.speed).toBe(600);
@@ -113,104 +125,81 @@ describe('onEnemyKilled 击杀掉落', () => {
     for (let i = 0; i < 50; i++) {
       onEnemyKilled(state, makeEnemy({ id: i + 1, x: i, y: -i, xp: 1 }));
     }
-    expect(state.gems).toHaveLength(50);
+    expect(state.gems).toHaveLength(0);
     expect(state.drops).toHaveLength(0);
+    // 50 点经验已自动升级并累积
+    expect(state.progress.level).toBeGreaterThan(1);
   });
 });
 
-describe('宝石飞行与吸收', () => {
-  it('完整链路：掉落 → 追踪若干帧 → 到达加经验 → 够升则恰好一个 levelUp 且 xp 结转正确', () => {
+describe('击杀经验即时结算与升级信号', () => {
+  it('击杀敌人：xp 立即到账，够升则恰好一个 levelUp 且 xp 结转正确，gems 始终为空', () => {
     const state = createSimState(1, { repairDropChance: 0 });
     onEnemyKilled(state, makeEnemy({ x: 360, y: 400, xp: 7 }));
-    expect(state.gems).toHaveLength(1);
-    expect(state.progress.xp).toBe(0);
-
-    // 距离 820px、速度 600px/s → 约 1367ms；100 帧 × 16ms = 1600ms 必到达
-    for (let i = 0; i < 100; i++) {
-      updateGems(state, 16);
-    }
-
-    expect(state.gems).toHaveLength(0); // 到达即移出数组
+    expect(state.gems).toHaveLength(0);
     // level1 需 5：7 → 先扣后升 level=2，结转 7-5=2
     expect(state.progress.level).toBe(2);
     expect(state.progress.xp).toBe(2);
     expect(drainEvents(state)).toEqual([{ kind: 'levelUp', level: 2 }]);
   });
 
-  it('宝石朝角色飞行：帧间距离严格递减，未到达不加经验、不升级', () => {
+  it('未达到升级所需经验：经验累加但不触发 levelUp', () => {
     const state = createSimState(1, { repairDropChance: 0 });
     onEnemyKilled(state, makeEnemy({ x: 100, y: 300, xp: 1 }));
-    const gem = state.gems[0];
-
-    let prev = dist(gem, state.character);
-    expect(prev).toBeGreaterThan(0);
-    for (let i = 0; i < 10; i++) {
-      updateGems(state, 16);
-      const cur = dist(gem, state.character);
-      expect(cur).toBeLessThan(prev);
-      prev = cur;
-    }
-
-    // 10 帧只走了约 96px：仍在途中
-    expect(state.gems).toHaveLength(1);
-    expect(state.progress.xp).toBe(0);
+    expect(state.gems).toHaveLength(0);
+    expect(state.progress.xp).toBe(1);
     expect(state.progress.level).toBe(1);
     expect(drainEvents(state)).toEqual([]);
   });
 
-  it('大 dt 单帧：一步吸附到达（不越过目标），xp 恰好加一次', () => {
-    const state = createSimState(1, { repairDropChance: 0 });
-    onEnemyKilled(state, makeEnemy({ x: 100, y: 300, xp: 1 }));
-
-    updateGems(state, 2000); // 步长 1200px ≥ 距离约 956px → 同帧到达
-
-    expect(state.gems).toHaveLength(0);
-    expect(state.progress.xp).toBe(1);
-    expect(state.progress.level).toBe(1); // 1 < 5 不升级
-    expect(drainEvents(state)).toEqual([]);
-  });
-
-  it('同帧多颗宝石到账：xp 合并结算，帧末统一做一次升级判定', () => {
+  it('多次击杀经验累积：逐步累加并在满足条件时升级', () => {
     const state = createSimState(1, { repairDropChance: 0 });
     onEnemyKilled(state, makeEnemy({ id: 1, x: 360, y: 100, xp: 3 }));
+    expect(state.progress.xp).toBe(3);
+    expect(state.progress.level).toBe(1);
+    expect(drainEvents(state)).toEqual([]);
+
     onEnemyKilled(state, makeEnemy({ id: 2, x: 360, y: 110, xp: 3 }));
-
-    updateGems(state, 5000); // 两颗同帧到达：合计 6 ≥ 5 → 恰好升一级、结转 1
-
+    // 合计 6 ≥ 5 → 恰好升一级、结转 1
     expect(state.gems).toHaveLength(0);
     expect(state.progress.level).toBe(2);
     expect(state.progress.xp).toBe(1);
     expect(drainEvents(state)).toEqual([{ kind: 'levelUp', level: 2 }]);
   });
 
-  it('一次到达连升两级：先扣后升、事件逐级入队、xp 结转正确', () => {
-    const state = createSimState(1); // 默认曲线：level1 需 5、level2 需 5*1.4≈7
-    onEnemyKilled(state, makeEnemy({ x: 360, y: 400, xp: 13 }));
-
-    updateGems(state, 2000); // 大 dt 同帧到达
+  it('一次击杀大额经验连升两级：先扣后升、事件逐级入队、xp 结转正确', () => {
+    const state = createSimState(1); // 默认曲线：level1 需 5、level2 需 9
+    onEnemyKilled(state, makeEnemy({ x: 360, y: 400, xp: 16 }));
 
     expect(state.gems).toHaveLength(0);
-    // 13-5=8 ≥ 7 → 连升到 level3，结转约 1
+    // 16-5=11 ≥ 9 → 连升到 level3，结转 2
     expect(state.progress.level).toBe(3);
-    expect(state.progress.xp).toBeCloseTo(1, 10);
+    expect(state.progress.xp).toBe(2);
     expect(drainEvents(state)).toEqual([
       { kind: 'levelUp', level: 2 },
       { kind: 'levelUp', level: 3 },
     ]);
   });
 
-  it('整数曲线下的精确连升：15 xp 一次到达升到 level3、结转恰为 0', () => {
-    const state = createSimState(1, { xpBase: 5, xpGrowth: 2 }); // 需求 5 / 10 / 20
-    onEnemyKilled(state, makeEnemy({ x: 360, y: 400, xp: 15 }));
+  it('默认曲线下的精确连升：14 xp 一次击杀升到 level3、结转恰为 0', () => {
+    const state = createSimState(1); // 需求 5 + 9 = 14
+    onEnemyKilled(state, makeEnemy({ x: 360, y: 400, xp: 14 }));
 
-    updateGems(state, 2000);
-
-    expect(state.progress.level).toBe(3); // 15-5=10 ≥ 10 → 再升一级
+    expect(state.progress.level).toBe(3); // 14-5=9 ≥ 9 → 再升一级
     expect(state.progress.xp).toBe(0);
     expect(drainEvents(state)).toEqual([
       { kind: 'levelUp', level: 2 },
       { kind: 'levelUp', level: 3 },
     ]);
+  });
+
+  it('checkLevelUp 独立调用支持兜底升级', () => {
+    const state = createSimState(1);
+    state.progress.xp = 10;
+    checkLevelUp(state);
+    expect(state.progress.level).toBe(2);
+    expect(state.progress.xp).toBe(5); // 10 - 5 = 5 (< 9)
+    expect(drainEvents(state)).toEqual([{ kind: 'levelUp', level: 2 }]);
   });
 });
 
@@ -251,17 +240,19 @@ describe('修复包飞行与修复', () => {
 });
 
 describe('updateGems 防重入', () => {
-  it('state.over 非 null：停摆（宝石不动、不结算、无事件）', () => {
-    const state = createSimState(1, { repairDropChance: 0 });
-    onEnemyKilled(state, makeEnemy({ x: 100, y: 300, xp: 1 }));
+  it('state.over 非 null：停摆（修复包不动、不结算）', () => {
+    const state = createSimState(1, { repairDropChance: 1, repairHeal: 30 });
+    state.rng = zeroRng();
+    onEnemyKilled(state, makeEnemy({ x: 200, y: 500, xp: 1 }));
+    expect(state.drops).toHaveLength(1);
     state.over = 'defeat';
 
     updateGems(state, 16);
 
-    expect(state.gems).toHaveLength(1);
-    expect(state.gems[0].x).toBe(100);
-    expect(state.gems[0].y).toBe(300);
-    expect(state.progress.xp).toBe(0);
+    expect(state.drops).toHaveLength(1);
+    expect(state.drops[0].x).toBe(200);
+    expect(state.drops[0].y).toBe(500);
+    expect(state.wall.hp).toBe(state.config.wallMaxHp);
     expect(drainEvents(state)).toEqual([]);
   });
 });

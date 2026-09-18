@@ -105,6 +105,27 @@ describe('spawnEnemy', () => {
     ]);
     expect(drainEvents(state)).toEqual([]);
   });
+
+  it('传入越界 x 坐标时被安全钳制在 [radius, width - radius]', () => {
+    const state = createSimState(42);
+    const type = makeType({ radius: 15 });
+    const width = state.layout.width;
+
+    const leftOutOfBounds = spawnEnemy(state, type, -50);
+    expect(leftOutOfBounds.x).toBe(15);
+
+    const leftTouch = spawnEnemy(state, type, 5);
+    expect(leftTouch.x).toBe(15);
+
+    const normal = spawnEnemy(state, type, 200);
+    expect(normal.x).toBe(200);
+
+    const rightOutOfBounds = spawnEnemy(state, type, width + 100);
+    expect(rightOutOfBounds.x).toBe(width - 15);
+
+    const rightTouch = spawnEnemy(state, type, width - 2);
+    expect(rightTouch.x).toBe(width - 15);
+  });
 });
 
 describe('updateEnemies 行军到墙', () => {
@@ -262,6 +283,32 @@ describe('updateEnemies 分离', () => {
     }
     const [a, b] = state.enemies;
     expect(distOf(a, b)).toBeGreaterThanOrEqual(a.radius + b.radius - 1e-9);
+  });
+
+  it('怪群高密度推挤时，所有怪物的 x 坐标依然保持在 [radius, width - radius] 内部，未被挤出屏幕', () => {
+    const state = createSimState(99);
+    const grid = new SpatialHash<Enemy>(64);
+    const radius = 16;
+    const type = makeType({ radius, speed: 50 });
+    const width = state.layout.width;
+
+    // 在左边缘极度拥挤处刷入 10 只怪（全部集中在左边界 x = radius）
+    for (let i = 0; i < 10; i++) {
+      spawnEnemy(state, type, radius);
+    }
+    // 在右边缘极度拥挤处刷入 10 只怪（全部集中在右边界 x = width - radius）
+    for (let i = 0; i < 10; i++) {
+      spawnEnemy(state, type, width - radius);
+    }
+
+    // 持续推挤模拟多步
+    for (let step = 0; step < 100; step++) {
+      updateEnemies(state, 100, grid);
+      for (const e of state.enemies) {
+        expect(e.x).toBeGreaterThanOrEqual(e.radius);
+        expect(e.x).toBeLessThanOrEqual(width - e.radius);
+      }
+    }
   });
 });
 

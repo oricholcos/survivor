@@ -64,6 +64,40 @@ export const DRAGON_BREATH_VFX_PREFIX = 'dragon_breath_vfx:';
 export const RAIL_VFX_PREFIX = 'rail_vfx:';
 /** 迫击榴弹落地爆炸（T5.2b）：共享单键，值为 MortarBlastVfx[] 滚动数组。 */
 export const MORTAR_BLAST_VFX_KEY = 'mortar_blast_vfx';
+/** 弹射棱镜连锁闪电（T5.3c）：共享单键，值为 PrismZapSegment[] 滚动数组。 */
+export const PRISM_ZAP_VFX_KEY = 'prism_zap_vfx';
+
+/** 连锁闪电霓虹色彩配置（外圈粗线 / 内芯亮线 / 中心白热）。 */
+export const PRISM_ZAP_COLORS = {
+  outer: 0x8a3cff,
+  core: 0xd8b4fe,
+  hot: 0xffffff,
+};
+
+/** 状态异常霓虹视觉配色表（纯几何零素材反馈）：冰冻蓝、毒素绿、灼烧橙红、眩晕金黄等。 */
+export const STATUS_EFFECT_COLORS = {
+  // 减速 / 冰附着：冰蓝微弱冷光
+  chillOuter: 0x38bdf8,
+  chillCore: 0x7deaff,
+  // 毒素 / 冰毒：霓虹毒绿
+  poisonOuter: 0x22c55e,
+  poisonCore: 0x4ade80,
+  // 灼烧：高频脉动烈焰橙红
+  burnOuter: 0xff7a1a,
+  burnCore: 0xff5722,
+  // 眩晕：金黄光环与暖白星辉
+  stunRing: 0xfacc15,
+  stunStar: 0xffffff,
+};
+
+export const COLOR_STATUS_CHILL_OUTER = 0x38bdf8;
+export const COLOR_STATUS_CHILL_CORE = 0x7deaff;
+export const COLOR_STATUS_POISON_OUTER = 0x22c55e;
+export const COLOR_STATUS_POISON_CORE = 0x4ade80;
+export const COLOR_STATUS_BURN_OUTER = 0xff7a1a;
+export const COLOR_STATUS_BURN_CORE = 0xff5722;
+export const COLOR_STATUS_STUN_RING = 0xfacc15;
+export const COLOR_STATUS_STUN_STAR = 0xffffff;
 
 // —— 降级开关：?fx=0 关闭相机 postFX（默认开） ——
 

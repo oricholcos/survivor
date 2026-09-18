@@ -41,14 +41,6 @@
         { "key": "bounce", "value": 1, "op": "set" },
         { "key": "bounceCount", "value": 1, "op": "add" }
       ]
-    },
-    {
-      "id": "dragon_breath_mode",
-      "name": "龙息模式",
-      "description": "质变：锥形持续灼烧，不再发射弹丸（与多射/连射/分裂互斥）",
-      "once": true,
-      "excludes": ["multi_shot", "burst_shot", "split_shot"],
-      "params": [{ "key": "dragonBreath", "value": 1, "op": "set" }]
     }
   ]
 }

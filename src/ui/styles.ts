@@ -10,7 +10,7 @@
 //   --neon-magenta #ff2fb0   点缀：标题分隔线 / 无尽终章标题
 //   --neon-orange  #ff8f1f   强调点缀（与画布霰弹橙同源，标题分隔线中段）
 //   --neon-yellow  #ffe066   数值强调与「新武器」徽章
-//   --neon-green   #8dffb0   「被动」徽章
+//   --neon-green   #8dffb0   辅助指示色
 //   --neon-teal    #35ffc3   结算「守城成功」标题钩子（.ov-title--win）
 //   --neon-red     #ff4d6d   结算「城墙陷落」标题钩子（.ov-title--lose）
 //   --glass-bg     rgba(10,17,36,.78)  玻璃拟态面板底色
@@ -318,14 +318,42 @@ export const OVERLAY_CSS = `
   background: rgba(24, 201, 255, 0.1);
   text-shadow: 0 0 8px rgba(24, 201, 255, 0.5);
 }
-.ov-kind--passive {
-  color: var(--neon-green);
-  border-color: rgba(141, 255, 176, 0.55);
-  background: rgba(141, 255, 176, 0.08);
-  text-shadow: 0 0 8px rgba(141, 255, 176, 0.45);
+.ov-kind--weapon {
+  color: #c084ff;
+  border-color: rgba(192, 132, 255, 0.6);
+  background: rgba(192, 132, 255, 0.12);
+  text-shadow: 0 0 8px rgba(192, 132, 255, 0.45);
+}
+.ov-kind--unlimited,
+.ov-kind--break {
+  color: #ff8fd0;
+  border-color: rgba(255, 47, 176, 0.7);
+  background: rgba(255, 47, 176, 0.16);
+  text-shadow: 0 0 8px rgba(255, 47, 176, 0.6);
+  font-weight: 700;
 }
 .ov-name { font-size: 18px; font-weight: 700; color: var(--text-bright); }
 .ov-desc { font-size: 13px; line-height: 1.55; color: var(--text-dim); }
+.ov-level-indicator {
+  font-size: 13px;
+  font-weight: 600;
+  color: #7fe3ff;
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+}
+.ov-level-indicator--break {
+  color: #ff8fd0;
+  text-shadow: 0 0 6px rgba(255, 47, 176, 0.4);
+}
+.ov-level-indicator--init {
+  color: var(--neon-yellow);
+  text-shadow: 0 0 6px rgba(255, 224, 102, 0.35);
+}
+.ov-sub--unlimited {
+  color: #ff8fd0;
+  text-shadow: 0 0 8px rgba(255, 47, 176, 0.35);
+  margin-bottom: 12px;
+}
 
 /* —— 响应式：窄屏（≤400px）收紧内边距、按钮全宽堆叠 —— */
 @media (max-width: 400px) {
