@@ -53,6 +53,8 @@ describe('src/data/config 加载层', () => {
       repairHeal: 30,
       wallMaxHp: 1600,
       maxWeaponSlots: 4,
+      maxProjectiles: 600,
+      maxEnemies: 350,
     });
   });
 });

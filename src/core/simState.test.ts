@@ -29,6 +29,8 @@ describe('createSimState', () => {
       repairHeal: 30,
       wallMaxHp: 1600,
       maxWeaponSlots: 4,
+      maxProjectiles: 600,
+      maxEnemies: 350,
     });
     expect(state.wall).toEqual({ hp: 1600, maxHp: 1600 });
     expect(state.character).toEqual({ x: 360, y: 1220 }); // (width/2, height-60)

@@ -7,5 +7,7 @@
   "repairDropChance": 0.02,
   "repairHeal": 30,
   "wallMaxHp": 1600,
-  "maxWeaponSlots": 4
+  "maxWeaponSlots": 4,
+  "maxProjectiles": 600,
+  "maxEnemies": 350
 }

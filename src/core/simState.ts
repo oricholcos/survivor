@@ -19,6 +19,10 @@ const DEFAULT_CONFIG: SimConfig = {
   repairHeal: 30,
   wallMaxHp: 1600,
   maxWeaponSlots: 4,
+  // 全局实体数量护栏（T3 性能封顶）：与 src/data/config.json 同值——远高于正常对局
+  // 并发峰值（campaign 峰值 ≈70 敌 / ≈100 弹），只在无尽后期死亡螺旋时封顶。
+  maxProjectiles: 600,
+  maxEnemies: 350,
 };
 
 /**

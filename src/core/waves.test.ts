@@ -97,7 +97,9 @@ describe('匀速段：给定时间点刷怪构成符合表', () => {
   });
 
   it('真实 waves.json：301~329s 新增全是 tank（tank 段混入），t=330 切到 runner', () => {
-    const state = createSimState(7);
+    // 本用例验证时间轴切段构成（无战斗、敌人只增不减），330s 累计存活会超过全局护栏
+    // 默认值——显式关闭 maxEnemies 以隔离被测契约（护栏行为由「敌人数量上限护栏」组覆盖）。
+    const state = createSimState(7, { maxEnemies: Infinity });
     for (let i = 0; i < 300; i++) {
       frame(state, 1000, REAL, REAL_TYPES);
     }
@@ -454,5 +456,72 @@ describe('waves.json 数据契约护栏（T3.6 平衡校准后的结构约束）
     const climaxBursts = REAL.timeline.filter((e) => e.burst !== undefined && e.fromSec >= 415);
     expect(climaxBursts.length).toBeGreaterThanOrEqual(3);
     expect(climaxBursts[climaxBursts.length - 1]!.fromSec).toBeGreaterThanOrEqual(570); // 末波压哨
+  });
+});
+
+describe('敌人数量上限护栏（T3 性能封顶）', () => {
+  it('匀速段：存活数到 maxEnemies 停刷；额度恢复后按正常节奏续刷（每帧至多 1 只，不爆发补刷）', () => {
+    const config = makeConfig([{ fromSec: 0, spawn: { enemy: 'mook', perSec: 1 } }], 0);
+    const state = createSimState(13, { maxEnemies: 5 });
+    for (let i = 0; i < 10; i++) {
+      frame(state, 1000, config);
+    }
+    expect(state.enemies.length).toBe(5); // 拟刷 10 只被钳到 5
+
+    // 额度用尽：连续多帧不再增（perSec=1 二进制精确，钳制帧 acc 只留小数尾 0）
+    frame(state, 1000, config);
+    expect(state.enemies.length).toBe(5);
+
+    // 击杀 2 只腾出额度（尸体留在数组里不占额度——护栏只数 !dead）：随后两帧各刷 1 只，
+    // 回满 5 后停——若累加器积累了欠账，这里会一次爆发补刷 2+ 只。
+    state.enemies[0].dead = true;
+    state.enemies[1].dead = true;
+    frame(state, 1000, config);
+    expect(state.enemies.length).toBe(6);
+    frame(state, 1000, config);
+    expect(state.enemies.length).toBe(7);
+    frame(state, 1000, config);
+    expect(state.enemies.length).toBe(7);
+  });
+
+  it('匀速段小数尾：钳制帧 acc 只保留小数尾，额度恢复帧恰好补 1 只', () => {
+    const config = makeConfig([{ fromSec: 0, spawn: { enemy: 'mook', perSec: 1.5 } }], 0);
+    const state = createSimState(13, { maxEnemies: 2 });
+    frame(state, 1000, config); // acc=1.5 → 刷 1（budget 2→1，acc 留 0.5）
+    expect(state.enemies.length).toBe(1);
+    frame(state, 1000, config); // acc=2.0 → 拟刷 2 钳到 1（被钳掉的 1 只丢弃，acc 只留小数尾）
+    expect(state.enemies.length).toBe(2);
+    frame(state, 1000, config); // 额度用尽：acc=1.5 → 整数欠账丢弃只留 0.5
+    frame(state, 1000, config);
+    expect(state.enemies.length).toBe(2);
+    // 腾 1 额度：恢复帧恰好刷 1 只（欠账若被积累会一次补刷多只）
+    state.enemies[0].dead = true;
+    frame(state, 1000, config);
+    expect(state.enemies.length).toBe(3);
+  });
+
+  it('爆发波：杂兵钳到剩余额度（被钳掉的直接丢弃不补刷），boss 不受上限约束照常刷', () => {
+    const config = makeConfig([{ fromSec: 10, burst: { enemy: 'brute', count: 5, boss: 'bigboss' } }]);
+    const state = createSimState(5, { maxEnemies: 3 });
+    for (let i = 0; i < 10; i++) {
+      frame(state, 1000, config);
+    }
+    expect(countBy(state, 'brute')).toBe(3); // 5 杂兵钳到额度 3，2 只丢弃
+    expect(countBy(state, 'bigboss')).toBe(1); // 杂兵已顶满额度，boss 仍照常刷（总额 4 > 3）
+    expect(state.enemies.length).toBe(4);
+    frame(state, 1000, config); // firedBurstKeys 已置位：不重触发、无补刷
+    expect(state.enemies.length).toBe(4);
+  });
+
+  it('maxEnemies <= 0 或非有限 → 视为不设上限（防御坏表，正常刷怪）', () => {
+    const config = makeConfig([{ fromSec: 0, spawn: { enemy: 'mook', perSec: 1 } }], 0);
+    const zero = createSimState(13, { maxEnemies: 0 });
+    const infinite = createSimState(13, { maxEnemies: Infinity });
+    for (let i = 0; i < 10; i++) {
+      frame(zero, 1000, config);
+      frame(infinite, 1000, config);
+    }
+    expect(zero.enemies.length).toBe(10);
+    expect(infinite.enemies.length).toBe(10);
   });
 });

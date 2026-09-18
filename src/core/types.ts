@@ -49,6 +49,15 @@ export interface SimConfig {
   wallMaxHp: number;
   /** 武器栏上限：拥有武器数达到该值后，升级选项不再出现新武器。 */
   maxWeaponSlots: number;
+  /** 全局弹丸数量硬上限（性能封顶护栏，防死亡螺旋）：updateProjectiles 帧首若超额，
+   *  把 id 最小的超额弹 ttl 归零、走标准 ttl 耗尽死亡路径回收。取值须远高于正常对局
+   *  并发峰值（实测 campaign 峰值 ≈100）；<=0 或非有限视为不设上限。 */
+  maxProjectiles: number;
+  /** 全局存活敌人数量硬上限（性能封顶护栏，防死亡螺旋）：updateWaves 帧首统计存活敌数，
+   *  匀速段与爆发波杂兵按剩余额度钳制（被钳掉的直接丢弃），boss 不受限。取值须远高于
+   *  正常对局并发峰值（实测 campaign 峰值 ≈70、自动 endless 峰值 ≈300）；<=0 或非有限
+   *  视为不设上限。 */
+  maxEnemies: number;
 }
 
 /** 附着在实体上的效果实例（减速、灼烧等），到期由子系统移除。 */

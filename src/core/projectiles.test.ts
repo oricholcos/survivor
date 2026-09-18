@@ -1,7 +1,9 @@
 // src/core/projectiles.test.ts —— 弹丸系统行为契约：
 // 命中扣血 + hitIds 去重、穿透后继续命中第二个、超穿透上限销毁、击杀事件与 killHooks、
-// 对象池复用（弹死后新 spawn 复用同一实例引用）。
+// 对象池复用（弹死后新 spawn 复用同一实例引用）、全局弹丸数量护栏（超限按 id 最小回收）。
 import { describe, expect, it } from 'vitest';
+import './behaviors/index'; // 副作用 import：注册全部真实行为（迫击炮爆炸用例）
+import { registerBehavior } from './behaviors/registry';
 import { drainEvents } from './events';
 import {
   killHooks,
@@ -213,5 +215,93 @@ describe('pickNearestDistinctEnemies（T5.3b 分裂次级弹目标选取助手�
     expect(pickNearestDistinctEnemies(empty, 500, 800, 4)).toEqual([]);
     expect(pickNearestDistinctEnemies(empty, 500, 800, Number.NaN)).toEqual([]);
     expect(pickNearestDistinctEnemies(empty, 500, 800, -3)).toEqual([]);
+  });
+});
+
+describe('全局弹丸数量护栏（T3 性能封顶）', () => {
+  /** 注册一个只记录死亡时刻字段快照的测试行为（registry 同名后注册者胜，测试名唯一不污染他人）。 */
+  function spyDeathBehavior(): Array<{ id: number; ttlMs: number; damage: number; pierceLeft: number }> {
+    const deaths: Array<{ id: number; ttlMs: number; damage: number; pierceLeft: number }> = [];
+    registerBehavior({
+      name: 'cap_test_bolt',
+      fire: () => {},
+      onProjectileDeath: (_state, p) => {
+        deaths.push({ id: p.id, ttlMs: p.ttlMs, damage: p.damage, pierceLeft: p.pierceLeft });
+      },
+    });
+    return deaths;
+  }
+
+  it('超限：id 最小的超额弹只归零 ttl 走标准死亡路径（钩子恰好一次、其余字段不动、未超限弹零影响）', () => {
+    const deaths = spyDeathBehavior();
+    const state = createSimState(1, { maxProjectiles: 2 });
+    for (let i = 0; i < 3; i++) {
+      spawnProjectile(state, {
+        behavior: 'cap_test_bolt',
+        x: 0,
+        y: 0,
+        vx: 0,
+        vy: 0,
+        damage: 7,
+        pierceLeft: 3,
+        ttlMs: 5000,
+      });
+    }
+    expect(state.projectiles.map((p) => p.id)).toEqual([1, 2, 3]);
+
+    updateProjectiles(state, 1000, makeGrid());
+
+    // 超额 1 枚：id 最小的 1 号弹被回收。钩子在 ttl 耗尽路径上收到 ttl<=0（证明走的是
+    // ttl 归零而非直接置 dead——直接置 dead 的话钩子看到的仍是原 ttl 5000），
+    // 伤害/穿透等字段未被护栏篡改；且恰好触发一次。
+    expect(deaths).toEqual([{ id: 1, ttlMs: -1000, damage: 7, pierceLeft: 3 }]);
+    // 未超限弹零影响：{2,3} 存活、寿命只按正常 dt 递减（交换删除会重排数组序，比集合）。
+    expect([...state.projectiles].map((p) => p.id).sort((a, b) => a - b)).toEqual([2, 3]);
+    expect(state.projectiles.map((p) => p.ttlMs)).toEqual([4000, 4000]);
+  });
+
+  it('超额多枚：一帧内全部按 id 升序回收（4 弹 max=2 → 1、2 号回收，3、4 号存活）', () => {
+    const deaths = spyDeathBehavior();
+    const state = createSimState(1, { maxProjectiles: 2 });
+    for (let i = 0; i < 4; i++) {
+      spawnProjectile(state, { behavior: 'cap_test_bolt', x: 0, y: 0, vx: 0, vy: 0, ttlMs: 5000 });
+    }
+    updateProjectiles(state, 1000, makeGrid());
+    expect(deaths.map((d) => d.id)).toEqual([1, 2]); // id 最小的前超额数枚，顺序确定
+    expect([...state.projectiles].map((p) => p.id).sort((a, b) => a - b)).toEqual([3, 4]);
+  });
+
+  it('未超限（length === max）零影响：无标记、无死亡、寿命正常递减', () => {
+    const deaths = spyDeathBehavior();
+    const state = createSimState(1, { maxProjectiles: 2 });
+    spawnProjectile(state, { behavior: 'cap_test_bolt', x: 0, y: 0, vx: 0, vy: 0, ttlMs: 5000 });
+    spawnProjectile(state, { behavior: 'cap_test_bolt', x: 0, y: 0, vx: 0, vy: 0, ttlMs: 5000 });
+    updateProjectiles(state, 1000, makeGrid());
+    expect(deaths).toEqual([]);
+    expect(state.projectiles.map((p) => p.ttlMs)).toEqual([4000, 4000]);
+  });
+
+  it('行为钩子语义不破坏：被回收的迫击炮弹走 ttl 死亡路径提前引爆（AoE 爆炸照常结算）', () => {
+    const state = createSimState(1, { maxProjectiles: 1 });
+    const e = makeEnemy(state, 500, 800, 100);
+    // 迫击炮弹（id 1，noCollide 曲射弹，落点快照在 data）：被护栏回收 → ttl 归零 →
+    // onProjectileDeath 在落点引爆全额 AoE。
+    spawnProjectile(state, {
+      behavior: 'mortar',
+      x: 400,
+      y: 700,
+      vx: 0,
+      vy: 0,
+      damage: 10,
+      ttlMs: 5000,
+      data: { tx: 500, ty: 800, aoeRadius: 60, splashFactor: 1, splitReady: 0 },
+    });
+    spawnProjectile(state, { x: 0, y: 0, vx: 0, vy: 0, ttlMs: 5000 }); // 裸弹（id 2）
+    updateProjectiles(state, 1000, makeGrid());
+    expect(e.hp).toBe(90); // 爆炸伤害 10 × splashFactor 1 全额结算
+    expect(state.projectiles).toHaveLength(1); // 榴弹已回池，只剩未超限的裸弹
+    // makeEnemy 占用 id 1 → 榴弹 id 2（被回收）、裸弹 id 3。
+    expect(state.projectiles[0]!.behavior).toBe('');
+    expect(state.projectiles[0]!.id).toBe(3);
   });
 });

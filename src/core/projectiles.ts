@@ -1,7 +1,8 @@
 // src/core/projectiles.ts —— 弹丸系统：对象池 spawn / 直线推进 / 圆形碰撞 / 穿透计数 / 击杀钩子
 // / 行为生命周期钩子（onProjectileHit / onProjectileDeath）/ noCollide 直通旗标。
 // 性能契约：弹丸全部走模块级对象池（acquire/release，稳态零分配）；
-// 碰撞查询走 SpatialHash（每帧 clear + 重插全部存活敌人），禁止 O(n²) 全量对比。
+// 碰撞查询走 SpatialHash（每帧 clear + 重插全部存活敌人），禁止 O(n²) 全量对比；
+// 全局数量护栏：超过 config.maxProjectiles 时帧首按 id 最小优先回收超额弹（见 updateProjectiles 注释 7)）。
 // 纯 TypeScript，禁止 import phaser 与任何 DOM/BOM；本文件无随机。
 
 import { getBehavior } from './behaviors/registry';
@@ -164,6 +165,12 @@ export function pickNearestDistinctEnemies(
  *    （此刻弹字段仍为死亡时刻值），再 release 回池；state.projectiles 清理用交换删除
  *    （O(1)，被换入者当帧继续处理）；
  * 6) 遍历顺序固定（数组顺序），全程不用 rng。
+ * 7) 全局弹丸数量护栏（T3 性能封顶，防死亡螺旋）：帧首（over 检查之后、grid 重建之前）
+ *    若 state.projectiles.length > config.maxProjectiles，把「id 最小的前超额数枚存活弹」
+ *    只设 ttlMs = 0（不直接置 dead、不动其他字段）——它们在本帧循环内走标准 ttl 耗尽
+ *    死亡路径：ttl<=0 → dead → onProjectileDeath 恰好一次 → 回池。行为钩子语义不破坏
+ *    （迫击炮弹提前引爆、分裂弹正常消亡）。帧中分裂等新增弹导致的瞬间超额留到下一帧
+ *    帧首回收。maxProjectiles <= 0 或非有限视为不设上限。
  * 行为钩子查找：proj.behavior 为空串（池默认，无所属行为）→ 无钩子；非空未注册名 → 抛错
  * （与 weapons.ts 的 fire 分发路径同款「数据表拼错尽早暴露」约定）。
  * state.over 非 null（模拟已结束）时直接 return（与 enemies/wall 同款防重入）。
@@ -176,6 +183,30 @@ export function updateProjectiles(state: SimState, dtMs: number, grid: SpatialHa
   const enemies = state.enemies;
   const projectiles = state.projectiles;
   const dtSec = dtMs / 1000;
+
+  // 0) 全局弹丸数量护栏：超额数通常很小，逐轮全量扫描取当前最小 id（确定性；ids 唯一）。
+  //    候选限定「未 dead 且 ttl > 0」的存活弹：帧首存活弹恒有 ttl > 0（上一帧 ttl<=0 者已
+  //    就地回收），标记 ttl=0 后即退出候选集，不会重复选中。
+  const maxProjectiles = state.config.maxProjectiles;
+  if (Number.isFinite(maxProjectiles) && maxProjectiles > 0 && projectiles.length > maxProjectiles) {
+    const excess = projectiles.length - maxProjectiles;
+    for (let k = 0; k < excess; k++) {
+      let minIdx = -1;
+      let minId = Infinity;
+      for (let i = 0; i < projectiles.length; i++) {
+        const p = projectiles[i]!;
+        if (!p.dead && p.ttlMs > 0 && p.id < minId) {
+          minId = p.id;
+          minIdx = i;
+        }
+      }
+      if (minIdx < 0) {
+        break; // 无存活弹可标记（余下全是死弹，本帧循环会回收），防御性兜底
+      }
+      // 只归零 ttl：让标准 ttl 耗尽路径完成死亡（当帧循环内 dead → 钩子 → 回池）。
+      projectiles[minIdx]!.ttlMs = 0;
+    }
+  }
 
   // 1) 重建空间网格（网格坐标 = 本帧命中查询阶段的实时坐标）。
   grid.clear();

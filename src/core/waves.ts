@@ -16,6 +16,8 @@
 //   重新检测跨段：只重触发回绕点之后的「表尾循环段」内爆发波（T3.6 修复，见 waves.test 与 balance.test）。
 // - 血量膨胀：本帧所有 spawn 的敌人 hp/maxHp × (1 + scaling.hpPerSec × timelineSec) × loopScale
 //   （先经 spawnEnemy 以 type.hp 落地，再改写 hp/maxHp）。
+// - 数量护栏（T3 性能封顶）：帧首按 config.maxEnemies 统计存活敌数得出本帧刷怪额度，
+//   匀速段与爆发波杂兵按额度钳制（被钳掉的直接丢弃），boss 不受限；详见 updateWaves 注释 7)。
 // - 模拟已结束（state.over !== null）直接 return（与 enemies.ts / wall.ts 同款防重入）。
 // - meta 契约：每帧收到的 clock 原样存入 state.meta[WAVE_CLOCK_META_KEY]（存引用即可——
 //   session 每帧 resolveWaveClock 产生新对象，无别名风险），gems.xpToNext 据此读 loopScale
@@ -124,6 +126,14 @@ export function calculateSpawnMargin(type: EnemyTypeData): number {
  *    burst 杂兵额外 × strengthFactor（boss 不乘）；
  * 5) 帧末把 lastTimelineSec 置为 timelineSec；
  * 6) 每帧把收到的 clock 存入 state.meta[WAVE_CLOCK_META_KEY]（clock 缺省不写，gems 侧按缺失回退 1）。
+ * 7) 全局存活敌人数量护栏（T3 性能封顶，防死亡螺旋）：帧首统计一次存活敌数（O(n)，跳过
+ *    dead 尸体），得出本帧刷怪额度 budget = maxEnemies - alive（本帧已刷的实时扣减）——
+ *    - 匀速段：拟刷 n0 = floor(acc) 钳到 max(0, budget)；累加器只扣实际刷掉的整数部分，
+ *      被钳掉的整数欠账直接丢弃（acc 只保留小数尾）——额度恢复后按正常 perSec 续刷，
+ *      不爆发性补刷；不折算血量。
+ *    - 爆发波：杂兵 count 同样钳到剩余额度，被钳掉的整数怪直接丢弃（不折算血量、
+ *      firedBurstKeys 已置位不重触发）；boss 不受上限约束（每波 1 只，照常刷，额度照扣）。
+ *    maxEnemies <= 0 或非有限视为不设上限。
  */
 export function updateWaves(
   state: SimState,
@@ -149,6 +159,21 @@ export function updateWaves(
 
   const meta = getMeta(state);
 
+  // 全局敌人数量护栏：帧首统计一次存活敌数（O(n)，含本帧将续用的所有活体；dead 尸体
+  // 不占额度）。maxEnemies 非有限 / <=0 视为不设上限（budget 恒 Infinity，零额外开销）。
+  const maxEnemies = state.config.maxEnemies;
+  let budget = Infinity;
+  if (Number.isFinite(maxEnemies) && maxEnemies > 0) {
+    let alive = 0;
+    const allEnemies = state.enemies;
+    for (let i = 0; i < allEnemies.length; i++) {
+      if (!allEnemies[i].dead) {
+        alive++;
+      }
+    }
+    budget = maxEnemies - alive;
+  }
+
   // 时间轴回退（无尽模式新循环把时间轴拨回回绕点 loopFromSec 附近）：按回绕后的位置
   // 重新检测跨段——只重触发回绕点之后的段内爆发波（〈表尾循环段〉语义）。
   // 若按 0 起点重置，回绕点之前的时间轴爆发波会在回绕帧被误判为〈刚跨过〉而全部
@@ -173,12 +198,22 @@ export function updateWaves(
     const type = enemyTypes[spawnRule.enemy];
     if (type !== undefined) {
       meta.spawnAcc += spawnRule.perSec * (dtMs / 1000) * loopScale;
-      const n = Math.floor(meta.spawnAcc);
-      if (n >= 1) {
-        meta.spawnAcc -= n;
-        const margin = calculateSpawnMargin(type);
-        for (let k = 0; k < n; k++) {
-          applyHpScale(spawnEnemy(state, type, state.rng.range(margin, state.layout.width - margin)), hpScale, loopScale);
+      const n0 = Math.floor(meta.spawnAcc);
+      if (n0 >= 1) {
+        // 数量护栏：拟刷 n0 钳到剩余额度（budget 可能 <= 0，取 max(0,·)）。
+        const n = Math.min(n0, Math.max(0, budget));
+        meta.spawnAcc -= n; // 只扣实际刷掉的整数部分
+        if (n < n0) {
+          // 额度不足被钳：被钳掉的整数欠账直接丢弃（不折算血量），acc 只保留小数尾——
+          // 额度恢复后按正常 perSec 续刷，不积累爆发性补刷。
+          meta.spawnAcc -= Math.floor(meta.spawnAcc);
+        }
+        if (n >= 1) {
+          const margin = calculateSpawnMargin(type);
+          for (let k = 0; k < n; k++) {
+            applyHpScale(spawnEnemy(state, type, state.rng.range(margin, state.layout.width - margin)), hpScale, loopScale);
+          }
+          budget -= n; // 本帧已刷的实时扣减额度
         }
       }
     }
@@ -206,16 +241,21 @@ export function updateWaves(
     if (type !== undefined) {
       const factor = (burst.strengthFactor !== undefined ? burst.strengthFactor : 1) * hpScale;
       const margin = calculateSpawnMargin(type);
-      for (let k = 0; k < burst.count; k++) {
+      // 数量护栏：杂兵 count 钳到剩余额度；被钳掉的整数怪直接丢弃（不折算血量），
+      // firedBurstKeys 已置位——本波不会在额度恢复后重触发补刷。
+      const count = Math.min(burst.count, Math.max(0, budget));
+      for (let k = 0; k < count; k++) {
         applyHpScale(spawnEnemy(state, type, state.rng.range(margin, state.layout.width - margin)), factor, loopScale);
       }
+      budget -= count;
     }
     if (burst.boss !== undefined) {
       const bossType = enemyTypes[burst.boss];
       if (bossType !== undefined) {
-        // boss 只吃时间/循环膨胀，不吃 strengthFactor（强度系数只压低杂兵）。
+        // boss 不受上限约束（每波 1 只，照常刷）；额度照扣（boss 占存活数，后续刷怪照实计算）。
         const margin = calculateSpawnMargin(bossType);
         applyHpScale(spawnEnemy(state, bossType, state.rng.range(margin, state.layout.width - margin)), hpScale, loopScale);
+        budget -= 1;
       }
     }
   }
