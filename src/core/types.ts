@@ -142,6 +142,10 @@ export interface WeaponState {
   effects?: EffectInstance[];
   /** 牌表：牌 id → 已持有张数（addWeapon 初始化为 {}）。 */
   cards: Record<string, number>;
+  /** 牌表版本号（getWeaponStats 的 stats 缓存失效键）：addWeapon 初始化 0，applyUpgrade
+   *  每次改写 cards 后 +1；缺省（undefined）按 0 处理。缓存契约见 core/weapons.ts——
+   *  绕过 applyUpgrade 直接改写 cards 的代码必须同步自增本字段，否则 stats 缓存不失效。 */
+  cardsVersion?: number;
 }
 
 /** 经验宝石：飞向角色被吸收。 */

@@ -187,13 +187,16 @@ export class SpatialHash<T> {
 
   /**
    * 圆范围查询：返回所有与查询圆相交（dist <= r + item.radius，恰好相切算相交）的 item，
-   * 不含重复（跨多格 / 重复命中的 item 只返回一次）。结果数组每次新建，调用方可自由持有。
+   * 不含重复（跨多格 / 重复命中的 item 只返回一次）。结果数组默认每次新建，调用方可自由持有；
+   * 传入 out 时复用调用方数组（清空后填充并原样返回，零分配）——热路径专用约定：结果只在
+   * 下一次对本实例的查询之前有效，期间不得在结果遍历中再发起对本实例的嵌套查询、不得跨帧持有。
    * 输入约定：x/y/r 为有限数、r >= 0；非法输入（NaN/Infinity/负 r）返回空数组。
    */
-  queryCircle(x: number, y: number, r: number): T[] {
-    const out: T[] = [];
+  queryCircle(x: number, y: number, r: number, out?: T[]): T[] {
+    const result = out ?? [];
+    result.length = 0;
     if (!Number.isFinite(x) || !Number.isFinite(y) || !(r >= 0) || !Number.isFinite(r)) {
-      return out;
+      return result;
     }
 
     const cs = this.cellSize;
@@ -217,11 +220,11 @@ export class SpatialHash<T> {
           const dx = px[slot] - x;
           const dy = py[slot] - y;
           const rr = r + pr[slot];
-          if (dx * dx + dy * dy <= rr * rr) out.push(items[slot]);
+          if (dx * dx + dy * dy <= rr * rr) result.push(items[slot]);
         }
       }
     }
-    return out;
+    return result;
   }
 
   /** 解除某槽位在给定闭区间格子范围内的全部链接；桶变空则删除条目并回收桶数组。 */

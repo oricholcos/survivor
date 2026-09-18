@@ -3,8 +3,22 @@
 // 牌乘区/开关 → updateWeapons 按冷却节奏分发到 getBehavior(def.behavior).fire。
 // T5.3a：废除「武器等级+1」覆盖式 levels 数值成长——武器初始 0 级、每吃一张牌 level+1
 // （0~10 级封顶，解锁后可 >10），全部数值/机制成长由牌注入（见 core/cards.ts）。
+// T5 热路径微优化：getWeaponStats 按牌表版本缓存（见下「stats 缓存契约」）。
 // 纯 TypeScript，禁止 import phaser 与任何 DOM/BOM。
 // 随机契约：本文件不使用 rng；散布等随机由各行为分支经 state.rng 自行实现。
+//
+// stats 缓存契约（T5，锁定）：
+// - 缓存存 state.meta 单键 weapon_stats_cache（weaponId → { version, cardsRef, stats }）；
+//   命中条件 = ws.cardsVersion 相同【且】ws.cards 对象引用相同——双保险：version 自增覆盖
+//   applyUpgrade 的原地改写，cardsRef 比对覆盖「整体替换 ws / 替换 cards 对象」的路径。
+// - 失效责任：牌表唯一合法改写入口是 applyUpgrade（自增 cardsVersion）；绕过它直接改写
+//   ws.cards 的代码（如测试夹具）必须同步自增 ws.cardsVersion，否则拿到过期 stats。
+// - 返回对象被同版本多次调用共享（零分配）：所有消费方（8 个行为 fire/update、视图层
+//   mainScene、scheduleBurstWaves 的快照浅拷贝）均【只读】stats，禁止改写返回对象——
+//   改写会跨帧污染缓存（已全量审计，见 T5 汇报）。
+// - weaponStates 缺条目（ghost）路径不缓存：保持 buildWeaponStats 纯 base 现状。
+// - 确定性：缓存只影响对象身份与分配次数，不影响任何数值（同输入同输出）；restart 新建
+//   state → meta 为空 → 缓存随局重建，不跨局泄漏。
 
 import './behaviors/index'; // 副作用 import：触发 behavior_*.ts 自动发现与注册（新增行为零中心改动）
 import { getBehavior } from './behaviors/registry';
@@ -40,24 +54,55 @@ export interface WeaponDef {
   cards: WeaponCardDef[];
 }
 
-/**
- * 解析某武器的当前数值：委托 buildWeaponStats（base × 牌乘区 × 牌开关，见 core/cards.ts）。
- * weaponStates 缺该武器条目（ghost）时返回纯 base，不抛错。
- */
-export function getWeaponStats(def: WeaponDef, state: SimState, weaponId: string): WeaponStats {
-  return buildWeaponStats(def, state.weaponStates[weaponId]) as WeaponStats;
+/** stats 缓存的 meta 单键（state.meta 共享，值 = Record<weaponId, WeaponStatsCacheEntry>）。 */
+export const WEAPON_STATS_CACHE_META_KEY = 'weapon_stats_cache';
+
+/** stats 缓存条目：version = 构建时的 ws.cardsVersion、cardsRef = 构建时的 ws.cards 引用。 */
+interface WeaponStatsCacheEntry {
+  version: number;
+  cardsRef: Record<string, number>;
+  stats: WeaponStats;
 }
 
 /**
- * 给角色添加武器：weaponStates[weaponId] = { level: 0, cooldownMs: 0, cards: {} }。
+ * 解析某武器的当前数值：委托 buildWeaponStats（base × 牌乘区 × 牌开关，见 core/cards.ts）。
+ * T5 热路径缓存：同武器同牌表版本（ws.cardsVersion 相同且 ws.cards 引用相同）直接返回
+ * 缓存对象（零分配、跨调用共享同一引用——消费方必须只读，见文件头「stats 缓存契约」）；
+ * 版本不匹配（applyUpgrade 吃牌）时重建并写缓存。weaponStates 缺该武器条目（ghost）时
+ * 返回纯 base 全新对象，不缓存（保持既有行为）。
+ */
+export function getWeaponStats(def: WeaponDef, state: SimState, weaponId: string): WeaponStats {
+  const ws = state.weaponStates[weaponId];
+  if (!ws) {
+    return buildWeaponStats(def, undefined) as WeaponStats; // ghost：纯 base，不缓存
+  }
+  let cache = state.meta[WEAPON_STATS_CACHE_META_KEY] as Record<string, WeaponStatsCacheEntry> | undefined;
+  if (!cache) {
+    cache = {};
+    state.meta[WEAPON_STATS_CACHE_META_KEY] = cache;
+  }
+  const cached = cache[weaponId];
+  const version = ws.cardsVersion ?? 0;
+  if (cached && cached.version === version && cached.cardsRef === ws.cards) {
+    return cached.stats;
+  }
+  const stats = buildWeaponStats(def, ws) as WeaponStats;
+  cache[weaponId] = { version, cardsRef: ws.cards, stats };
+  return stats;
+}
+
+/**
+ * 给角色添加武器：weaponStates[weaponId] = { level: 0, cooldownMs: 0, cards: {}, cardsVersion: 0 }。
  * T5.3a：武器 0 级起步（level = 已吃牌数），刚获得时无任何牌、以 base 数值作战。
- * 幂等：已存在则原样保留（不覆盖等级/冷却/牌表）。
+ * T5：cardsVersion = stats 缓存失效键（见文件头「stats 缓存契约」）；新条目版本 0 与
+ * 空牌表一致，无需预热缓存（首次 getWeaponStats 未命中时按空表构建）。
+ * 幂等：已存在则原样保留（不覆盖等级/冷却/牌表/版本号）。
  */
 export function addWeapon(state: SimState, weaponId: string): void {
   if (state.weaponStates[weaponId]) {
     return;
   }
-  const ws: WeaponState = { level: 0, cooldownMs: 0, cards: {} };
+  const ws: WeaponState = { level: 0, cooldownMs: 0, cards: {}, cardsVersion: 0 };
   state.weaponStates[weaponId] = ws;
 }
 

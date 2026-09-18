@@ -138,4 +138,7 @@ export function applyUpgrade(state: SimState, option: UpgradeOption, defs?: Reco
   }
   ws.cards[option.cardId] = (ws.cards[option.cardId] ?? 0) + 1;
   ws.level += 1;
+  // T5 stats 缓存失效键：牌表已改写 → 版本自增，getWeaponStats 下次调用按新牌表重建
+  // （见 core/weapons.ts 文件头「stats 缓存契约」；绕过本函数改写 cards 的代码须同步自增）。
+  ws.cardsVersion = (ws.cardsVersion ?? 0) + 1;
 }

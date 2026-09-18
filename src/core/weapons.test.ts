@@ -5,9 +5,10 @@
 import { describe, expect, it } from 'vitest';
 import { getBehavior, listBehaviors, registerBehavior } from './behaviors/registry';
 import { createSimState } from './simState';
-import { addWeapon, getWeaponStats, updateWeapons } from './weapons';
+import { addWeapon, getWeaponStats, updateWeapons, WEAPON_STATS_CACHE_META_KEY } from './weapons';
 import type { WeaponDef } from './weapons';
 import type { WeaponCardDef } from './cards';
+import { applyUpgrade } from './upgrade';
 
 /** 牌夹具小工具：params 乘区/开关牌。 */
 function card(id: string, params?: WeaponCardDef['params']): WeaponCardDef {
@@ -32,13 +33,13 @@ describe('addWeapon：0 级起步 + 空牌表', () => {
   it('新增武器 = { level: 0, cooldownMs: 0, cards: {} }（T5.3a：武器 0 级起步，成长全靠牌）', () => {
     const state = createSimState(1);
     addWeapon(state, 'w');
-    expect(state.weaponStates.w).toEqual({ level: 0, cooldownMs: 0, cards: {} });
+    expect(state.weaponStates.w).toEqual({ level: 0, cooldownMs: 0, cards: {}, cardsVersion: 0 });
   });
 
   it('重复添加不覆盖已有等级/冷却/牌表（幂等）', () => {
     const state = createSimState(1);
     addWeapon(state, 'w');
-    expect(state.weaponStates.w).toEqual({ level: 0, cooldownMs: 0, cards: {} });
+    expect(state.weaponStates.w).toEqual({ level: 0, cooldownMs: 0, cards: {}, cardsVersion: 0 });
 
     // 模拟吃牌与战斗中的冷却推进
     state.weaponStates.w.level = 3;
@@ -103,6 +104,77 @@ describe('getWeaponStats：牌乘区与开关（委托 buildWeaponStats）', () 
   it('weaponStates 缺条目（ghost）→ 纯 base 不抛错', () => {
     const state = createSimState(1);
     expect(getWeaponStats(def, state, 'ghost').damage).toBe(10);
+  });
+});
+
+describe('getWeaponStats stats 缓存契约（T5 热路径微优化）', () => {
+  const def = makeDef({
+    base: { damage: 10, intervalMs: 800, projectileSpeed: 900, pierce: 2, ttlMs: 2000 },
+    cards: [card('dmg_up', [{ key: 'damage', value: 1.3, op: 'mul' }])],
+  });
+  const CARD_OPT = { kind: 'card' as const, weaponId: 'test_gun', cardId: 'dmg_up', name: '', description: '' };
+
+  it('同版本重复调用返回同一对象引用（缓存命中零分配）；吃牌后 stats 立即反映新牌并换新引用', () => {
+    const state = createSimState(1);
+    addWeapon(state, 'test_gun');
+    const first = getWeaponStats(def, state, 'test_gun');
+    expect(getWeaponStats(def, state, 'test_gun')).toBe(first); // 同版本：命中同一缓存对象
+    expect(first.damage).toBe(10);
+
+    // 经生产入口（applyUpgrade）吃牌：cardsVersion 自增 → 缓存重建，stats 立即反映新牌
+    applyUpgrade(state, CARD_OPT);
+    const after = getWeaponStats(def, state, 'test_gun');
+    expect(after).not.toBe(first); // 版本失效：重建出新对象
+    expect(after.damage).toBeCloseTo(13, 9);
+    expect(getWeaponStats(def, state, 'test_gun')).toBe(after); // 新版本再次命中
+    expect(first.damage).toBe(10); // 旧缓存对象只读共享，不被污染
+  });
+
+  it('不同武器互不串扰：吃牌只重建对应武器的缓存条目', () => {
+    const state = createSimState(1);
+    addWeapon(state, 'a');
+    addWeapon(state, 'b');
+    const defB = makeDef({
+      id: 'gun_b',
+      base: { damage: 7, intervalMs: 800, projectileSpeed: 900, pierce: 2, ttlMs: 2000 },
+      cards: [card('dmg_up', [{ key: 'damage', value: 1.3, op: 'mul' }])],
+    });
+    const statsA = getWeaponStats(def, state, 'a');
+    const statsB = getWeaponStats(defB, state, 'b');
+    expect(statsB).not.toBe(statsA);
+
+    applyUpgrade(state, { kind: 'card', weaponId: 'a', cardId: 'dmg_up', name: '', description: '' }); // 只吃武器 a 的牌
+    expect(getWeaponStats(def, state, 'a').damage).toBeCloseTo(13, 9); // a 反映新牌
+    expect(getWeaponStats(defB, state, 'b')).toBe(statsB); // b 缓存条目不受影响（同引用）
+    expect(getWeaponStats(defB, state, 'b').damage).toBe(7);
+  });
+
+  it('ws.cards 对象整体替换（测试夹具路径）也使缓存失效（cardsRef 双保险）', () => {
+    const state = createSimState(1);
+    addWeapon(state, 'test_gun');
+    const first = getWeaponStats(def, state, 'test_gun');
+    state.weaponStates.test_gun.cards = { dmg_up: 1 }; // 绕过 applyUpgrade 替换 cards 对象
+    const after = getWeaponStats(def, state, 'test_gun');
+    expect(after).not.toBe(first);
+    expect(after.damage).toBeCloseTo(13, 9);
+  });
+
+  it('restart（新建 state）后缓存随 state 重建：新局 meta 初始无缓存键、不跨局泄漏', () => {
+    const stateA = createSimState(1);
+    addWeapon(stateA, 'test_gun');
+    const statsA = getWeaponStats(def, stateA, 'test_gun');
+
+    // 模拟 restart：session.restart 即新建 SimState（meta 从零开始）
+    const stateB = createSimState(1);
+    expect(stateB.meta[WEAPON_STATS_CACHE_META_KEY]).toBeUndefined(); // 新局 meta 干净（缓存懒建）
+    addWeapon(stateB, 'test_gun');
+    // 夹具直接写牌表：按契约同步自增 cardsVersion（绕过 applyUpgrade 的代码自负失效责任）
+    stateB.weaponStates.test_gun.cards.dmg_up = 2;
+    stateB.weaponStates.test_gun.cardsVersion = 1;
+    const statsB = getWeaponStats(def, stateB, 'test_gun');
+    expect(statsB).not.toBe(statsA); // 两局缓存对象互不共享
+    expect(statsB.damage).toBeCloseTo(10 * 1.3 * 1.3, 9);
+    expect(statsA.damage).toBe(10); // A 局缓存不受 B 局影响
   });
 });
 

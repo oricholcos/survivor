@@ -333,7 +333,7 @@ describe('applyUpgrade 两类 option 各自生效', () => {
   it('new_weapon → addWeapon：0 级 / 空牌表 / 冷却 0，且幂等不覆盖', () => {
     const state = createSimState(1);
     applyUpgrade(state, { kind: 'new_weapon', weaponId: 'w5', name: '武器w5', description: '新武器' });
-    expect(state.weaponStates.w5).toEqual({ level: 0, cooldownMs: 0, cards: {} });
+    expect(state.weaponStates.w5).toEqual({ level: 0, cooldownMs: 0, cards: {}, cardsVersion: 0 });
 
     // 幂等（addWeapon 契约）：已拥有时不重置
     state.weaponStates.w5.level = 4;

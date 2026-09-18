@@ -41,6 +41,8 @@ function ownWithCards(state: SimState, id: string, cardIds: string[], level?: nu
     ws.cards[cardId] = (ws.cards[cardId] ?? 0) + 1;
   }
   ws.level = level ?? cardIds.length;
+  // T5 stats 缓存契约：绕过 applyUpgrade 原地改写 cards，须同步自增版本号（防缓存过期）。
+  ws.cardsVersion = (ws.cardsVersion ?? 0) + 1;
 }
 
 describe('getCardCount', () => {

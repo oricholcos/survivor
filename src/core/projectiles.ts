@@ -101,6 +101,13 @@ export function spawnProjectile(
 /** 敌人死亡钩子（击杀掉宝石/修复包/Boss 奖励等后续注册）：死亡结算时按注册顺序依次调用。 */
 export const killHooks: Array<(state: SimState, enemy: Enemy) => void> = [];
 
+// 命中查询结果暂存缓冲（T5 热路径微优化：queryCircle 的 out 复用约定，每帧零分配）。
+// 复用安全性审计（锁定）：命中循环内对同一 grid 无嵌套查询——dealDamage → killHooks
+// （经验/修墙/Boss 奖励）与 applyEffectsOnHit / onProjectileHit（分裂/zap 均为线性扫描或
+// 行为自有模块级网格）都不反查该网格；onProjectileDeath（迫击/导弹爆炸查询）只在命中
+// 循环退出后才触发。结果仅在本枚弹的命中循环内使用，用完即弃。
+const hitScratch: Enemy[] = [];
+
 /**
  * 分裂次级弹目标选取（T5.3b split_shot 通用牌的共用助手，五把弹道武器共用）：
  * 从分裂点 (x, y) 出发，取「最近且互不相同」的至多 maxTargets 个存活敌人——逐轮 distSq
@@ -154,7 +161,8 @@ export function pickNearestDistinctEnemies(
  * 1) grid.clear() 后把所有存活敌人按数组顺序 insert（含各自 radius），供本帧命中查询；
  * 2) 每枚弹：x += vx*dtSec、y += vy*dtSec、ttlMs -= dtMs；ttl 到期（<=0）→ dead（当帧不再命中）；
  * 3) 存活弹且非 noCollide 才参与命中：queryCircle(弹位置, 弹radius) 命中敌人（网格按圆相交
- *    精确过滤），hitIds 去重后每次命中：dealDamage（统一伤害入口，效果引擎结算扣血/击杀/
+ *    精确过滤；T5 起结果复用模块级 hitScratch 缓冲，见其注释的安全性审计），hitIds 去重后
+ *    每次命中：dealDamage（统一伤害入口，效果引擎结算扣血/击杀/
  *    事件/killHooks），随后 applyEffectsOnHit 把 effectsOnHit 模板附着到未死亡的敌人；再调
  *    行为命中钩子 onProjectileHit（伤害与附着结算完、穿透消耗之前；钩子可把弹标记 dead——
  *    标记后立即跳出，本帧剩余命中候选不再结算）；每次命中 pierceLeft -= 1，用尽（<=0）→
@@ -231,7 +239,8 @@ export function updateProjectiles(state: SimState, dtMs: number, grid: SpatialHa
       p.dead = true;
     } else if (p.data.noCollide !== 1) {
       // noCollide 弹（data.noCollide === 1）跳过整段命中结算，直线飞到 ttl。
-      const hits = grid.queryCircle(p.x, p.y, p.radius);
+      // T5：hits 复用模块级 hitScratch（见其注释的嵌套查询安全性审计），每帧零分配。
+      const hits = grid.queryCircle(p.x, p.y, p.radius, hitScratch);
       for (let h = 0; h < hits.length; h++) {
         const enemy = hits[h];
         if (enemy.dead) {
