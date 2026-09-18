@@ -198,6 +198,30 @@
       - 全量 35 个测试文件、637 个测试用例 100% 全部通过；
       - `balance.test.ts` 全自动对局：战役模式种子 7、42、2024 全部通关，无尽模式在 800.6s（精确贴合 800s 目标锚点）收敛。
 
+17. **M17: 无尽节奏修复与性能护栏（经验同步膨胀 / 叠牌 hardMax / 实体上限 / 事件节流 / stats 缓存 / 渲染池化）**：
+    - **经验需求同步膨胀 + 取消 40 级平顶（`src/core/gems.ts`, `src/core/waves.ts`, `src/data/config.json`）**：
+      - `xpToNext` 删除 level>capLevel 恒返 `xpCap` 的平顶分支，第二段线性曲线（每级 +8）无限延续；
+      - 无尽模式升级需求 ×`loopScale`：`updateWaves` 每帧把波次时钟存入 `state.meta['waveClock']`（导出键 `WAVE_CLOCK_META_KEY`），gems 侧读取并乘入（缺失/脏值回退 1，campaign 恒为 1 数值不变）；
+      - 移除失效配置 `xpCapLevel` / `xpCap`；无尽收敛锚点由 800.6s 前移至 ~670s（升级放缓、成卡更少，方向符合设计意图）。
+    - **突破后叠牌硬上限 hardMax（`src/core/cards.ts`, `src/data/cards.json`, `weapons/*.json`）**：
+      - `WeaponCardDef.hardMax`：解锁前后都生效的持牌硬上限（区别于解锁后失效的 `maxCount`）；`availableCards` 过滤链新增判定；
+      - 通用牌：dmg 12 / spd 6 / multi_shot 8 / burst_shot 4 / range_up 8 / dot_freq 6；专属牌审计补齐（贯穿/处决/折射/弹跳/链路稳定/贯通/反弹等）；
+      - 文案两段式「（可叠 n 次，突破后上限 m 次）」；`sanitizeUnlimitedCardDescription` 仅对无 hardMax 牌执行。
+    - **全局实体护栏（`src/core/projectiles.ts`, `src/core/waves.ts`, `config.json` 新增 `maxProjectiles:600` / `maxEnemies:350`）**：
+      - 弹丸超限在 `updateProjectiles` 帧首按最小 id 回收（只置 `ttlMs=0`，走标准 ttl 死亡路径，行为钩子语义不破坏）；
+      - 敌人匀速段与爆发波按剩余额度钳制（boss 豁免但计入存活账）；实测战役峰值敌 53~71 / 弹 36~102，自动对局中上限从未触发，仅在真正死亡螺旋封顶。
+    - **高频 sfx 事件 push 点节流（`src/core/events.ts`）**：
+      - 新增 `pushSfxThrottled`（模拟时间 30ms 窗口/名，确定性；首事件恒过）；shoot / hit / prism zap hit 换用，一次性 sfx 不动；gameplay 事件（击杀/刷怪）不动。
+    - **模拟热路径微优化（`src/core/weapons.ts`, `src/core/spatialHash.ts`）**：
+      - `getWeaponStats` 按 `cardsVersion` + cards 引用双保险缓存（meta 单键，`applyUpgrade` 自增版本；全行为调用方审计只读）；`queryCircle` 支持可选 out 缓冲，弹丸命中热路径接入复用。
+    - **渲染池化（新建 `src/phaser/enemyRenderer.ts` / `src/phaser/projectileRenderer.ts`，mainScene 净减矢量绘制约 340 行）**：
+      - 敌人：create 期逐 typeId 烘焙本体/白色剪影/状态光环贴图 + 固定池 Image（本体/白闪/血条槽/血条填充），每帧零分配；矢量状态特效保留 ≤80 只阈值，超限降级为烘焙光环（ADD + 正弦脉动）；
+      - 弹丸：7 张弹体贴图（长针/圆点/导弹/榴弹/棱镜菱形/弹尾/兜底）+ 640 槽 ADD Image 池，直线弹 rotation 对准速度方向；meta VFX（光束/龙息锥/电弧/落点引导）与 zones/墙/HUD 保留 Graphics；
+      - VFX 实例上限核查：DeathBurst 200 / MuzzleFlashes 24 / RingWaves 32 既有环形缓冲确认，迫击炮爆炸补视图侧绘制上限 32；
+      - 调试句柄 `window.__survivorGame`（与 ?speed/?fx 同类约定）：暴露游戏实例，RAF 被节流的环境（内嵌浏览器验收）可 `game.loop.step(t)` 手动逐帧推进；
+      - 内嵌浏览器冒烟验证通过：开局/敌人/弹丸/毒圈/升级面板文案/击杀结算全部正常，0 页面错误。
+    - **单测与全量回归**：全量 35 个测试文件、660 个测试用例 100% 全部通过（测试运行时长 ~11s）；`balance.test.ts`：campaign 三种子全胜（Lv.37，最低墙血咬合保留），endless 于 670.1s 收敛（Lv.43，击杀 2191，loop=2）。
+
 ---
 
 ## 4. 当前工程状态与质量指标
@@ -205,8 +229,8 @@
 - **当前工程是否能直接运行/编译：** **是**。
 - **全量测试结果 (`npm run test` / `vitest run`)：**
   - **35 / 35 test files passed (100%)**
-  - **637 / 637 tests passed (100%)**
-  - 运行总耗时约 21.3s。
+  - **660 / 660 tests passed (100%)**
+  - 运行总耗时约 11s。
 - **静态检查 (`npm run lint` / `eslint .`)：**
   - **ESLint 通过，0 errors, 0 warnings**。
 - **生产构建 (`npm run build`)：**
@@ -217,10 +241,9 @@
 
 ## 5. 给接手 Agent 的后续建议
 
-1. **分支合并**：当前分支 `feature/dev-continue` 包含 M1 至 M16 的完整改动，35 个测试文件 100% 通过且构建、lint 全绿。在用户确认后可提交并合并至 `main` 分支。
-2. **新增测试文件跟踪**：`src/core/ballistics_cards_closed_loop.test.ts`、`src/core/m2_boundary_extreme.test.ts` 与 `src/game/session.test.ts` 为已验证通过的核心闭环测试文件，后续提交时可一并 `git add` 纳入版本控制。
-3. **人工试玩体验**：可启动 `npm run dev` 在浏览器中进行完整试玩体验：
-   - 体验迫击榴弹黑洞强化在命中瞬间聚怪后自然推开的清爽手感，不再长时间死吸怪潮；
-   - 观察 Boss 受眩晕与减速时更轻微的控制停摆与减速反馈；
-   - 突破上限后检查升级卡牌说明中的次数限制文字是否已清除，且不再刷出多余的分裂牌。
-4. **后续微调规范**：若后续需要进一步调整游戏手感或武器伤害，请严格遵循「纯数据驱动」原则，在 `src/data/` 的 JSON 文件中修改，切勿硬编码进行为层代码。
+1. **分支合并**：当前分支 `feature/dev-continue` 包含 M1 至 M17 的完整改动，35 个测试文件 100% 通过且构建、lint 全绿。在用户确认后可提交并合并至 `main` 分支。
+2. **人工试玩体验**：可启动 `npm run dev` 在浏览器中进行完整试玩体验：
+   - 无尽模式后期升级节奏应明显放缓（需求随循环膨胀同步增长，40 级后不再平顶），不再出现几秒一级的连续升级打断；
+   - 突破上限后无限牌池叠牌受 hardMax 约束（多射至多 8、连射至多 4 等），极端弹幕规模有界（弹 ≤600 / 敌 ≤350），卡顿应显著改善；
+   - 敌人与弹丸渲染已池化（贴图烘焙 + 固定池 Image），高密度局的渲染开销与实体数量线性相关且有硬上限；`window.__survivorGame` 调试句柄可在控制台 `game.loop.step(t)` 手动逐帧推进（RAF 受限环境验收用）。
+3. **后续微调规范**：若后续需要进一步调整游戏手感或武器伤害，请严格遵循「纯数据驱动」原则，在 `src/data/` 的 JSON 文件中修改，切勿硬编码进行为层代码。
