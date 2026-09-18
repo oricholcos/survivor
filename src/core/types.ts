@@ -37,8 +37,6 @@ export interface SimConfig {
   xpBase: number;
   xpTier1Step: number;
   xpTier2Step: number;
-  xpCapLevel: number;
-  xpCap: number;
   xpGrowth?: number;
   /** 宝石自动飞向角色 / 掉落物飞向城墙的速度 px/s。 */
   gemFlySpeed: number;

@@ -17,6 +17,9 @@
 // - 血量膨胀：本帧所有 spawn 的敌人 hp/maxHp × (1 + scaling.hpPerSec × timelineSec) × loopScale
 //   （先经 spawnEnemy 以 type.hp 落地，再改写 hp/maxHp）。
 // - 模拟已结束（state.over !== null）直接 return（与 enemies.ts / wall.ts 同款防重入）。
+// - meta 契约：每帧收到的 clock 原样存入 state.meta[WAVE_CLOCK_META_KEY]（存引用即可——
+//   session 每帧 resolveWaveClock 产生新对象，无别名风险），gems.xpToNext 据此读 loopScale
+//   做无尽经验需求膨胀；clock 缺省（默认线性时钟）不写，gems 侧按缺失回退 loopScale=1。
 // - campaignDurationSec 与 endlessLoop 字段属于数据契约：通关判定在 T3.3、循环时钟在 T3.4 消费，
 //   本解释器不解释它们。
 
@@ -24,6 +27,9 @@ import { pushEvent } from './events';
 import { spawnEnemy } from './enemies';
 import type { EnemyTypeData } from './enemies';
 import type { Enemy, SimState } from './types';
+
+/** state.meta 键：updateWaves 每帧把收到的波次时钟存于此（gems.xpToNext 读 loopScale 做经验需求膨胀）。 */
+export const WAVE_CLOCK_META_KEY = 'waveClock';
 
 /** 匀速段规则：以 perSec（只/秒）的速率持续刷 enemy。 */
 export interface WaveSpawnRule {
@@ -116,7 +122,8 @@ export function calculateSpawnMargin(type: EnemyTypeData): number {
  *    条目各触发一次（同帧跨多条全触发）；时间轴回退（新循环）时按回绕后位置重新检测；
  * 4) 本帧所有 spawn 的敌人 hp/maxHp × (1 + scaling.hpPerSec × timelineSec) × loopScale，
  *    burst 杂兵额外 × strengthFactor（boss 不乘）；
- * 5) 帧末把 lastTimelineSec 置为 timelineSec。
+ * 5) 帧末把 lastTimelineSec 置为 timelineSec；
+ * 6) 每帧把收到的 clock 存入 state.meta[WAVE_CLOCK_META_KEY]（clock 缺省不写，gems 侧按缺失回退 1）。
  */
 export function updateWaves(
   state: SimState,
@@ -127,6 +134,13 @@ export function updateWaves(
 ): void {
   if (state.over !== null) {
     return;
+  }
+
+  // 波次时钟存档：gems.xpToNext 读取 loopScale 做无尽经验需求膨胀（hook 顺序保证本系统
+  // 每帧先于 gems 运行，gems 读到的恒为本帧时钟）。over 提前 return 时不写——此时经验
+  // 不再结算，读旧值无副作用。
+  if (clock !== undefined) {
+    state.meta[WAVE_CLOCK_META_KEY] = clock;
   }
 
   const timelineSec = clock !== undefined ? clock.timelineSec : state.timeMs / 1000;

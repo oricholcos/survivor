@@ -7,6 +7,7 @@ import { drainEvents } from './events';
 import { checkLevelUp, onEnemyKilled, updateGems, xpToNext } from './gems';
 import { dist } from './math';
 import { createSimState } from './simState';
+import { WAVE_CLOCK_META_KEY } from './waves';
 import type { Enemy, Rng } from './types';
 
 /** 构造一个敌人夹具（未覆盖字段取无害占位值，全部数值仅存在于测试夹具）。 */
@@ -46,8 +47,6 @@ describe('src/data/config 加载层', () => {
       xpBase: 5,
       xpTier1Step: 4,
       xpTier2Step: 8,
-      xpCapLevel: 40,
-      xpCap: 280,
       gemFlySpeed: 600,
       dropFlySpeed: 600,
       repairDropChance: 0.02,
@@ -59,7 +58,7 @@ describe('src/data/config 加载层', () => {
 });
 
 describe('xpToNext 经验曲线', () => {
-  it('两段线性递增与软上限：Lv.1=5, Lv.2=9, Lv.10=41, Lv.11=49, Lv.40=281, Lv.41=280, Lv.42=280 等', () => {
+  it('两段线性递增且 40 级后无限延续：Lv.1=5, Lv.10=41, Lv.11=49, Lv.40=281, Lv.41=289, Lv.42=297', () => {
     const state = createSimState(1);
     expect(state.progress.level).toBe(1);
     expect(xpToNext(state)).toBe(5); // Lv.1
@@ -74,18 +73,57 @@ describe('xpToNext 经验曲线', () => {
     expect(xpToNext(state)).toBe(49); // Lv.11
 
     state.progress.level = 40;
-    expect(xpToNext(state)).toBe(281); // Lv.40
+    expect(xpToNext(state)).toBe(281); // Lv.40 = 41 + 30*8
 
     state.progress.level = 41;
-    expect(xpToNext(state)).toBe(280); // Lv.41 cap
+    expect(xpToNext(state)).toBe(289); // Lv.41：第二段曲线继续（无平顶）
 
     state.progress.level = 42;
-    expect(xpToNext(state)).toBe(280); // Lv.42 cap
+    expect(xpToNext(state)).toBe(297); // Lv.42：每级再 +8
+
+    state.progress.level = 100;
+    expect(xpToNext(state)).toBe(761); // Lv.100：41 + 90*8，曲线无限延续
 
     // 旧指数配置回退：若显式配置 xpGrowth 且 xpTier1Step 为 undefined
     const s2 = createSimState(1, { xpBase: 10, xpGrowth: 2, xpTier1Step: undefined as unknown as number });
     s2.progress.level = 4;
     expect(xpToNext(s2)).toBe(80); // 10 * 2^3
+  });
+
+  it('meta 存波次时钟时按 loopScale 缩放（无尽需求膨胀），loopScale=1 数值不变', () => {
+    const state = createSimState(1);
+    state.progress.level = 40;
+    expect(xpToNext(state)).toBe(281); // 无 meta 基线
+
+    state.meta[WAVE_CLOCK_META_KEY] = { timelineSec: 560, loopCount: 0, loopScale: 1 };
+    expect(xpToNext(state)).toBe(281); // loopScale=1：通关模式数值完全不变
+
+    state.meta[WAVE_CLOCK_META_KEY] = { timelineSec: 560, loopCount: 1, loopScale: 2 };
+    expect(xpToNext(state)).toBe(562); // 281 * 2（第 1 轮循环）
+
+    state.meta[WAVE_CLOCK_META_KEY] = { timelineSec: 560, loopCount: 3, loopScale: 8 };
+    expect(xpToNext(state)).toBe(2248); // 281 * 8（第 3 轮循环）
+
+    state.progress.level = 5;
+    expect(xpToNext(state)).toBe(168); // Lv.1 段同样缩放：(5 + 4*4) * 8
+  });
+
+  it('脏 loopScale（非有限 / <= 0）防御回退 1', () => {
+    const state = createSimState(1);
+    state.progress.level = 11;
+    const need = 49; // 41 + 1*8
+
+    state.meta[WAVE_CLOCK_META_KEY] = { timelineSec: 10, loopCount: 0, loopScale: Number.NaN };
+    expect(xpToNext(state)).toBe(need);
+
+    state.meta[WAVE_CLOCK_META_KEY] = { timelineSec: 10, loopCount: 0, loopScale: Number.POSITIVE_INFINITY };
+    expect(xpToNext(state)).toBe(need);
+
+    state.meta[WAVE_CLOCK_META_KEY] = { timelineSec: 10, loopCount: 0, loopScale: 0 };
+    expect(xpToNext(state)).toBe(need);
+
+    state.meta[WAVE_CLOCK_META_KEY] = { timelineSec: 10, loopCount: 0, loopScale: -2 };
+    expect(xpToNext(state)).toBe(need);
   });
 });
 

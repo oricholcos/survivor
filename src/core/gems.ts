@@ -8,10 +8,13 @@
 
 import { pushEvent } from './events';
 import { distSq } from './math';
+import { WAVE_CLOCK_META_KEY, type WaveClockInput } from './waves';
 import type { Drop, Enemy, SimState, Vec } from './types';
 
 /**
- * 升到下一级所需经验：支持两段线性递增与软上限，同时保留旧指数回退。
+ * 升到下一级所需经验：两段线性曲线无限延续（无 40 级平顶），结果乘当前波次时钟的
+ * loopScale（无尽模式需求随循环同步膨胀；通关模式时钟 loopScale 恒 1，数值不变）。
+ * 同时保留旧指数回退。
  */
 export function xpToNext(state: SimState): number {
   const cfg = state.config;
@@ -19,19 +22,21 @@ export function xpToNext(state: SimState): number {
   if (cfg.xpGrowth !== undefined && cfg.xpTier1Step === undefined) {
     return cfg.xpBase * Math.pow(cfg.xpGrowth, level - 1);
   }
-  const capLevel = cfg.xpCapLevel ?? 40;
-  const capVal = cfg.xpCap ?? 280;
-  if (level > capLevel) {
-    return capVal;
-  }
   const base = cfg.xpBase ?? 5;
   const step1 = cfg.xpTier1Step ?? 4;
   const step2 = cfg.xpTier2Step ?? 8;
+  // 无尽需求膨胀系数：读 waves 每帧存入 meta 的波次时钟（WAVE_CLOCK_META_KEY）；
+  // 缺失 / 非有限 / <= 0（脏数据）一律按 1 处理。
+  const clock = state.meta[WAVE_CLOCK_META_KEY] as WaveClockInput | undefined;
+  const loopScale =
+    clock !== undefined && Number.isFinite(clock.loopScale) && clock.loopScale > 0
+      ? clock.loopScale
+      : 1;
   if (level <= 10) {
-    return base + (level - 1) * step1;
+    return (base + (level - 1) * step1) * loopScale;
   }
   const tier1Max = base + 9 * step1;
-  return tier1Max + (level - 10) * step2;
+  return (tier1Max + (level - 10) * step2) * loopScale;
 }
 
 /**

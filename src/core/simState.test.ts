@@ -23,8 +23,6 @@ describe('createSimState', () => {
       xpBase: 5,
       xpTier1Step: 4,
       xpTier2Step: 8,
-      xpCapLevel: 40,
-      xpCap: 280,
       gemFlySpeed: 600,
       dropFlySpeed: 600,
       repairDropChance: 0.02,

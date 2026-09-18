@@ -11,7 +11,7 @@ import wavesJson from '../data/waves.json';
 import type { EnemyTypeData } from './enemies';
 import { createSimState } from './simState';
 import type { Enemy, SimState } from './types';
-import { calculateSpawnMargin, updateWaves, type WavesConfig } from './waves';
+import { calculateSpawnMargin, updateWaves, WAVE_CLOCK_META_KEY, type WavesConfig } from './waves';
 
 /** 测试夹具敌人表：mook=杂兵 hp10、brute=爆发怪 hp40、bigboss=首领 hp900。 */
 const TYPES: Record<string, EnemyTypeData> = {
@@ -273,6 +273,28 @@ describe('clock 参数（T3.4 消费面）', () => {
     expect(state.enemies.length).toBe(2);
     expect(state.enemies[0].xp).toBe(2); // mook base xp 1 * 2.0 = 2
     expect(state.enemies[1].xp).toBe(2);
+  });
+
+  it('meta 契约：每帧把收到的 clock 原样存入 meta[WAVE_CLOCK_META_KEY]；clock 缺省与 over 停摆不写', () => {
+    const config = makeConfig([{ fromSec: 0, spawn: { enemy: 'mook', perSec: 1 } }]);
+
+    // 有 clock：原样存引用（gems.xpToNext 据此读 loopScale）
+    const withClock = createSimState(31);
+    const clock = { timelineSec: 560, loopCount: 2, loopScale: 4 };
+    updateWaves(withClock, 1000, config, TYPES, clock);
+    expect(withClock.meta[WAVE_CLOCK_META_KEY]).toBe(clock); // 存引用本身
+    expect(withClock.meta[WAVE_CLOCK_META_KEY]).toEqual({ timelineSec: 560, loopCount: 2, loopScale: 4 });
+
+    // 无 clock（默认线性时钟）不写：gems 侧按缺失回退 loopScale=1
+    const bare = createSimState(31);
+    updateWaves(bare, 1000, config, TYPES);
+    expect(bare.meta[WAVE_CLOCK_META_KEY]).toBeUndefined();
+
+    // over 停摆：提前 return 不写（此时经验也不再结算，读旧值无副作用）
+    const over = createSimState(31);
+    over.over = 'defeat';
+    updateWaves(over, 1000, config, TYPES, { timelineSec: 1, loopCount: 0, loopScale: 2 });
+    expect(over.meta[WAVE_CLOCK_META_KEY]).toBeUndefined();
   });
 });
 
