@@ -88,9 +88,9 @@ const ENEMY_GRID = new SpatialHash<Enemy>(64);
 
 /** 开局排除的近程武器（射程过近，不适合作为首把武器）。 */
 export const EXCLUDED_INITIAL_WEAPONS = [
-  'dragon_breath',
   'scatter',
   'heat_beam',
+  'seismic_wall',
 ] as const;
 
 /** 开局候选初始武器池（5 把远程武器，按字典序固定）。 */

@@ -9,8 +9,13 @@ import type { WeaponStats } from '../weapons';
 /** 武器行为分支：fire = 发射一波（可能发射 0 枚，如无目标时）；可选生命周期钩子见各字段注释。 */
 export interface WeaponBehavior {
   name: string;
-  /** 发射一波。stats 为解析后的武器数值；weaponId 供行为回写 weaponStates（如无目标归 0 冷却）。 */
-  fire(state: SimState, weaponId: string, stats: WeaponStats): void;
+  /**
+   * 发射一波。stats 为解析后的武器数值；weaponId 供行为回写 weaponStates（如无目标归 0 冷却）。
+   * forcedTarget（可选）：强制指定的目标（灼热光束【协同开火】触发全队齐射时传入）——
+   * 带目标锁定的行为以它覆盖自身 findTarget 调用点，其余内部逻辑（连射跟发波、分裂、
+   * 弹跳等）照常；不锁定组（霰弹/震波壁垒）与无目标的武器忽略该参数。
+   */
+  fire(state: SimState, weaponId: string, stats: WeaponStats, forcedTarget?: Enemy): void;
   /**
    * 每帧行为更新（可选）：updateWeapons 在冷却判定之前调用，仅当某把已拥有武器指向该行为
    * （数据表缺该武器 def 时跳过）。适合轨道弹旋转、召唤物跟随等逐帧持续逻辑。

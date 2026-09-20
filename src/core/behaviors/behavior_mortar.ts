@@ -48,8 +48,8 @@
 //   ① 爆炸伤害：落点 aoeRadius（圆相交语义）内所有存活敌人 dealDamage(proj.damage ×
 //      splashFactor)，splashFactor=1 即全额；
 //   ② 眩晕：stunBlast=1 → 幸存者 applyEffect('stun')（致死一击不附着，尸体无意义）；
-//   ③ 黑洞：blackHole=1 → 幸存者 applyEffect('blackhole', {centerX/centerY=落点,
-//      pullPerSec=表值})——先炸后拉：幸存者被持续向爆心拉拽聚怪；
+//   ③ 黑洞：blackHole=1 → 幸存者 applyEffect('blackhole', {centerX/centerY=落点})——
+//      先炸后拉：幸存者向爆心位移至多 120px（G2a 治理），同一敌人 2s 内免疫再次拉拽；
 //   ④ 燃烧地：burnGround=1 → spawnZone（radius=aoeRadius×burnRadiusFactor、
 //      durationMs/tickMs（含 dot 频率 ÷ 乘区）/damagePerTick/effectKind='burn' 全部表值）；
 //   ⑤ 分裂：splitReady=1 且本弹是母弹（splitReady=0 的次级弹到此为止）→ 从爆炸点向
@@ -202,9 +202,11 @@ function blastData(d: Record<string, number>): Record<string, number> {
  * 无敌人在场 → 返回 false（fire 据此写冷却归 0；重放波静默跳过）。弹上快照本波数值/开关
  * （死亡钩子拿不到 stats，从弹上读回；升级瞬间已飞行的旧弹按发射时数值结算）。
  * projectileSpeed 为飞行时间制占位（表值 0），行为不消费。
+ * forcedTarget（可选，灼热光束协同开火强制指定）：以它为密度锚点（落点预测照常），
+ * 多射壳体环/分裂/燃烧地等内部逻辑照常。
  */
-function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats): boolean {
-  const target = densestEnemy(state, numOr0(stats.densityRadius));
+function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats, forcedTarget?: Enemy): boolean {
+  const target = forcedTarget ?? densestEnemy(state, numOr0(stats.densityRadius));
   if (!target) {
     return false;
   }
@@ -281,9 +283,10 @@ export const behavior: WeaponBehavior = {
    * 发射一波曲射炮弹（见 fireVolley）。无敌人在场：不开火并把该武器 cooldownMs 归 0
    * （解释器随后 += interval 推进节奏，本帧内不重复触发）。首波发出后把连射跟发波排入
    * 待发队列（重放时重新密度选点 + 重新解提前量，再发完整一波壳体）。
+   * forcedTarget 为协同开火强制指定目标（仅主波消费：连射跟发波重放走自身目标选择）。
    */
-  fire(state, weaponId, stats) {
-    if (!fireVolley(state, weaponId, stats)) {
+  fire(state, weaponId, stats, forcedTarget?) {
+    if (!fireVolley(state, weaponId, stats, forcedTarget)) {
       const ws = state.weaponStates[weaponId];
       if (ws) {
         ws.cooldownMs = 0; // 归 0：解释器随后 += interval 推进节奏，本帧内不重复触发
@@ -338,7 +341,8 @@ export const behavior: WeaponBehavior = {
       }
     }
 
-    // ③ 黑洞：幸存者即时拉拽至落点（先炸后拉：瞬间聚怪，无持续时间）。
+    // ③ 黑洞：幸存者向爆心位移至多 120px（先炸后拉；同一敌人 2s 内免疫再次拉拽，
+    //    详见 core/effects.ts 的 G2a 拉拽治理——多射/分裂多次爆炸不再反复瞬移怪群）。
     if (d.blackHole === 1) {
       for (let i = 0; i < hits.length; i++) {
         const e = hits[i];

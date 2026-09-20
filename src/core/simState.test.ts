@@ -1,6 +1,6 @@
 // src/core/simState.test.ts —— SimState 工厂与 step 推进骨架的行为契约。
 import { describe, expect, it } from 'vitest';
-import { createSimState } from './simState';
+import { BATTLE_RNG_META_KEY, createSimState } from './simState';
 import { step } from './step';
 import type { SimState } from './types';
 
@@ -41,7 +41,8 @@ describe('createSimState', () => {
     expect(state.weaponStates).toEqual({});
     expect(state.hooks).toEqual([]);
     expect(state.events).toEqual([]);
-    expect(state.meta).toEqual({});
+    // meta 随局仅建立第二独立随机流（战斗期掷点专用，种子 = 会话种子 XOR 0x9E3779B9）。
+    expect(Object.keys(state.meta)).toEqual([BATTLE_RNG_META_KEY]);
     expect(state.timeMs).toBe(0);
     expect(state.over).toBeNull();
     expect(state.progress).toEqual({ xp: 0, level: 1 });

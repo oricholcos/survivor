@@ -25,6 +25,13 @@ const THROTTLE_MIN_INTERVAL_MS: Record<string, number> = {
   victory: 1000,
   defeat: 1000,
   uiClick: 80,
+  // 蓄能狙击一次性反馈（G5）：core 推送层不节流（稀有事件），音频侧仍留保守间隔
+  // 防多弹同帧爆头/处决叠音糊爆。
+  crit: 80,
+  execute: 150,
+  // 协同开火触发音（G6）：同 crit/execute 约定（core 一次性推送不节流），音频侧 300ms
+  // 保守间隔——协同触发间隔 ≥ 数秒，仅防极端叠音。
+  coordinated: 300,
 };
 const THROTTLE_DEFAULT_MIN_INTERVAL_MS = 40;
 const THROTTLE_WINDOW_MS = 20; // ≈一帧（60fps）
@@ -275,6 +282,31 @@ const VOICES: Record<string, (c: AudioContext, t: number, vol: number) => void> 
   uiClick(c, t, vol) {
     // 按钮轻点：短促高频正弦。
     tone(c, t, { type: 'sine', freq: 1150, dur: 0.045, peak: 0.12 * vol });
+  },
+
+  crit(c, t, vol) {
+    // 爆头金属脆响（G5）：短促高亢——高频方波瞬间下滑（金属「叮」）+ 高倍频正弦泛音
+    // + 窄带通噪声瞬态（敲击质感）。音量克制（峰值 ≤0.11），一发一个脆点不喧宾夺主。
+    tone(c, t, { type: 'square', freq: 2350, freqEnd: 1450, dur: 0.07, peak: 0.11 * vol });
+    tone(c, t, { type: 'sine', freq: 3520, freqEnd: 2800, dur: 0.05, peak: 0.07 * vol });
+    noiseHit(c, t, { filter: 'bandpass', freq: 5200, q: 2.5, dur: 0.035, peak: 0.1 * vol });
+  },
+
+  execute(c, t, vol) {
+    // 死刑宣告「斩落」声（G5）：低沉——锯齿波低频下坠（220→55Hz，刀锋落下的重量感）
+    // + 低通噪声扫落（「唰」）+ 亚低频正弦收尾（落地震底）。
+    tone(c, t, { type: 'sawtooth', freq: 220, freqEnd: 55, dur: 0.32, peak: 0.2 * vol, attack: 0.004 });
+    noiseHit(c, t, { filter: 'lowpass', freq: 900, freqEnd: 160, dur: 0.22, peak: 0.13 * vol });
+    tone(c, t, { type: 'sine', freq: 110, freqEnd: 40, dur: 0.4, peak: 0.16 * vol, attack: 0.01 });
+  },
+
+  coordinated(c, t, vol) {
+    // 协同开火「蓄势-齐发」双音（G6）：前半 = 方波快速八度上滑（D5→D6，全队蓄势感），
+    // 后半 = 三角波 D6 + A6 纯五度双音齐发（明亮收束：「全队同时开火」）。与爆头金属
+    // 脆响 / 处决斩落声色相区分；音量克制（峰值 ≤0.12）。
+    tone(c, t, { type: 'square', freq: 587.33, freqEnd: 1174.66, dur: 0.08, peak: 0.08 * vol });
+    tone(c, t, { type: 'triangle', freq: 1174.66, delay: 0.085, dur: 0.18, peak: 0.12 * vol });
+    tone(c, t, { type: 'triangle', freq: 1760, delay: 0.085, dur: 0.14, peak: 0.07 * vol });
   },
 };
 

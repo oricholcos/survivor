@@ -15,8 +15,9 @@ import './behaviors/index'; // 自动注册所有武器行为
 // 加载效果表
 loadEffectDefs();
 
+// 任务三：蓄能狙击已移出多射/连射/分裂三张通用牌的 applyTo（恒单发、无连射调度、
+// 无分裂），弹道机制闭环只覆盖仍在池内的四把弹道武器。
 const BALLISTIC_WEAPON_IDS = [
-  'charge_sniper',
   'scatter',
   'homing_missile',
   'mortar',
@@ -66,7 +67,7 @@ function fireWeapon(state: SimState, weaponId: string, cards: string[] = []): We
   return stats;
 }
 
-describe('M1.1: 连射队列 (burst_shot) 5 把弹道武器全闭环', () => {
+describe('M1.1: 连射队列 (burst_shot) 4 把弹道武器全闭环', () => {
   for (const wid of BALLISTIC_WEAPON_IDS) {
     describe(`武器 ${wid} 连射队列行为`, () => {
       it('开火后调用 scheduleBurstWaves 入队，且波间隔严格为 150ms', () => {
@@ -154,7 +155,7 @@ describe('M1.1: 连射队列 (burst_shot) 5 把弹道武器全闭环', () => {
 
 });
 
-describe('M1.2: 分裂机制 (split_shot) 5 把弹道武器全闭环', () => {
+describe('M1.2: 分裂机制 (split_shot) 4 把弹道武器全闭环', () => {
   for (const wid of BALLISTIC_WEAPON_IDS) {
     describe(`武器 ${wid} 分裂次级弹规范`, () => {
       it('次级弹伤害为主弹 20%，且明确标记禁止分裂与次级标识', () => {
@@ -238,22 +239,7 @@ describe('M1.2: 分裂机制 (split_shot) 5 把弹道武器全闭环', () => {
   }
 });
 
-describe('M1.3: DoT 频率与范围/持续伤害 6 把武器闭环', () => {
-  it('dragon_breath: dot_freq 正确缩短本体灼烧与酸池 tick 间隔', () => {
-    const state = createSimState(1);
-    const e = makeEnemy(state, 360, 1100);
-    fireWeapon(state, 'dragon_breath', ['dot_freq', 'acid_pool']);
-    expect(e.effects[0].kind).toBe('burn');
-    expect(e.effects[0].data.tickMs).toBeCloseTo(500 / 1.3, 6);
-
-    for (let i = 0; i < 9; i++) {
-      fireWeapon(state, 'dragon_breath', ['dot_freq', 'acid_pool']);
-    }
-    const zones = listZones(state);
-    expect(zones).toHaveLength(1);
-    expect(zones[0].tickMs).toBeCloseTo(500 / 1.3, 6);
-  });
-
+describe('M1.3: DoT 频率与范围/持续伤害 5 把武器闭环', () => {
   it('heat_beam: dot_freq 正确缩短灼痕 tick 间隔', () => {
     const state = createSimState(1);
     const e = makeEnemy(state, 360, 1000);

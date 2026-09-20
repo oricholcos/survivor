@@ -102,6 +102,13 @@ export interface Enemy {
   shape: string;
   effects: EffectInstance[];
   dead: boolean;
+  /**
+   * 黑洞拉拽免疫截止时刻（state.timeMs 时间轴绝对毫秒；缺省/过期 = 可被拉拽）。
+   * G2a 拉拽治理：被黑洞拉拽过（含位移为 0 的贴心命中）的敌人 2s 内免疫再次拉拽，
+   * 防止多射/分裂迫击炮的每秒多次爆炸把怪群反复瞬移。随敌人死亡自然回收（字段随
+   * 实体一起废弃，零泄漏）；仅 core/effects.ts 的 blackhole 即时结算读写。
+   */
+  blackholePulledUntilMs?: number;
 }
 
 /** 投射物（武器发射的子弹）。 */

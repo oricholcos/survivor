@@ -14,8 +14,10 @@
 // - 'add'：同 kind 重复施加 → stacks +1（上限 maxStacks 钳制），untilMs 同样重算
 //   （EffectInstance 只有单一 untilMs，重复施加即重新武装计时）。
 //
-// 即时效果（durationMs <= 0，当前仅 knockback）：不挂实例，apply 时立即按
-// data.dirX/dirY（单位向量，由武器行为提供，如背向来源）× force 推移载体位置；
+// 即时效果（durationMs <= 0，当前仅 knockback / blackhole）：不挂实例，apply 时立即结算。
+// knockback 按 data.dirX/dirY（单位向量，由武器行为提供，如背向来源）× force 推移载体位置；
+// blackhole（G2a 拉拽治理）向 data.centerX/centerY 方向位移至多 BLACKHOLE_MAX_PULL_PX，
+// 且同一敌人 BLACKHOLE_PULL_IMMUNITY_MS 内免疫再次拉拽（Enemy.blackholePulledUntilMs）。
 // 敌人钳制在 [spawnLineY, wallLineY] × [0, width] 内（不穿墙、不出边界）。
 //
 // 叠层乘区规则（锁定）：
@@ -24,6 +26,8 @@
 // - intervalFactor（overheat）：每实例 factor^stacks（maxStacks=1 即定义值）。
 //
 // 数值参数读取优先级：effect.data 同名键（逐实例覆盖，M2 武器按需传入）→ EffectDef 定义值。
+// 持续时长 durationMs 同样支持 data 逐实例覆盖（震波壁垒「震荡加深」）：data.durationMs
+// （有限 > 0）优先于 def 定义值；Boss 眩晕减半作用于覆盖后的有效时长（见 applyEffect）。
 // 确定性契约：不用 rng；性能契约：tick 零大对象分配（实例数组交换删除、无逐帧临时对象）。
 // 纯 TypeScript，禁止 import phaser 与任何 DOM/BOM（ESLint 强制）。
 // 注意：本模块与 projectiles.ts 存在双向引用（dealDamage 调 killHooks / 命中调 dealDamage），
@@ -137,6 +141,22 @@ function isDeadEnemy(bearer: EffectBearer): boolean {
   return b.dead === true;
 }
 
+// —— 黑洞拉拽治理常量（G2a；设计常量硬编码并注释，非数据表数值） ——
+
+/**
+ * 单次黑洞拉拽的最大位移 px（G2a）：「拉至爆心」改为「向爆心位移至多 120px」——
+ * 位移距离 = min(当前与爆心距离, 120)，方向指向爆心，位移后照常场地 clamp。
+ * 设计目的：多射/分裂迫击炮每秒多次爆炸时，怪群不再被反复瞬移到爆心，
+ * 只产生有限的向心聚拢，保全全队弹道与灼热光束的锁定连续性。
+ */
+const BLACKHOLE_MAX_PULL_PX = 120;
+
+/**
+ * 黑洞拉拽免疫时长 ms（G2a）：被拉拽过（含贴心命中位移为 0）的敌人在该时长内免疫
+ * 再次拉拽。实现为 Enemy.blackholePulledUntilMs（随敌人死亡自然回收，零泄漏）。
+ */
+const BLACKHOLE_PULL_IMMUNITY_MS = 2000;
+
 /**
  * DoT tick 间隔（T5.3b dot 频率牌接线）：effect.data.tickMs（逐实例覆盖，附着点传入——
  * 如 dot 频率牌把该武器附着的 DoT tick 间隔 ÷1.3^张数）优先，否则 EffectDef 定义值。
@@ -177,9 +197,25 @@ function applyInstant(
     const cx = data?.centerX;
     const cy = data?.centerY;
     if (typeof cx === 'number' && typeof cy === 'number' && Number.isFinite(cx) && Number.isFinite(cy)) {
-      b.x = cx;
-      b.y = cy;
-      clampInArena(state, b);
+      // G2a per-enemy 免疫：被拉拽过（含位移为 0 的贴心命中）的敌人 2s 内免疫再次拉拽
+      // （多射/分裂下每秒多次爆炸不再反复瞬移同一目标）。免疫戳记挂在 Enemy 可选字段上，
+      // 随敌人死亡自然回收；非敌人载体（实践中不存在）无该字段恒视为可拉。
+      const e = bearer as { blackholePulledUntilMs?: number };
+      if (state.timeMs < (e.blackholePulledUntilMs ?? 0)) {
+        return; // 免疫期内：完全不结算（不位移、不刷新戳记）
+      }
+      // 「拉至爆心」→「向爆心位移至多 BLACKHOLE_MAX_PULL_PX」：方向指向爆心，
+      // 距离 = min(当前距离, 上限)；已在爆心（dist = 0）则不位移。
+      const dx = cx - b.x;
+      const dy = cy - b.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 1e-9) {
+        const move = Math.min(dist, BLACKHOLE_MAX_PULL_PX);
+        b.x += (dx / dist) * move;
+        b.y += (dy / dist) * move;
+        clampInArena(state, b);
+      }
+      e.blackholePulledUntilMs = state.timeMs + BLACKHOLE_PULL_IMMUNITY_MS;
     }
     return;
   }
@@ -294,8 +330,16 @@ export function applyEffect(
     return;
   }
 
+  // 持续时长：data.durationMs（有限 > 0）逐实例覆盖 def 定义值（与 tickMs 逐实例覆盖同款
+  // 优先级——覆盖值不能把持续效果变成即时效果，也不能把即时效果变成持续效果）。
+  // Boss 眩晕减半作用于覆盖后的有效时长：普通 800 → 400；震荡加深覆盖 950 → 475。
+  const dataDurationMs = data?.durationMs;
+  const effectiveDuration =
+    typeof dataDurationMs === 'number' && Number.isFinite(dataDurationMs) && dataDurationMs > 0
+      ? dataDurationMs
+      : def.durationMs;
   const isBoss = (bearer as { isBoss?: boolean }).isBoss === true;
-  const durationMs = defId === 'stun' && isBoss ? 400 : def.durationMs;
+  const durationMs = defId === 'stun' && isBoss ? effectiveDuration * 0.5 : effectiveDuration;
 
   const list = listOf(bearer);
 

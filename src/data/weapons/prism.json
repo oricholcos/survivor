@@ -20,7 +20,7 @@
     {
       "id": "bounce_up",
       "name": "弹跳+1",
-      "description": "弹跳次数 +1（可叠 5 次，突破后上限 8 次）",
+      "description": "链弹弹跳次数 +1（基础 3 跳）：每次命中后向弹跳范围内最近的未命中敌人弹跳，每跳伤害 ×0.8 递减（可叠 5 次，突破后上限 8 次）",
       "maxCount": 5,
       "hardMax": 8,
       "params": [{ "key": "chainCount", "value": 1, "op": "add" }]
@@ -28,35 +28,35 @@
     {
       "id": "chain_lightning",
       "name": "连锁闪电",
-      "description": "命中时对周围至多 2 个敌人放出闪电（4 伤）",
+      "description": "命中时对 90px 内至多 2 个尚未被本弹直击过的敌人各放出 4 伤闪电（不占用弹跳次数；被电过的敌人仍可被后续弹跳命中；一次性）",
       "once": true,
       "params": [{ "key": "chainLightning", "value": 1, "op": "set" }]
     },
     {
       "id": "frost_venom",
       "name": "冰毒附着",
-      "description": "命中的幸存敌人同时附着冰缓与中毒",
+      "description": "命中的幸存敌人同时附着冰缓（移速 ×0.75、持续 2.5s）与中毒（每 1s 一跳、每跳 2 伤、持续 5s、至多 3 层）（dot 频率牌加快中毒跳伤；一次性）",
       "once": true,
       "params": [{ "key": "frostVenom", "value": 1, "op": "set" }]
     },
     {
       "id": "focus_return",
       "name": "聚能折返",
-      "description": "弹跳链终结时朝角色发射宽体贯穿光梭；基础伤害100%，每跳额外增伤25%",
+      "description": "弹跳链终结（次数用尽或无新目标）时，从终结点朝角色发射宽体贯穿光梭：伤害 = 基础伤害 ×（1 + 25% × 已命中跳数），沿途敌人全部受击且可重复命中已打过的目标（一次性）",
       "once": true,
       "params": [{ "key": "focusReturn", "value": 1, "op": "set" }]
     },
     {
       "id": "prism_recurse",
       "name": "棱镜往复",
-      "description": "解除单次命中限制；周围无新敌人时可在已命中敌人间折返弹跳",
+      "description": "解除弹跳『不重复命中』限制：弹跳范围内无未命中敌人时，可折返弹向已命中的其他敌人（每次折返照常消耗弹跳次数并按递减系数结算；一次性）",
       "once": true,
       "params": [{ "key": "prismRecurse", "value": 1, "op": "set" }]
     },
     {
       "id": "link_stable",
       "name": "链路稳定",
-      "description": "伤害递减系数 +0.05（可叠 3 次，突破后上限 4 次）",
+      "description": "链弹每跳伤害衰减更缓：递减系数 +0.05/张（×0.8 → ×0.85 → ×0.9 → ×0.95…；可叠 3 次，突破后上限 4 次）",
       "maxCount": 3,
       "hardMax": 4,
       "params": [{ "key": "falloff", "value": 0.05, "op": "add" }]

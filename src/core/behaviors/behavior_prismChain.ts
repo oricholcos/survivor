@@ -222,10 +222,11 @@ export function nearestChainTarget(
  * 发射一波（完整 projectileCount 条链弹，多射/连射重放共用）：findTarget 锁定主目标 →
  * leadAim 提前量 → 从角色向预测点方向小角度扇形发射 N 条棱镜弹。无存活目标 → false。
  * 每枚弹 data 快照本波数值/开关（含分裂与 dot 频率覆盖参数；升级瞬间已飞行的旧弹按
- * 发射时数值结算）。
+ * 发射时数值结算）。forcedTarget（可选，灼热光束协同开火强制指定）：以它为首跳目标，
+ * leadAim 照常、后续弹跳/分裂/折返等内部逻辑照常。
  */
-function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats): boolean {
-  const target = findTarget(state);
+function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats, forcedTarget?: Enemy): boolean {
+  const target = forcedTarget ?? findTarget(state);
   if (!target) {
     return false;
   }
@@ -347,9 +348,10 @@ export const behavior: WeaponBehavior = {
    * 横向覆盖由弹跳链负责；弹跳跳转不加预测，见 onProjectileHit）。pierce 取表值 999
    * （寿命由弹上 chainsLeft 控制）；每枚弹 data 快照本波数值/开关。无存活目标：不发射并
    * 返回 false（fire 据此把该武器 cooldownMs 归 0——重试标记，与 piercing_bolt 同语义）。
+   * forcedTarget 为协同开火强制指定目标（仅主波消费：连射跟发波重放走自身目标选择）。
    */
-  fire(state, weaponId, stats) {
-    if (!fireVolley(state, weaponId, stats)) {
+  fire(state, weaponId, stats, forcedTarget?) {
+    if (!fireVolley(state, weaponId, stats, forcedTarget)) {
       const ws = state.weaponStates[weaponId];
       if (ws) {
         ws.cooldownMs = 0; // 归 0：解释器随后 += interval 推进节奏，本帧内不重复触发

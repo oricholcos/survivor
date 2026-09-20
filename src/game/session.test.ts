@@ -24,9 +24,9 @@ describe('开局初始武器随机选择契约', () => {
   ] as const;
 
   const EXPECTED_EXCLUDED = [
-    'dragon_breath',
     'scatter',
     'heat_beam',
+    'seismic_wall',
   ] as const;
 
   describe('候选池与排除池契约', () => {

@@ -298,3 +298,56 @@ describe('SpatialHash 均匀空间网格', () => {
     }
   });
 });
+
+describe('queryRect（F2 扫掠碰撞候选集粗查询）', () => {
+  it('返回「item 圆与矩形外扩 pad 相交」的全部 item：自身半径参与过滤，恰相切算相交', () => {
+    const a: Probe = { x: 100, y: 100, r: 10 };
+    const b: Probe = { x: 160, y: 100, r: 0 };
+    const c: Probe = { x: 300, y: 100, r: 5 };
+    const hash = makeHash(64, [
+      [a, a.x, a.y, a.r],
+      [b, b.x, b.y, b.r],
+      [c, c.x, c.y, c.r],
+    ]);
+    // 矩形 [140,180]×[90,110]，pad=6：
+    // a 圆心 (100,100) 距矩形 40（左界 140），10+6=16 < 40 → 不在；
+    // b 圆心 (160,100) 在矩形内、r=0 → 在；
+    // c 圆心 (300,100) 距矩形 120（右界 180），5+6=11 < 120 → 不在。
+    const hits = hash.queryRect(140, 90, 180, 110, 6);
+    expect(hits).toEqual([b]);
+
+    // 恰好相切：c 移到距矩形 11 处（180+11=191，r5+pad6=11）→ 相交。
+    hash.insert(c, 191, 100, 5);
+    expect(hash.queryRect(140, 90, 180, 110, 6)).toEqual([b, c]);
+  });
+
+  it('零漏判（扫掠必要条件）：与「段 AABB ⊕ (敌半径+弹半径)」胶囊相交的敌圆必在返回集内', () => {
+    // 模拟弹丸侧用法：矩形 = 位移线段 AABB、pad = 弹半径；敌圆与胶囊（AABB ⊕
+    // (敌 r + 弹 r)）相交 ⟺ clampDist(敌心, AABB) <= 敌 r + 弹 r —— 本查询按各敌
+    // 自身半径逐项过滤，对任意敌半径组合零漏判。
+    const probe: Probe = { x: 0, y: 0, r: 34 }; // 敌最大半径量级（boss_1）
+    const far: Probe = { x: 0, y: 0, r: 0 };
+    const hash = new SpatialHash<Probe>(64);
+    hash.insert(probe, 500, 620, 34);
+    hash.insert(far, 500, 900, 0);
+    // 位移线段 (0,600)→(480,600)（AABB [0,480]×[600,600]），pad=6：
+    // probe 圆心 (500,620)：clamp 最近点 (480,620)，距离 20 ≤ 34+6=40 → 返回；
+    // far 圆心 (500,900)：距离 300 > 0+6 → 不返回。
+    const hits = hash.queryRect(0, 600, 480, 600, 6);
+    expect(hits).toEqual([probe]);
+  });
+
+  it('min/max 颠倒自动交换；非法输入（NaN/负 pad）返回空；clear 后查询为空', () => {
+    const a: Probe = { x: 100, y: 100, r: 5 };
+    const hash = makeHash(64, [[a, a.x, a.y, a.r]]);
+    expect(hash.queryRect(180, 110, 140, 90, 6)).toEqual([]); // 颠倒但距离远 → 空
+    expect(hash.queryRect(90, 90, 110, 110, 6)).toEqual([a]); // 正常命中
+
+    expect(hash.queryRect(Number.NaN, 0, 10, 10, 6)).toEqual([]);
+    expect(hash.queryRect(0, 0, 10, 10, -1)).toEqual([]);
+    expect(hash.queryRect(90, 90, 110, 110, 6)).toEqual([a]);
+
+    hash.clear();
+    expect(hash.queryRect(90, 90, 110, 110, 6)).toEqual([]);
+  });
+});

@@ -28,7 +28,7 @@ export interface CardData {
   once?: boolean;
   /** 互斥：持有本牌期间从该武器牌池移除的牌 id。 */
   excludes?: string[];
-  /** per-武器前置牌映射：weaponId → 前置牌 id（不在表内的武器无前置，如龙息天然可用 dot频率）。 */
+  /** per-武器前置牌映射：weaponId → 前置牌 id（不在表内的武器无前置）。 */
   requires?: Record<string, string>;
 }
 

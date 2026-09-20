@@ -47,7 +47,7 @@ export interface WeaponCardDef {
   hardMax?: number;
   /** 纯布尔一次性牌：true = 拿到一张后从牌池移除（解锁前后一致，重复拿无意义）。 */
   once?: boolean;
-  /** 互斥：持有本牌（count>0）期间，从该武器牌池移除列出的牌 id（如龙息模式 → 多射/连射/分裂）。 */
+  /** 互斥：持有本牌（count>0）期间，从该武器牌池移除列出的牌 id（质变牌隔离通用成长牌用）。 */
   excludes?: string[];
   /** 前置牌 id：该武器已持有 ≥1 张 requiresCard 才进牌池（如 dot 频率需先拿对应附着牌；null = 无前置）。 */
   requiresCard?: string | null;
@@ -130,7 +130,7 @@ export function availableCards(def: { cards: WeaponCardDef[] }, ws: { cards: Rec
       continue; // 前置未满足（前置条件解锁后仍生效）
     }
     if (excluded.has(card.id)) {
-      continue; // 被已持有牌互斥（如龙息模式 → 多射/连射/分裂）
+      continue; // 被已持有牌互斥（excludes 机制）
     }
     out.push(card);
   }
@@ -192,7 +192,7 @@ export function buildWeaponStats(
 /**
  * dot 频率乘区助手（T5.3a 只做助手+单测，行为接线在下一任务）：
  * 该武器 dot_freq 牌的 value^count（无牌/数据表缺武器 → 1）。消费约定：该武器附着
- * 持续伤害效果时，效果实例的 tick 间隔 ÷ 本值（如龙息灼烧、燃烧云、燃烧地、冰毒等）。
+ * 持续伤害效果时，效果实例的 tick 间隔 ÷ 本值（如燃烧云、燃烧地、冰毒等）。
  */
 export function dotTickMultiplier(
   state: SimState,
@@ -215,14 +215,14 @@ export function dotTickMultiplier(
 // 语义（锁定，与任务书一致）：
 // - burst_shot 每张给 stats.burstWaves +1（add 乘区，无牌时键缺失按 0）——语义为「跟发波数」：
 //   首波开火时即时发射，其后 burstWaves 波按 stats.burstIntervalMs（=150，表值）逐波延迟跟发；
-//   「每颗弹体跟发 1 波」（cards.json 牌描述）即 1 张牌 = 1 个跟发波。
+//   「开火后跟发 1 波完整齐射」（cards.json 牌描述，逐武器文案由 upgrade.ts 生成）即
+//   1 张牌 = 1 个跟发波（重放 = 完整 projectileCount 的一波，非每颗弹体各跟一发）。
 // - 实现为 meta 待发波队列：fire 发完首波后调 scheduleBurstWaves 把跟发波（各带开火时刻的
 //   stats 快照）入队；各行为的 update 钩子每帧调 consumeDueBurstWaves，到期波以
 //   「重新执行 fire 的目标选择与散射逻辑」重放（快照 stats + 重放时重新选目标——锁定语义，
 //   手感自然；无目标时该波静默跳过、不改武器冷却）。
 // - 与多射联动：重放走同一 fireVolley，每波都是完整 projectileCount 颗。
 // - 不吃多射/连射的次级弹（分裂）不经本队列：分裂由行为钩子直接 spawn。
-// - 龙息模式互斥兜底：stats.dragonBreath >= 1 时不排波（霰弹龙息模式不发弹丸）。
 // - 到期追补：一次 update 消费所有 dueAtMs <= 当前时刻的波（长帧追赶，与 effects/zones 同款）。
 // - 队列条目按 weaponId+behavior 认领（同一行为可服务多把武器：重放按条目自带的 weaponId
 //   与 stats 快照执行，互不串扰）；队列整体存于单一 meta 键（FIFO、条目量 = 未到期波数，有界）。
@@ -248,7 +248,7 @@ function statOr0(stats: Record<string, number>, key: string): number {
 
 /**
  * fire 发完首波后调用：按 stats.burstWaves（跟发波数）把后续波入 meta 队列，第 k 波到期时刻
- * = 当前时刻 + k × stats.burstIntervalMs。无牌（burstWaves <= 0）/ 龙息模式 / 脏波间隔
+ * = 当前时刻 + k × stats.burstIntervalMs。无牌（burstWaves <= 0）/ 脏波间隔
  * （<= 0 或非有限）→ 不排波。每波条目各持一份 stats 快照（浅拷贝）。
  */
 export function scheduleBurstWaves(
@@ -258,7 +258,7 @@ export function scheduleBurstWaves(
   stats: Record<string, number>,
 ): void {
   const waves = Math.round(statOr0(stats, 'burstWaves'));
-  if (waves <= 0 || statOr0(stats, 'dragonBreath') >= 1) {
+  if (waves <= 0) {
     return;
   }
   const interval = statOr0(stats, 'burstIntervalMs');

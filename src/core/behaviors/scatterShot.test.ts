@@ -1,8 +1,7 @@
 // src/core/behaviors/scatterShot.test.ts —— 扇面霰弹行为契约（T5.3a 牌池制更新）：
 // 扇形发射（弹数/全出自角色/夹角 ≤ 半扇角/对称/短程 ttl）、中心更密（平方分布）、
-// 专属牌四节点（burnBullet/knockback/bounce_up/dragon_breath_mode 经 stats 开关注入；
-// 龙息模式与多射/连射/分裂互斥——牌池侧 excludes 保证，见 core/upgrade.test.ts）、
-// 数值全部来自 weapons/scatter.json 真实表（弹数成长走多射牌、扇角走范围强化牌）、
+// 专属牌三节点（burnBullet/knockback/bounce_up 经 stats 开关注入；数值全部来自
+// weapons/scatter.json 真实表（弹数成长走多射牌、扇角走范围强化牌）、
 // 行为零随机（任意种子可复现）。
 import { describe, expect, it } from 'vitest';
 import { loadEffectDefs } from '../../data/effects';
@@ -436,7 +435,7 @@ describe('可复现性（行为零随机：不依赖 rng，任意种子同结果
   });
 });
 
-// —— T5.3b 弹道机制接线：连射 / 分裂 / 龙息互斥兜底 / dot 频率 ——
+// —— T5.3b 弹道机制接线：连射 / 分裂 / dot 频率 ——
 
 /** 以真实数据表 scatter.json 的指定牌组在既有状态上开火一次（敌人由用例自行布置）。 */
 function fireScatter(state: SimState, cards: string[]): WeaponStats {

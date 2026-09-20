@@ -20,14 +20,14 @@
     {
       "id": "burn_cloud",
       "name": "燃烧云",
-      "description": "爆炸范围内的幸存敌人附着燃烧",
+      "description": "导弹爆炸时，爆炸半径（基础 70px，受范围强化）内的幸存敌人附着燃烧：每 0.5s 一跳、每跳 3 伤、持续 3s（dot 频率牌加快跳伤；一次性）",
       "once": true,
       "params": [{ "key": "burnCloud", "value": 1, "op": "set" }]
     },
     {
       "id": "prefer_elite",
       "name": "优先锁定",
-      "description": "优先锁定精英（Boss）目标",
+      "description": "开火时优先锁定最近的 Boss，场上无 Boss 则回落最近敌人（一次性）",
       "once": true,
       "params": [{ "key": "preferElite", "value": 1, "op": "set" }]
     }

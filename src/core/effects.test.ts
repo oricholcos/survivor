@@ -1,7 +1,7 @@
 // src/core/effects.test.ts —— 通用效果槽引擎逐类断言：
 // 燃烧逐 tick（间隔/总伤害/来源致死走 dealDamage）、击退冲量方向与钳制、减速乘区（含叠层
 // 与多实例 min）、眩晕停行动（行军不位移 / 攻击态不攻击且冷却冻结）、标记受伤加成、
-// 黑洞向心位移（不越过中心、墙线钳制）、过热间隔拉长与到期恢复、叠层/互斥/refresh 语义、
+// 黑洞向爆心位移（120px 上限 + 2s 免疫、墙线钳制）、过热间隔拉长与到期恢复、叠层/互斥/refresh 语义、
 // 同种子可复现、applyEffectsOnHit 模板实例化、弹丸命中集成（dealDamage 改道 + effectsOnHit）。
 // 数值来源：内置效果走 src/data/effects.json（经 loadEffectDefs 注册）；
 // 仅组合规则测试注入两个夹具定义（web / frostbite），数值仅存在于本测试文件。
@@ -413,27 +413,79 @@ describe('mark/corrode 受伤加成（dealDamage 乘区）', () => {
   });
 });
 
-describe('blackhole 黑洞：即时向心拉拽', () => {
-  it('施加瞬间将敌人坐标直接拉拽到 data 中心；不占效果槽', () => {
+describe('blackhole 黑洞：向爆心位移（G2a 拉拽治理）', () => {
+  it('向爆心位移至多 120px：距离 200 的敌人只向心移动 120（不再瞬移到爆心）；不占效果槽', () => {
     const state = createSimState(1);
     const e = makeEnemy(state, 300, 600);
     applyEffect(state, e, 'blackhole', { centerX: 500, centerY: 600 });
 
-    // 施加瞬间即移至中心，且不占效果槽
-    expect(e.x).toBe(500);
+    // dist 200 > 120：位移 = min(200, 120) = 120 → x 300→420，方向指向爆心
+    expect(e.x).toBe(420);
     expect(e.y).toBe(600);
-    expect(hasEffect(e, 'blackhole')).toBe(false);
+    expect(hasEffect(e, 'blackhole')).toBe(false); // 即时效果不挂实例
   });
 
-  it('拉扯受场地边界钳制：贴墙攻击态不被拉过墙线，两侧不超出屏幕', () => {
+  it('距离 ≤ 120px 时恰落至爆心；贴着爆心的敌人纹丝不动', () => {
     const state = createSimState(1);
-    const e = makeAttacker(state, {}); // y = wallLineY
+    const near = makeEnemy(state, 560, 600); // dist 60 ≤ 120
+    applyEffect(state, near, 'blackhole', { centerX: 500, centerY: 600 });
+    expect(near.x).toBe(500);
+    expect(near.y).toBe(600);
+
+    const atCenter = makeEnemy(state, 500, 600); // dist 0：无位移
+    applyEffect(state, atCenter, 'blackhole', { centerX: 500, centerY: 600 });
+    expect(atCenter.x).toBe(500);
+    expect(atCenter.y).toBe(600);
+  });
+
+  it('拉拽受场地边界钳制：贴墙攻击态不被拉过墙线，两侧不超出屏幕', () => {
+    const state = createSimState(1);
+    const e = makeAttacker(state, {}); // y = wallLineY（1160）
+    // 爆心在墙线下方 140px：位移 120 → 1280，被钳回墙线
     applyEffect(state, e, 'blackhole', { centerX: e.x, centerY: 1300 });
-    expect(e.y).toBe(state.layout.wallLineY); // 钳回墙线
+    expect(e.y).toBe(state.layout.wallLineY);
 
     const e2 = makeEnemy(state, 100, 500);
+    // 爆心在屏幕左外 150px：位移 120 → -20，被钳制在 0
     applyEffect(state, e2, 'blackhole', { centerX: -50, centerY: 500 });
-    expect(e2.x).toBe(0); // 钳制在 0
+    expect(e2.x).toBe(0);
+  });
+
+  it('per-enemy 拉拽免疫 2s：免疫期内第二次爆炸不再位移（连换爆心也不动）；到期后恢复可拉', () => {
+    const state = createSimState(1);
+    const e = makeEnemy(state, 300, 600);
+    applyEffect(state, e, 'blackhole', { centerX: 500, centerY: 600 });
+    expect(e.x).toBe(420); // 首次拉拽：向爆心位移 120
+
+    applyEffect(state, e, 'blackhole', { centerX: 500, centerY: 700 }); // 100ms 后再爆：免疫
+    expect(e.x).toBe(420);
+    expect(e.y).toBe(600);
+
+    state.timeMs += 1999; // 仍在免疫期内（首次拉拽 t=0，截止 t=2000）
+    applyEffect(state, e, 'blackhole', { centerX: 500, centerY: 700 });
+    expect(e.x).toBe(420);
+
+    state.timeMs += 1; // 恰过 2s：免疫到期
+    applyEffect(state, e, 'blackhole', { centerX: 500, centerY: 700 });
+    // 距爆心 hypot(80, 100) ≈ 128 > 120：向爆心位移 120（方向归一化）
+    const dist = Math.hypot(80, 100);
+    expect(e.x).toBeCloseTo(420 + (80 / dist) * 120, 6);
+    expect(e.y).toBeCloseTo(600 + (100 / dist) * 120, 6);
+  });
+
+  it('贴心命中（位移 0）同样盖免疫戳：2s 内换爆心的爆炸拉不动它', () => {
+    const state = createSimState(1);
+    const e = makeEnemy(state, 500, 600);
+    applyEffect(state, e, 'blackhole', { centerX: 500, centerY: 600 }); // 已在爆心：0 位移
+    expect(e.x).toBe(500);
+
+    applyEffect(state, e, 'blackhole', { centerX: 700, centerY: 600 }); // 2s 内换爆心：免疫
+    expect(e.x).toBe(500);
+    expect(e.y).toBe(600);
+
+    state.timeMs += 2000;
+    applyEffect(state, e, 'blackhole', { centerX: 700, centerY: 600 }); // 到期：可拉
+    expect(e.x).toBe(620); // dist 200 → 位移 120
   });
 });
 

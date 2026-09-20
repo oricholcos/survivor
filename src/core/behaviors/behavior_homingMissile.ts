@@ -162,9 +162,11 @@ function burnTickOverride(stats: WeaponStats): number {
  * stats.projectileCount 枚导弹，采用“主轴保底 + 侧翼交替展开”（单弹间距 stats.volleySpreadDeg / 2 或 12°，第 0 发锁定目标）。
  * 无存活目标 → 返回 false（fire 据此写冷却归 0；重放波静默跳过）。
  * pierce 恒 0（命中即毁，爆炸在死亡钩子统一结算）；每枚弹 data 快照本波数值/开关。
+ * forcedTarget（可选，灼热光束协同开火强制指定）：导弹 targetId 指向它（初速朝向它、
+ * 其后 update 钩子照常追踪制导）。
  */
-function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats): boolean {
-  const target = selectTarget(state, stats.preferElite === 1);
+function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats, forcedTarget?: Enemy): boolean {
+  const target = forcedTarget ?? selectTarget(state, stats.preferElite === 1);
   if (!target) {
     return false;
   }
@@ -223,9 +225,10 @@ export const behavior: WeaponBehavior = {
   /**
    * 发射一波：见 fireVolley。无存活目标：不发射，并把该武器 cooldownMs 归 0（与 piercing_bolt
    * 同语义的重试标记）。首波发出后把连射跟发波排入待发队列（重放时重新选目标再发完整一波）。
+   * forcedTarget 为协同开火强制指定目标（仅主波消费：连射跟发波重放走自身目标选择）。
    */
-  fire(state, weaponId, stats) {
-    if (!fireVolley(state, weaponId, stats)) {
+  fire(state, weaponId, stats, forcedTarget?) {
+    if (!fireVolley(state, weaponId, stats, forcedTarget)) {
       const ws = state.weaponStates[weaponId];
       if (ws) {
         ws.cooldownMs = 0; // 归 0：解释器随后 += interval 推进节奏，本帧内不重复触发

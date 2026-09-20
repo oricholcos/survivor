@@ -227,6 +227,81 @@ export class SpatialHash<T> {
     return result;
   }
 
+  /**
+   * 矩形范围查询（F2 弹丸扫掠碰撞的候选集粗查询）：返回「item 圆与查询矩形外扩 pad 后
+   * 的圆角盒相交」的全部 item，即 clampDist(中心, 矩形) <= item.radius + pad（恰好相切算
+   * 相交）。语义是「线段胶囊判交」的必要条件粗过滤（零漏判）：与线段胶囊（段 AABB ⊕
+   * (item.radius + pad)）相交的 item 圆，其圆心到段 AABB 的距离必 <= item.radius + pad
+   * （clamp 距离的逐轴分量均不超过该值），而 item 按自身圆 AABB（圆心 ± item.radius）
+   * 链接格子——该 AABB 必与「矩形 ⊕ pad」的坐标盒相交（逐轴：圆心在盒内平凡成立，
+   * 圆心在盒外则近端边缘已伸入 pad 余量内），故两者必共享至少一个格子，cell 遍历范围
+   * 只需按 pad 外扩即可覆盖全部过滤通过的 item，与 item 半径分布无关（无需按最大半径
+   * 额外外扩，热路径扫描格数与 queryCircle 同量级）。调用方须再做精确几何判定
+   * （如点-线段距离）。out 复用约定与 queryCircle 相同（结果仅在下一次对本实例的查询前
+   * 有效）。输入约定：坐标有限、pad >= 0；min/max 颠倒自动交换；非法输入
+   * （NaN/Infinity/负 pad）返回空数组。
+   */
+  queryRect(
+    minX: number,
+    minY: number,
+    maxX: number,
+    maxY: number,
+    pad: number,
+    out?: T[],
+  ): T[] {
+    const result = out ?? [];
+    result.length = 0;
+    if (
+      !Number.isFinite(minX) || !Number.isFinite(minY) ||
+      !Number.isFinite(maxX) || !Number.isFinite(maxY) ||
+      !(pad >= 0) || !Number.isFinite(pad)
+    ) {
+      return result;
+    }
+    if (minX > maxX) {
+      const t = minX;
+      minX = maxX;
+      maxX = t;
+    }
+    if (minY > maxY) {
+      const t = minY;
+      minY = maxY;
+      maxY = t;
+    }
+
+    const cs = this.cellSize;
+    const minCx = Math.floor((minX - pad) / cs);
+    const maxCx = Math.floor((maxX + pad) / cs);
+    const minCy = Math.floor((minY - pad) / cs);
+    const maxCy = Math.floor((maxY + pad) / cs);
+    const qid = ++this.queryId;
+    const { columns, px, py, pr, items, stamp } = this;
+
+    for (let cx = minCx; cx <= maxCx; cx++) {
+      const inner = columns.get(cx);
+      if (inner === undefined) continue;
+      for (let cy = minCy; cy <= maxCy; cy++) {
+        const bucket = inner.get(cy);
+        if (bucket === undefined) continue;
+        for (let i = 0; i < bucket.length; i++) {
+          const slot = bucket[i];
+          if (stamp[slot] === qid) continue; // 跨格去重
+          stamp[slot] = qid;
+          // 圆心对矩形的最近点距离（clamp 距离）<= item 自身半径 + pad 判交。
+          const ix = px[slot];
+          const iy = py[slot];
+          const qx = ix < minX ? minX : ix > maxX ? maxX : ix;
+          const qy = iy < minY ? minY : iy > maxY ? maxY : iy;
+          const dx = ix - qx;
+          const dy = iy - qy;
+          const rr = pr[slot] + pad;
+          if (dx * dx + dy * dy <= rr * rr) result.push(items[slot]);
+        }
+      }
+    }
+    return result;
+  }
+
   /** 解除某槽位在给定闭区间格子范围内的全部链接；桶变空则删除条目并回收桶数组。 */
   private unlinkRange(slot: number, minCx: number, maxCx: number, minCy: number, maxCy: number): void {
     for (let cx = minCx; cx <= maxCx; cx++) {

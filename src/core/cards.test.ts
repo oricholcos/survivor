@@ -377,11 +377,10 @@ describe('连射波调度（T5.3b burst_shot 接线：scheduleBurstWaves / consu
     expect(q[0].stats.damage).toBe(10);
   });
 
-  it('无牌（burstWaves 缺失/0）/ 龙息模式 / 脏波间隔（0/NaN）→ 不排波', () => {
+  it('无牌（burstWaves 缺失/0）/ 脏波间隔（0/NaN）→ 不排波', () => {
     const state = createSimState(1);
     scheduleBurstWaves(state, 'w', 'beh', {}); // 无牌
     scheduleBurstWaves(state, 'w', 'beh', { burstWaves: 0, burstIntervalMs: 150 });
-    scheduleBurstWaves(state, 'w', 'beh', { burstWaves: 2, burstIntervalMs: 150, dragonBreath: 1 }); // 互斥
     scheduleBurstWaves(state, 'w', 'beh', { burstWaves: 2, burstIntervalMs: 0 });
     scheduleBurstWaves(state, 'w', 'beh', { burstWaves: 2, burstIntervalMs: Number.NaN });
     expect(queueOf(state)).toHaveLength(0);

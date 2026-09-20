@@ -21,7 +21,7 @@
 //   proj_dot_fallback  未知 behavior 兜底暖白光点（28×28，基准半径 6）
 // 分层契约：池化 Image 挂 glow 层（depth 4 起微步进、ADD 混合，与 glowGfx / 状态降级光环
 // 同层；ADD 混合可交换，层内先后不影响合成结果）。?fx=0 只关相机 bloom，不涉及本模块。
-// meta VFX（光束/龙息锥/电弧/榴弹落点引导等）仍走 glowGfx 矢量绘制（数量少，见 mainScene）。
+// meta VFX（光束/电弧/榴弹落点引导等）仍走 glowGfx 矢量绘制（数量少，见 mainScene）。
 import Phaser from 'phaser';
 import type { Projectile, SimState } from '../core/types';
 import { bezier, fillPoly, projectileStyle, type ProjectileStyle } from './fx';

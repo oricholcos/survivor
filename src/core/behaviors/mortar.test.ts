@@ -2,7 +2,8 @@
 // 密度最高点选点（并列取数组序靠前、无敌不开火冷却归 0）、落点提前量（T5.2a：落点 =
 // 密度锚点 + 锚点速度 × 飞行时长，attack/slow/钳制各退化路径）、noCollide 越过前排 +
 // 落点 AoE（圆相交边界、尸体不结算）、燃烧地（zone 参数随表、逐 tick 伤害 + 挂 burn、
-// 到期移除、burn 槽真实跳 DoT）、眩晕 / 黑洞（效果槽实例 + 黑洞朝落点拉拽位移）、
+// 到期移除、burn 槽真实跳 DoT）、眩晕 / 黑洞（效果槽实例 + 黑洞向爆心位移 ≤120px、
+// 2s 拉拽免疫——G2a 治理语义）、
 // 集束已随牌池制删除（stats.cluster 无牌可点亮，路径永不再触发）、
 // 数值全部来自 weapons/mortar.json 真实表（等级语义改为牌组）、解释器集成、同种子可复现。
 import { describe, expect, it } from 'vitest';
@@ -419,8 +420,8 @@ describe('眩晕（stun_blast 专属牌）', () => {
   });
 });
 
-describe('黑洞（black_hole 专属牌）', () => {
-  it('幸存者被瞬间拉至落点（centerX/Y = 落点）；即时效果不占效果槽', () => {
+describe('黑洞（black_hole 专属牌，G2a 拉拽治理语义）', () => {
+  it('幸存者向爆心位移（centerX/Y = 落点；距爆心 ≤120px 时贴到爆心）；即时效果不占效果槽', () => {
     const state = createSimState(1);
     const victim = makeEnemy(state, 595, 800); // 距爆心 95 ≤ 100：吃 18 幸存
     const bystander = makeEnemy(state, 500, 1000); // 距 200：半径外
@@ -428,11 +429,11 @@ describe('黑洞（black_hole 专属牌）', () => {
     shell.dead = true;
     behavior.onProjectileDeath!(state, shell);
 
-    // 效果槽实例：先炸（18）后挂 stun；黑洞为即时效果（瞬间拉拽至中心，不占效果槽）
+    // 效果槽实例：先炸（18）后挂 stun；黑洞为即时效果（位移 ≤120px，不占效果槽）
     expect(victim.hp).toBeCloseTo(100 - 18, 6);
     expect(victim.effects.map((e) => e.kind)).toEqual(['stun']);
-    expect(victim.x).toBe(500); // 瞬间拉拽到落点 x
-    expect(victim.y).toBe(800); // 瞬间拉拽到落点 y
+    expect(victim.x).toBe(500); // 距爆心 95 ≤ 120：位移到爆心 x
+    expect(victim.y).toBe(800); // 距爆心 95 ≤ 120：位移到爆心 y
 
     // 半径外旁观者：无效果、无位移。
     expect(bystander.hp).toBe(100);
@@ -441,7 +442,41 @@ describe('黑洞（black_hole 专属牌）', () => {
     expect(bystander.y).toBe(1000);
   });
 
-  it('端到端（全专属牌全开）：弹上快照 blackHole=1，落地后目标瞬间拉至落点且挂 stun 与留燃烧地', () => {
+  it('位移上限 120px（G2a）：爆心外沿的幸存者只向爆心位移 120（不再瞬移到爆心）', () => {
+    const state = createSimState(1);
+    const far = makeEnemy(state, 700, 800); // 距爆心 200 ≤ 200+10（aoe 夹具 200）：吃 18 幸存
+    const shell = makeShell(state, 500, 800, 18, { blackHole: 1, aoeRadius: 200 });
+    shell.dead = true;
+    behavior.onProjectileDeath!(state, shell);
+
+    expect(far.hp).toBeCloseTo(100 - 18, 6);
+    expect(far.x).toBe(580); // dist 200 → 位移 min(200, 120) = 120，方向指向爆心
+    expect(far.y).toBe(800);
+  });
+
+  it('跨爆炸免疫 2s（G2a）：免疫期内第二次爆炸不再拉拽（伤害照常）；到期后恢复可拉', () => {
+    const state = createSimState(1);
+    const far = makeEnemy(state, 700, 800);
+    const shell = makeShell(state, 500, 800, 18, { blackHole: 1, aoeRadius: 200 });
+    shell.dead = true;
+    behavior.onProjectileDeath!(state, shell);
+    expect(far.x).toBe(580); // 首拉：位移 120（盖戳 t=0 → 免疫至 t=2000）
+
+    state.timeMs += 500; // 第二发落在 (700,800)：dist 120 ≤ 120，若无免疫会贴到新爆心
+    const shell2 = makeShell(state, 700, 800, 18, { blackHole: 1, aoeRadius: 200 });
+    shell2.dead = true;
+    behavior.onProjectileDeath!(state, shell2);
+    expect(far.x).toBe(580); // 免疫期内：不位移
+    expect(far.hp).toBeCloseTo(100 - 36, 6); // 爆炸伤害照常结算（免疫只免拉拽）
+
+    state.timeMs = 2100; // 免疫到期（首拉后 2s）：恢复可拉
+    const shell3 = makeShell(state, 700, 800, 18, { blackHole: 1, aoeRadius: 200 });
+    shell3.dead = true;
+    behavior.onProjectileDeath!(state, shell3);
+    expect(far.x).toBe(700); // dist 120 ≤ 120：贴到爆心
+  });
+
+  it('端到端（全专属牌全开）：弹上快照 blackHole=1，落地后锚点向爆心聚拢且挂 stun 与留燃烧地', () => {
     const state = createSimState(1);
     const a1 = makeEnemy(state, 360, 500);
     makeEnemy(state, 365, 505);
@@ -455,8 +490,8 @@ describe('黑洞（black_hole 专属牌）', () => {
 
     simulate(state, 100);
 
-    expect(a1.effects.map((e) => e.kind)).toEqual(['stun']); // stun 挂槽，blackhole 为即时拉拽
-    expect(a1.x).toBe(360); // 母弹落点
+    expect(a1.effects.map((e) => e.kind)).toEqual(['stun']); // stun 挂槽，blackhole 为即时位移
+    expect(a1.x).toBe(360); // 锚点恰在爆心：无位移（G2a：位移至多 120px）
     expect(a1.y).toBe(500);
     expect(listZones(state)).toHaveLength(1); // 燃烧地照常（无集束：恰 1 片）
   });
@@ -536,7 +571,7 @@ describe('数值全部来自 weapons/mortar.json（真实表驱动，T5.3a 牌�
     for (const key of ['burnGround', 'stunBlast', 'blackHole'] as const) {
       expect(shell.data[key]).toBe(1);
     }
-    // 死亡 → 燃烧地参数随 alt 表（radius = 120×0.5 = 60）、黑洞即时拉拽（不占效果槽）、无集束分裂。
+    // 死亡 → 燃烧地参数随 alt 表（radius = 120×0.5 = 60）、黑洞向心位移（不占效果槽）、无集束分裂。
     shell.dead = true;
     behavior.onProjectileDeath!(alt, shell);
     const zone = listZones(alt)[0];

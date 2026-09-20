@@ -22,7 +22,7 @@
     "params": [{ "key": "projectileCount", "value": 1, "op": "add" }],
     "maxCount": 4,
     "hardMax": 8,
-    "applyTo": ["charge_sniper", "scatter", "homing_missile", "mortar", "prism"]
+    "applyTo": ["scatter", "homing_missile", "mortar", "prism"]
   },
   {
     "id": "burst_shot",
@@ -34,7 +34,7 @@
     ],
     "maxCount": 2,
     "hardMax": 4,
-    "applyTo": ["charge_sniper", "scatter", "homing_missile", "mortar", "prism"]
+    "applyTo": ["scatter", "homing_missile", "mortar", "prism"]
   },
   {
     "id": "split_shot",
@@ -46,7 +46,7 @@
       { "key": "splitMaxTargets", "value": 4, "op": "set" }
     ],
     "once": true,
-    "applyTo": ["charge_sniper", "scatter", "homing_missile", "mortar", "prism"]
+    "applyTo": ["scatter", "homing_missile", "mortar", "prism"]
   },
   {
     "id": "range_up",
@@ -56,7 +56,7 @@
     "value": 1.2,
     "maxCount": 5,
     "hardMax": 8,
-    "applyTo": ["dragon_breath", "heat_beam", "homing_missile", "mortar", "prism", "scatter"]
+    "applyTo": ["heat_beam", "homing_missile", "mortar", "prism", "scatter", "seismic_wall"]
   },
   {
     "id": "dot_freq",
@@ -66,7 +66,7 @@
     "value": 1.3,
     "maxCount": 3,
     "hardMax": 6,
-    "applyTo": ["dragon_breath", "heat_beam", "homing_missile", "mortar", "prism", "scatter"],
+    "applyTo": ["heat_beam", "homing_missile", "mortar", "prism", "scatter"],
     "requires": {
       "heat_beam": "scorch",
       "homing_missile": "burn_cloud",

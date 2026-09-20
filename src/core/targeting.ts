@@ -121,6 +121,8 @@ export interface FindTargetOpts {
   fastSpeedThreshold?: number;
   /** 最大索敌射程（px）；设置时超出此距离的敌人不作为目标候选。 */
   maxRange?: number;
+  /** 排除的敌人 id（灼热光束次级束选目标时排除主束当前锁定目标）；四级优先级各层一律跳过。 */
+  excludeId?: number;
 }
 
 /**
@@ -143,6 +145,7 @@ export function findTarget(state: SimState, opts?: FindTargetOpts): Enemy | null
   const preferFast = opts?.preferFast === true;
   const threshold = opts?.fastSpeedThreshold ?? 0;
   const maxRangeSq = opts?.maxRange !== undefined && opts.maxRange > 0 ? opts.maxRange * opts.maxRange : Infinity;
+  const excludeId = opts?.excludeId;
 
   let boss: Enemy | null = null;
   let bossDistSq = Infinity;
@@ -158,6 +161,9 @@ export function findTarget(state: SimState, opts?: FindTargetOpts): Enemy | null
     const e = enemies[i];
     if (e.dead) {
       continue;
+    }
+    if (excludeId !== undefined && e.id === excludeId) {
+      continue; // 被排除的敌人：四级优先级各层一律不作为候选
     }
     const d = distSq(state.character, e);
     if (d > maxRangeSq) {

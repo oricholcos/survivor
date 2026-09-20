@@ -6,7 +6,7 @@
 //   underGfx（depth 1，常规混合）：地面区域、榴弹落点提示、墙、修复包、Boss 光环/血条金框；
 //   敌人池化 Image（depth 2~2.16，enemyRenderer 管理）：本体 → 白闪剪影 → 血条槽 → 血条填充；
 //   overGfx（depth 3，常规混合）：角色本体、HUD 条；
-//   glow（depth 4，ADD 叠加混合）：meta VFX（光束/龙息锥/榴弹爆炸）/敌人状态特效
+//   glow（depth 4，ADD 叠加混合）：meta VFX（光束/榴弹爆炸）/敌人状态特效
 //   （矢量或降级光环）/弹丸池化 Image（projectileRenderer，T6b）/角色光晕/死亡爆裂/
 //   枪口闪光/红 vignette。
 // 主循环对接：update 内 step（paused 时冻结模拟、渲染照常）→ drainEvents → 渲染当前帧。
@@ -17,12 +17,17 @@
 import Phaser from 'phaser';
 import { xpToNext } from '../core/gems';
 import { listZones } from '../core/zones';
-import { getWeaponStats } from '../core/weapons';
-import type { HeatBeamVfx } from '../core/behaviors/behavior_heatBeam';
-import type { DragonBreathVfx } from '../core/behaviors/behavior_dragonBreath';
+import type { CoordinatedFireVfx, HeatBeamVfx } from '../core/behaviors/behavior_heatBeam';
+import { COORDINATED_FIRE_VFX_MS } from '../core/behaviors/behavior_heatBeam';
 import type { RailVfx } from '../core/behaviors/behavior_piercingBolt';
 import type { MortarBlastVfx } from '../core/behaviors/behavior_mortar';
 import type { PrismZapSegment } from '../core/behaviors/behavior_prismChain';
+import {
+  SNIPER_CRIT_VFX_MS,
+  SNIPER_EXECUTE_VFX_MS,
+  type SniperHitVfx,
+} from '../core/behaviors/behavior_chargeSniper';
+import { SEISMIC_SWEEP_MS, type SeismicPulseVfx } from '../core/behaviors/behavior_seismicPulse';
 import type { GameEvent } from '../core/events';
 import type { Enemy, SimState } from '../core/types';
 import type { GameSession } from '../game/session';
@@ -36,7 +41,8 @@ import {
 } from './enemyRenderer';
 import { ProjectileRenderer } from './projectileRenderer';
 import {
-  DRAGON_BREATH_VFX_PREFIX,
+  COORDINATED_COLORS,
+  COORDINATED_FIRE_VFX_KEY,
   DeathBurst,
   HEAT_BEAM_VFX_PREFIX,
   MORTAR_BLAST_VFX_KEY,
@@ -45,6 +51,12 @@ import {
   PRISM_ZAP_VFX_KEY,
   RAIL_VFX_PREFIX,
   RingWaves,
+  SEISMIC_PULSE_COLORS,
+  SEISMIC_PULSE_VFX_KEY,
+  SNIPER_CRIT_COLORS,
+  SNIPER_CRIT_VFX_KEY,
+  SNIPER_EXECUTE_COLORS,
+  SNIPER_EXECUTE_VFX_KEY,
   STATUS_EFFECT_COLORS,
   COLOR_TRACK,
   bezier,
@@ -62,9 +74,31 @@ const WALL_BAR_OFFSET = 20; // 墙血条距墙线的上移量
 const CHARACTER_RADIUS = 14;
 const HUD_X = 16;
 const HUD_Y = 12;
-const XP_BAR_Y = 188; // 五行 HUD 文本下方（模式/时间/等级/击杀/武器列表）
+const XP_BAR_Y = 188; // 四行 HUD 文本下方（模式/时间/等级/击杀；武器行已改为胶囊芯片，见 G1）
 const XP_BAR_WIDTH = 224;
 const XP_BAR_HEIGHT = 8;
+
+// —— 武器胶囊芯片（G1）：每武器一枚独立芯片，替代原五行 HUD 的「武器 A、B、…」拼接行 ——
+
+/**
+ * 芯片竖排锚定经验条【下方】（裁量）：经验条上方仅剩 ~54px 空隙，放不下多枚芯片；
+ * 下方到墙线（wallLineY=1160）有巨大余量。栏位上限 config.maxWeaponSlots = 4
+ * （upgrade.ts 以「拥有数 < maxWeaponSlots」限制新武器出现）→ 单列至多 4 枚 ≈ 100px 高
+ * （底部 ≈ y 304），任何武器数都不可能溢出画布，无需两列折行兜底（8 把假设亦只需 ~200px）。
+ */
+const CHIP_X = HUD_X;
+const CHIP_START_Y = XP_BAR_Y + XP_BAR_HEIGHT + 10; // 206：经验条下沿留 10px 间隙
+const CHIP_HEIGHT = 20;
+const CHIP_STRIDE = 25; // 芯片高 20 + 行距 5
+const CHIP_PAD_X = 9; // 芯片文本左右内边距（宽度随文本自适应）
+const CHIP_RADIUS = 10;
+/** 芯片底色（深底，霓虹描边风格与全局一致）。 */
+const CHIP_BG = 0x0b1120;
+
+/** 芯片三档配色：Lv.0 灰调（未强化）/ Lv.1~9 常规白（霓虹青描边）/ 满级金描边 MAX。 */
+const CHIP_STYLE_LV0 = { stroke: 0x5a6478, text: '#8f98ab' };
+const CHIP_STYLE_STD = { stroke: 0x6fc3ff, text: '#f2faff' };
+const CHIP_STYLE_MAX = { stroke: 0xffd24a, text: '#ffe89a' };
 
 /** 城墙低血量警示阈值（<30% 常驻红色脉冲）。 */
 const WALL_LOW_PCT = 0.3;
@@ -72,10 +106,17 @@ const WALL_LOW_PCT = 0.3;
 const WALL_FLASH_MS = 150;
 /** meta VFX 留存 80ms（core 任务锁定常量），视图按剩余时间线性淡出。 */
 const META_VFX_FADE_MS = 80;
+/** 灼热光束固定视觉宽度 px（单体锁定束：不再从 stats.beamWidth 读取——该键已随重做删除）。 */
+const HEAT_BEAM_DRAW_WIDTH = 10;
 /** 轨道炮射线留存 100ms（core rail VFX 任务锁定常量），视图按剩余时间线性淡出。 */
 const RAIL_VFX_FADE_MS = 100;
 /** 榴弹爆炸 VFX 留存 320ms（与 core MORTAR_BLAST_VFX_MS 一致），淡出与冲击环扩张共用。 */
 const MORTAR_BLAST_FADE_MS = 320;
+/** 震波壁垒 sweep 结束后的淡出留存 300ms（与 core SEISMIC_PULSE_VFX_MS 一致），按剩余留存线性淡出。 */
+const SEISMIC_PULSE_FADE_MS = 300;
+/** 震波壁垒震屏参数（轻微，复用 wallDamaged 的相机 shake 基建；一次性、水位线防重复）。 */
+const SEISMIC_SHAKE_MS = 160;
+const SEISMIC_SHAKE_INTENSITY = 0.005;
 /**
  * 榴弹爆炸中心闪光的 glow 层活动实例上限（T6b）：meta 列表由 core 滚动淘汰过期条目
  * （数组按入队序排列），但留存窗口内条目数本身无界——视图侧只画最近 32 条（跳过最旧，
@@ -83,18 +124,12 @@ const MORTAR_BLAST_FADE_MS = 320;
  * 封顶高密度连爆帧的矢量绘制量。冲击环入池另由 RingWaves 自身容量兜底。
  */
 const MORTAR_BLAST_DRAW_CAP = 32;
-/**
- * 龙息锥视图侧驻留时长：core 的 dragon_breath meta 仅留存 80ms，而喷射 tick 间隔 150ms，
- * 逐帧淡出会出现「锥形闪烁有间隙」的观感——视图在每次读到新鲜 meta 时把本地驻留延长到
- * 150ms（T5.2b 可感知度加强：持续喷射期间锥形连续可见 + 高 alpha 内芯，停喷后自然淡出）。
- */
-const DRAGON_CONE_VIEW_HOLD_MS = 150;
 
 const COLOR_XP_FILL = 0x8be9fd;
 const COLOR_CHARACTER = 0xffe066;
 const COLOR_CHARACTER_STROKE = 0xfff6c0; // 角色亮描边（霓虹高光）
 
-/** 武器定义表（HUD 武器列表行 + 灼热光束宽度取值用；数据表只加载一次、内容共享只读）。 */
+/** 武器定义表（HUD 武器列表行名称用；数据表只加载一次、内容共享只读）。 */
 const WEAPON_DEFS = loadWeaponDefs();
 /** 敌人图鉴（死亡爆裂碎片的颜色/形状按 typeId 取值；只加载一次）。 */
 const ENEMY_TYPES = loadEnemyTypes();
@@ -416,6 +451,13 @@ export class MainScene extends Phaser.Scene {
   /** 弹丸渲染器（T6b）：预烘焙纹理 + 池化 ADD Image（按 behavior 分弹种贴图）。 */
   private projectileRenderer!: ProjectileRenderer;
   private hudText!: Phaser.GameObjects.Text;
+  /** 武器胶囊芯片底（G1）：仅武器键集/等级 diff 变化时才 clear+重绘，稳态零写入。 */
+  private chipGfx!: Phaser.GameObjects.Graphics;
+  /** 武器胶囊芯片文本常驻池（G1）：按需懒建、复用、隐藏多余，不逐帧 new 对象。 */
+  private chipTexts: Phaser.GameObjects.Text[] = [];
+  /** 芯片 diff 基准（G1）：上帧的武器 id 序与等级序（仅变化时更新）。 */
+  private chipIds: string[] = [];
+  private chipLevels: number[] = [];
   /** 击杀数：从 enemyKilled 事件累计（视图侧派生值，随 state 替换重置）。 */
   private kills = 0;
   /** 上一次见到的 SimState 引用：session.restart() 整体替换 state 时重置派生计数与特效。 */
@@ -437,8 +479,8 @@ export class MainScene extends Phaser.Scene {
   private lastProjectileId = 0;
   /** 榴弹爆炸 meta 条目水位线（untilMs 单调递增）：新条目 → 冲击环入池，防重复入池。 */
   private blastWatermark = 0;
-  /** 龙息锥视图侧驻留（meta 键 → 截止时刻）：喷射间隙维持锥形连续可见。 */
-  private readonly dragonConeHoldUntil = new Map<string, number>();
+  /** 震波壁垒脉冲 meta 水位线（untilMs 单调递增）：新脉冲 → 一次轻微震屏，防重复触发。 */
+  private seismicWatermark = 0;
   /** 城墙受击红闪：截止时刻 + 强度 0..1（幅度随 wallDamaged.amount）。 */
   private wallFlashUntilMs = 0;
   private wallFlashStrength = 0;
@@ -483,6 +525,8 @@ export class MainScene extends Phaser.Scene {
       })
       .setDepth(10)
       .setShadow(0, 2, 'rgba(0,0,0,0.85)', 3);
+    // 武器胶囊芯片层（G1）：depth 同 hudText（10），压在敌人/弹丸之上；仅 diff 变化时重绘。
+    this.chipGfx = this.add.graphics().setDepth(10);
     this.lastState = this.session.state;
     this.applyCameraBloom();
   }
@@ -534,7 +578,7 @@ export class MainScene extends Phaser.Scene {
     this.lastHp.clear();
     this.lastProjectileId = 0;
     this.blastWatermark = 0;
-    this.dragonConeHoldUntil.clear();
+    this.seismicWatermark = 0;
     this.wallFlashUntilMs = 0;
     this.wallFlashStrength = 0;
     this.vignetteUntilMs = 0;
@@ -676,7 +720,7 @@ export class MainScene extends Phaser.Scene {
     // —— 常规混合·顶层：角色（在敌人之后画，与原层级一致） ——
     this.drawCharacter(over, glow, s);
 
-    // —— ADD 发光层：meta VFX（光束/龙息锥）→ 敌人状态特效 → 弹丸 → 池化粒子 → 红 vignette ——
+    // —— ADD 发光层：meta VFX（光束）→ 敌人状态特效 → 弹丸 → 池化粒子 → 红 vignette ——
     this.drawMetaVfx(glow, s);
     if (useVectorStatusFx) {
       for (let i = 0; i < s.enemies.length; i++) {
@@ -861,69 +905,27 @@ export class MainScene extends Phaser.Scene {
 
   /** meta VFX 分发（视图只读 meta，逐键前缀匹配；条目结构运行时守卫）。 */
   private drawMetaVfx(g: Phaser.GameObjects.Graphics, s: SimState): void {
-    this.drawScatterDragonHint(g, s);
     for (const key in s.meta) {
       if (key.startsWith(HEAT_BEAM_VFX_PREFIX)) {
         this.drawHeatBeam(g, s, key.slice(HEAT_BEAM_VFX_PREFIX.length), s.meta[key]);
-      } else if (key.startsWith(DRAGON_BREATH_VFX_PREFIX)) {
-        this.drawDragonCone(g, s, key, s.meta[key]);
       } else if (key.startsWith(RAIL_VFX_PREFIX)) {
         this.drawRailBeam(g, s, s.meta[key]);
+      } else if (key === SEISMIC_PULSE_VFX_KEY) {
+        this.drawSeismicPulse(g, s, s.meta[key]);
       }
     }
     this.drawMortarBlasts(g, s);
     this.drawPrismZapArcs(g, s);
+    this.drawSniperCritBursts(g, s);
+    this.drawSniperExecutes(g, s);
+    this.drawCoordinatedFire(g, s);
   }
 
   /**
-   * 霰弹 L8 龙息模式的常驻锥形提示：该模式不发弹丸且 core 未为其约定 meta VFX 键
-   * （不可改 core），视图侧从武器定义按当前等级派生锥形几何（与 core breathCone 同式：
-   * 顶点=角色、朝正上、半角 fanAngleDeg/2、射程 = projectileSpeed × ttlMs），低 alpha
-   * 常驻渲染，避免「武器已切龙息但画面零表现」的观感断层。
-   */
-  private drawScatterDragonHint(g: Phaser.GameObjects.Graphics, s: SimState): void {
-    const ids = Object.keys(s.weaponStates);
-    for (let i = 0; i < ids.length; i++) {
-      const def = WEAPON_DEFS[ids[i]];
-      const ws = s.weaponStates[ids[i]];
-      if (!def || !ws || def.behavior !== 'scatter_shot') {
-        continue;
-      }
-      const stats = getWeaponStats(def, s, ids[i]);
-      if (stats.dragonBreath !== 1 || !(stats.ttlMs > 0) || !(stats.projectileSpeed > 0)) {
-        continue;
-      }
-      const ax = s.character.x;
-      const ay = s.character.y;
-      const R = stats.projectileSpeed * stats.ttlMs * 0.001;
-      const half = (stats.fanAngleDeg * Math.PI) / 360;
-      const dir = -Math.PI / 2;
-      const e1 = dir - half;
-      const e2 = dir + half;
-      const flicker = 0.8 + 0.2 * Math.sin(s.timeMs / 90);
-      g.fillStyle(0xff7a1a, 0.07 * flicker);
-      g.fillPoints(
-        [
-          { x: ax, y: ay },
-          { x: ax + Math.cos(e1) * R, y: ay + Math.sin(e1) * R },
-          { x: ax + Math.cos(e2) * R, y: ay + Math.sin(e2) * R },
-        ],
-        true,
-      );
-      g.lineStyle(1.5, 0xffc46a, 0.22 * flicker);
-      g.beginPath();
-      g.moveTo(ax, ay);
-      g.lineTo(ax + Math.cos(e1) * R, ay + Math.sin(e1) * R);
-      g.moveTo(ax, ay);
-      g.lineTo(ax + Math.cos(e2) * R, ay + Math.sin(e2) * R);
-      g.strokePath();
-    }
-  }
-
-  /**
-   * 灼热光束（meta['heat_beam_vfx:<id>'] = { segments, untilMs }）：
-   * 三层线段（宽泛光/中橙/白热芯）+ 两端白热点，按剩余留存时间线性淡出；
-   * 光束宽度取该武器当前等级数值（数据表缺失回落 14）。
+   * 灼热光束（meta['heat_beam_vfx:<id>'] = { segments, untilMs }，段序 = [主束, 次级束?]）：
+   * 单体锁定持续光束——主束从角色连到锁定目标（三层线段：宽泛光/中橙/白热芯），
+   * 次级束（index ≥ 1，持第二闪光牌）用紫罗兰区分色同款三层；两端白热点，
+   * 按剩余留存时间线性淡出。视觉宽度为固定常量（单体束不再从 stats 读 beamWidth）。
    */
   private drawHeatBeam(
     g: Phaser.GameObjects.Graphics,
@@ -931,6 +933,7 @@ export class MainScene extends Phaser.Scene {
     weaponId: string,
     raw: unknown,
   ): void {
+    void weaponId; // 视觉宽度为固定常量：不再按武器 stats 读取（保留参数与分发签名一致）
     const vfx = raw as HeatBeamVfx | undefined;
     if (!vfx || !Array.isArray(vfx.segments)) {
       return;
@@ -940,26 +943,21 @@ export class MainScene extends Phaser.Scene {
       return;
     }
     const fade = clamp01(remain / META_VFX_FADE_MS);
-    let width = 14;
-    const def = WEAPON_DEFS[weaponId];
-    const ws = s.weaponStates[weaponId];
-    if (def && ws) {
-      const stats = getWeaponStats(def, s, weaponId);
-      if (typeof stats.beamWidth === 'number' && stats.beamWidth > 0) {
-        width = stats.beamWidth;
-      }
-    }
     for (let i = 0; i < vfx.segments.length; i++) {
       const seg = vfx.segments[i];
       if (!seg || !Number.isFinite(seg.x1 + seg.y1 + seg.x2 + seg.y2)) {
         continue;
       }
-      strokeLine(g, seg.x1, seg.y1, seg.x2, seg.y2, width + 10, 0xff4d1a, 0.16 * fade);
-      strokeLine(g, seg.x1, seg.y1, seg.x2, seg.y2, Math.max(3, width * 0.55), 0xff9d2e, 0.55 * fade);
-      strokeLine(g, seg.x1, seg.y1, seg.x2, seg.y2, 2.5, 0xffe8b0, 0.95 * fade);
-      g.fillStyle(0xffe8b0, 0.5 * fade);
-      g.fillCircle(seg.x1, seg.y1, width * 0.3);
-      g.fillCircle(seg.x2, seg.y2, width * 0.3);
+      // 段序 = [主束, 次级束?]：主束橙色系，次级束紫罗兰区分色。
+      const outer = i === 0 ? 0xff4d1a : 0x9d5cff;
+      const core = i === 0 ? 0xff9d2e : 0xc084ff;
+      const hot = i === 0 ? 0xffe8b0 : 0xf2e6ff;
+      strokeLine(g, seg.x1, seg.y1, seg.x2, seg.y2, HEAT_BEAM_DRAW_WIDTH + 10, outer, 0.16 * fade);
+      strokeLine(g, seg.x1, seg.y1, seg.x2, seg.y2, Math.max(3, HEAT_BEAM_DRAW_WIDTH * 0.55), core, 0.55 * fade);
+      strokeLine(g, seg.x1, seg.y1, seg.x2, seg.y2, 2.5, hot, 0.95 * fade);
+      g.fillStyle(hot, 0.5 * fade);
+      g.fillCircle(seg.x1, seg.y1, HEAT_BEAM_DRAW_WIDTH * 0.3);
+      g.fillCircle(seg.x2, seg.y2, HEAT_BEAM_DRAW_WIDTH * 0.3);
     }
   }
 
@@ -993,6 +991,58 @@ export class MainScene extends Phaser.Scene {
       g.fillStyle(0xffffff, 0.5 * fade);
       g.fillCircle(seg.x1, seg.y1, 3);
     }
+  }
+
+  /**
+   * 震波壁垒行进波（meta['seismic_pulse_vfx'] = sweep 状态本体，共享单键；视图只读
+   * SeismicPulseVfx 视图字段 { startMs, waveDistance, thickness, untilMs }）：横贯全屏的
+   * 亮波前从墙线出发向上行进——波前位置 = wallLineY − waveDistance × min(elapsed, 400ms)/400ms，
+   * 与模拟层共享同一几何常量 SEISMIC_SWEEP_MS（扫掠时长恒定，范围强化提高的是波前速度与
+   * 最终距离）；已扫过区带（墙线 → 波前）以半透明金橙填充随行进增长，sweep 结束
+   * （400ms）后波前驻留终点、整体按剩余留存时间线性淡出。新 sweep（startMs 水位线判定，
+   * 一次性）触发一次轻微震屏（复用 wallDamaged 的 cameras.main.shake 基建，幅度约其一半）。
+   * 余震不写 VFX，无次要表现。
+   */
+  private drawSeismicPulse(g: Phaser.GameObjects.Graphics, s: SimState, raw: unknown): void {
+    const vfx = raw as SeismicPulseVfx | undefined;
+    if (
+      !vfx ||
+      !Number.isFinite(vfx.startMs + vfx.waveDistance + vfx.thickness + vfx.untilMs) ||
+      vfx.waveDistance < 0
+    ) {
+      return;
+    }
+    const remain = vfx.untilMs - s.timeMs;
+    if (remain <= 0) {
+      return;
+    }
+    if (vfx.startMs > this.seismicWatermark) {
+      this.seismicWatermark = vfx.startMs;
+      this.cameras.main.shake(SEISMIC_SHAKE_MS, SEISMIC_SHAKE_INTENSITY, false);
+    }
+    const fade = clamp01(remain / SEISMIC_PULSE_FADE_MS);
+    // 波前推进：与模拟层同几何（elapsed 钳制在扫掠时长内），sweep 结束后驻留终点随 fade 淡出。
+    const elapsed = s.timeMs - vfx.startMs;
+    const progress = clamp01(elapsed / SEISMIC_SWEEP_MS);
+    const wallY = s.layout.wallLineY;
+    const frontY = wallY - vfx.waveDistance * progress;
+    // 已扫过区带：从波前到墙线的半透明金橙填充（行进波的可视行进痕迹，随行进增长）。
+    const swept = wallY - frontY;
+    if (swept > 0) {
+      g.fillStyle(SEISMIC_PULSE_COLORS.outer, 0.1 * fade);
+      g.fillRect(0, frontY, s.layout.width, swept);
+    }
+    // 波前：三层横线（宽泛光 / 亮芯 / 白热）。
+    strokeLine(g, 0, frontY, s.layout.width, frontY, 14, SEISMIC_PULSE_COLORS.outer, 0.3 * fade);
+    strokeLine(g, 0, frontY, s.layout.width, frontY, 6, SEISMIC_PULSE_COLORS.core, 0.8 * fade);
+    strokeLine(g, 0, frontY, s.layout.width, frontY, 2, SEISMIC_PULSE_COLORS.hot, fade);
+    // 波前厚度提示：上沿一条微弱辅助线（勾出 |y − 波前| ≤ thickness 的判定带视觉边界）。
+    strokeLine(
+      g, 0, frontY - vfx.thickness, s.layout.width, frontY - vfx.thickness,
+      2, SEISMIC_PULSE_COLORS.outer, 0.12 * fade,
+    );
+    // 墙线能量线：随 fade 淡出的金色亮线（震源）。
+    strokeLine(g, 0, wallY, s.layout.width, wallY, 4, SEISMIC_PULSE_COLORS.core, 0.5 * fade);
   }
 
   /**
@@ -1115,79 +1165,195 @@ export class MainScene extends Phaser.Scene {
   }
 
   /**
-   * 龙息锥（meta['dragon_breath_vfx:<id>'] = { untilMs, coneRange, coneAngleDeg }）：
-   * 顶点 = 角色位、朝正上。双层锥面（宽外锥 + 窄内芯）+ 两缘亮线 + 射程端弧，
-   * 火焰闪烁 + 淡出。T5.2b 可感知度加强：core meta 仅留存 80ms 而喷射 tick 间隔 150ms，
-   * 逐帧淡出会在 tick 之间出现「锥形闪烁断层」——视图在每次读到新鲜 meta 时把本地驻留
-   * 延长到 DRAGON_CONE_VIEW_HOLD_MS（持续喷射期间连续可见，停喷后 150ms 自然淡出），
-   * 并整体上调 alpha（外锥/内芯/边缘线），内芯改为高 alpha 窄锥突出火焰核心。
+   * 蓄能狙击爆头星芒环（meta['sniper_crit_vfx'] = SniperHitVfx[]，G5）：
+   * 每次爆头判中由模拟层记录一条命中点条目，留存 200ms（core SNIPER_CRIT_VFX_MS 同源，
+   * 导入常量避免两处漂移）线性淡出。表现 = 金色星芒 8 道（内端随进度外移、光芒伸长，
+   * 「甩出」感）+ 扩散环 + 白热中心点；全部为条目序号与剩余时间的纯函数，零分配立即
+   * 模式重绘；条目间基角按序号错开，同帧多爆头不重叠成同一形态。
    */
-  private drawDragonCone(g: Phaser.GameObjects.Graphics, s: SimState, key: string, raw: unknown): void {
-    const vfx = raw as DragonBreathVfx | undefined;
-    if (!vfx || !(vfx.coneRange > 0) || !(vfx.coneAngleDeg > 0)) {
+  private drawSniperCritBursts(g: Phaser.GameObjects.Graphics, s: SimState): void {
+    const list = s.meta[SNIPER_CRIT_VFX_KEY];
+    if (!Array.isArray(list)) {
       return;
     }
-    const holdUntil = Math.max(
-      this.dragonConeHoldUntil.get(key) ?? 0,
-      s.timeMs + DRAGON_CONE_VIEW_HOLD_MS,
-    );
-    this.dragonConeHoldUntil.set(key, holdUntil);
-    const remain = holdUntil - s.timeMs;
-    if (remain <= 0) {
-      return;
+    for (let i = 0; i < list.length; i++) {
+      const v = list[i] as SniperHitVfx | undefined;
+      if (!v || !Number.isFinite(v.x + v.y + v.untilMs)) {
+        continue;
+      }
+      const remain = v.untilMs - s.timeMs;
+      if (remain <= 0) {
+        continue; // 已过期：不再渲染（core 侧写入时滚动淘汰）
+      }
+      const t = 1 - clamp01(remain / SNIPER_CRIT_VFX_MS); // 0→1 生命进度
+      const fade = clamp01(remain / SNIPER_CRIT_VFX_MS);
+      const innerR = 3 + 14 * t;
+      const rayLen = 7 + 9 * t;
+      const rot = i * 0.4;
+      for (let k = 0; k < 8; k++) {
+        const a = rot + (k * Math.PI) / 4;
+        const cosA = Math.cos(a);
+        const sinA = Math.sin(a);
+        strokeLine(
+          g,
+          v.x + cosA * (innerR - 1.5),
+          v.y + sinA * (innerR - 1.5),
+          v.x + cosA * (innerR + rayLen + 2),
+          v.y + sinA * (innerR + rayLen + 2),
+          4.5,
+          SNIPER_CRIT_COLORS.outer,
+          0.22 * fade,
+        );
+        strokeLine(
+          g,
+          v.x + cosA * innerR,
+          v.y + sinA * innerR,
+          v.x + cosA * (innerR + rayLen),
+          v.y + sinA * (innerR + rayLen),
+          2,
+          SNIPER_CRIT_COLORS.core,
+          0.85 * fade,
+        );
+      }
+      // 扩散环：半径随进度增长、透明度衰减（双层：宽泛光 + 亮芯）。
+      const ringR = 5 + 26 * t;
+      g.lineStyle(5, SNIPER_CRIT_COLORS.outer, 0.18 * fade);
+      g.strokeCircle(v.x, v.y, ringR + 2);
+      g.lineStyle(2.5, SNIPER_CRIT_COLORS.core, 0.55 * fade);
+      g.strokeCircle(v.x, v.y, ringR);
+      // 白热中心点：命中瞬间最亮，随进度收缩。
+      g.fillStyle(SNIPER_CRIT_COLORS.hot, 0.9 * fade);
+      g.fillCircle(v.x, v.y, Math.max(0.5, 3.5 * (1 - t)));
     }
-    const fade = clamp01(remain / DRAGON_CONE_VIEW_HOLD_MS);
-    const flicker = 0.85 + 0.15 * Math.sin(s.timeMs / 33);
-    const ax = s.character.x;
-    const ay = s.character.y;
-    const dir = -Math.PI / 2; // 朝正上
-    const half = (vfx.coneAngleDeg * Math.PI) / 360; // 半角（全角/2）
-    const R = vfx.coneRange;
-    const e1 = dir - half;
-    const e2 = dir + half;
-    const x1 = ax + Math.cos(e1) * R;
-    const y1 = ay + Math.sin(e1) * R;
-    const x2 = ax + Math.cos(e2) * R;
-    const y2 = ay + Math.sin(e2) * R;
+  }
 
-    g.fillStyle(0xff7a1a, 0.24 * fade * flicker);
-    g.fillPoints(
-      [
-        { x: ax, y: ay },
-        { x: x1, y: y1 },
-        { x: x2, y: y2 },
-      ],
-      true,
-    );
-    const half2 = half * 0.55;
-    g.fillStyle(0xffc46a, 0.45 * fade * flicker);
-    g.fillPoints(
-      [
-        { x: ax, y: ay },
-        { x: ax + Math.cos(dir - half2) * R, y: ay + Math.sin(dir - half2) * R },
-        { x: ax + Math.cos(dir + half2) * R, y: ay + Math.sin(dir + half2) * R },
-      ],
-      true,
-    );
-    const half3 = half * 0.22;
-    g.fillStyle(0xffedb0, 0.5 * fade * flicker);
-    g.fillPoints(
-      [
-        { x: ax, y: ay },
-        { x: ax + Math.cos(dir - half3) * R, y: ay + Math.sin(dir - half3) * R },
-        { x: ax + Math.cos(dir + half3) * R, y: ay + Math.sin(dir + half3) * R },
-      ],
-      true,
-    );
-    g.lineStyle(2.5, 0xffc46a, 0.85 * fade);
-    g.beginPath();
-    g.moveTo(ax, ay);
-    g.lineTo(x1, y1);
-    g.lineTo(x2, y2);
-    g.strokePath();
-    g.beginPath();
-    g.arc(ax, ay, R, e1, e2);
-    g.strokePath();
+  /**
+   * 蓄能狙击死刑宣告斩杀（meta['sniper_execute_vfx'] = SniperHitVfx[]，G5）：
+   * 处决触发时由模拟层记录目标坐标，留存 300ms（core SNIPER_EXECUTE_VFX_MS 同源）快速
+   * 淡出。表现两层：
+   * - 暗红竖贯斩线：从目标上方（钳回屏内）贯穿到战场底部（墙线），三层线宽（宽泛光 /
+   *   亮芯 / 灼白高光）；
+   * - 红色能量迸散：目标位置 8 道短斩痕向外放射（确定性：等分角 + 条目序号偏移基角），
+   *   随进度外扩淡出。
+   * 与共享 DeathBurst 池无关（独立轻量绘制）；不做震屏（用户明确要求，本函数无相机操作）。
+   */
+  private drawSniperExecutes(g: Phaser.GameObjects.Graphics, s: SimState): void {
+    const list = s.meta[SNIPER_EXECUTE_VFX_KEY];
+    if (!Array.isArray(list)) {
+      return;
+    }
+    const wallY = s.layout.wallLineY;
+    for (let i = 0; i < list.length; i++) {
+      const v = list[i] as SniperHitVfx | undefined;
+      if (!v || !Number.isFinite(v.x + v.y + v.untilMs)) {
+        continue;
+      }
+      const remain = v.untilMs - s.timeMs;
+      if (remain <= 0) {
+        continue;
+      }
+      const t = 1 - clamp01(remain / SNIPER_EXECUTE_VFX_MS);
+      const fade = clamp01(remain / SNIPER_EXECUTE_VFX_MS);
+      // 竖贯斩线：目标上方 120px（不足则钳回屏顶）一直切到墙线。
+      const topY = Math.max(0, v.y - 120);
+      strokeLine(g, v.x, topY, v.x, wallY, 12, SNIPER_EXECUTE_COLORS.outer, 0.3 * fade);
+      strokeLine(g, v.x, topY, v.x, wallY, 5, SNIPER_EXECUTE_COLORS.core, 0.75 * fade);
+      strokeLine(g, v.x, topY, v.x, wallY, 1.8, SNIPER_EXECUTE_COLORS.hot, 0.95 * fade);
+      // 能量迸散：8 道放射短斩痕。
+      const innerR = 5 + 16 * t;
+      const len = 6 + 14 * t;
+      const rot = i * 0.55 + 0.35;
+      for (let k = 0; k < 8; k++) {
+        const a = rot + (k * Math.PI) / 4;
+        const cosA = Math.cos(a);
+        const sinA = Math.sin(a);
+        strokeLine(
+          g,
+          v.x + cosA * innerR,
+          v.y + sinA * innerR,
+          v.x + cosA * (innerR + len),
+          v.y + sinA * (innerR + len),
+          2.2,
+          SNIPER_EXECUTE_COLORS.core,
+          0.7 * fade,
+        );
+      }
+      g.fillStyle(SNIPER_EXECUTE_COLORS.hot, 0.8 * fade);
+      g.fillCircle(v.x, v.y, Math.max(0.5, 4 * (1 - t)));
+    }
+  }
+
+  /**
+   * 灼热光束协同开火触发脉冲（meta['coordinated_fire_vfx'] = CoordinatedFireVfx 单对象，G6）：
+   * 任一目标协同计数达阈值触发全队齐射的瞬间由模拟层覆写一条（坐标 = 触发目标当前位置，
+   * 单键覆写 = 同屏至多一个活跃脉冲），留存 350ms（core COORDINATED_FIRE_VFX_MS 同源导入，
+   * 避免 350 语义两处漂移），前 60% 扩散、后 40% 淡出。表现两层：
+   * - 触发目标：金/青双色扩散双环（金外环领先、青内环跟随）+ 8 道交替金/青短芒（「同步
+   *   脉冲」感）+ 白热中心点；
+   * - 玩家（画布固定角色位）：小型同色响应双环（表示「全队收到」），随扩散微微放大。
+   * 全部为条目坐标与剩余时间的纯函数，零分配立即模式重绘；不做震屏（与 G5 同约定）。
+   * 齐射被目标中途死亡终止时模拟层不回滚条目：本函数只认 untilMs，自然过期，无需特判。
+   */
+  private drawCoordinatedFire(g: Phaser.GameObjects.Graphics, s: SimState): void {
+    const v = s.meta[COORDINATED_FIRE_VFX_KEY] as CoordinatedFireVfx | undefined;
+    if (!v || !Number.isFinite(v.x + v.y + v.untilMs)) {
+      return;
+    }
+    const remain = v.untilMs - s.timeMs;
+    if (remain <= 0) {
+      return; // 已过期：不再渲染（模拟层下次触发覆写，无需视图清理）
+    }
+    const t = 1 - clamp01(remain / COORDINATED_FIRE_VFX_MS); // 0→1 生命进度
+    // 前 60% 扩散（0→1）、后 40% 淡出（1→0）。
+    const expand = clamp01(t / 0.6);
+    const fade = t < 0.6 ? 1 : clamp01(1 - (t - 0.6) / 0.4);
+
+    // —— 触发目标：金/青双色扩散双环（金外环领先、青内环跟随）——
+    const goldR = 6 + 36 * expand;
+    const cyanR = 2 + 26 * expand;
+    g.lineStyle(5, COORDINATED_COLORS.goldOuter, 0.22 * fade);
+    g.strokeCircle(v.x, v.y, goldR + 2);
+    g.lineStyle(2.5, COORDINATED_COLORS.goldCore, 0.7 * fade);
+    g.strokeCircle(v.x, v.y, goldR);
+    g.lineStyle(4, COORDINATED_COLORS.cyanOuter, 0.2 * fade);
+    g.strokeCircle(v.x, v.y, cyanR + 2);
+    g.lineStyle(2, COORDINATED_COLORS.cyanCore, 0.65 * fade);
+    g.strokeCircle(v.x, v.y, cyanR);
+
+    // —— 8 道短芒：交替金/青，随扩散外移伸长（基角固定等分，确定性）——
+    const innerR = 4 + 12 * expand;
+    const rayLen = 5 + 8 * expand;
+    for (let k = 0; k < 8; k++) {
+      const a = (k * Math.PI) / 4;
+      const cosA = Math.cos(a);
+      const sinA = Math.sin(a);
+      const rayColor = k % 2 === 0 ? COORDINATED_COLORS.goldCore : COORDINATED_COLORS.cyanCore;
+      strokeLine(
+        g,
+        v.x + cosA * innerR,
+        v.y + sinA * innerR,
+        v.x + cosA * (innerR + rayLen),
+        v.y + sinA * (innerR + rayLen),
+        2,
+        rayColor,
+        0.8 * fade,
+      );
+    }
+    // 白热中心点：触发瞬间最亮，随进度收缩。
+    g.fillStyle(COORDINATED_COLORS.hot, 0.9 * fade);
+    g.fillCircle(v.x, v.y, Math.max(0.5, 3.5 * (1 - t)));
+
+    // —— 玩家响应环（画布固定角色位）：小型同色响应双环，「全队收到」 ——
+    const px = s.character.x;
+    const py = s.character.y;
+    const pGoldR = 5 + 4 * expand;
+    const pCyanR = 11 + 7 * expand;
+    g.lineStyle(3, COORDINATED_COLORS.cyanOuter, 0.16 * fade);
+    g.strokeCircle(px, py, pCyanR + 1.5);
+    g.lineStyle(1.5, COORDINATED_COLORS.cyanCore, 0.55 * fade);
+    g.strokeCircle(px, py, pCyanR);
+    g.lineStyle(1.5, COORDINATED_COLORS.goldCore, 0.4 * fade);
+    g.strokeCircle(px, py, pGoldR);
   }
 
   /**
@@ -1217,30 +1383,13 @@ export class MainScene extends Phaser.Scene {
     g.strokeRect(40, 40, w - 80, h - 80);
   }
 
-  /**
-   * HUD 武器列表行：如「武器 轨道贯穿炮 Lv.1」，多把武器以「、」连接
-   * （顺序 = weaponStates 键序，确定性）。数据表缺该武器 id 时退回显示 id（不抛错）。
-   */
-  private weaponLine(s: SimState): string {
-    const ids = Object.keys(s.weaponStates);
-    if (ids.length === 0) {
-      return '武器 无';
-    }
-    const parts: string[] = [];
-    for (let i = 0; i < ids.length; i++) {
-      const id = ids[i];
-      const name = WEAPON_DEFS[id]?.name ?? id;
-      parts.push(`${name} Lv.${s.weaponStates[id].level}`);
-    }
-    return `武器 ${parts.join('、')}`;
-  }
-
-  /** HUD（左上角等宽字体）：当前模式 / 存活时间 mm:ss / 等级 / 击杀数 / 武器列表 + 细经验条。 */
+  /** HUD（左上角等宽字体）：当前模式 / 存活时间 mm:ss / 等级 / 击杀数 + 细经验条；武器列表改为胶囊芯片（G1）。 */
   private renderHud(s: SimState): void {
     const modeLabel = this.session.mode === 'endless' ? '无尽' : '通关';
     this.hudText.setText(
-      `模式 ${modeLabel}\n存活 ${this.formatTime(s.timeMs)}\n等级 ${s.progress.level}\n击杀 ${this.kills}\n${this.weaponLine(s)}`,
+      `模式 ${modeLabel}\n存活 ${this.formatTime(s.timeMs)}\n等级 ${s.progress.level}\n击杀 ${this.kills}`,
     );
+    this.syncWeaponChips(s);
 
     const need = xpToNext(s);
     const xpPct = need > 0 && Number.isFinite(need) ? clamp01(s.progress.xp / need) : 0;
@@ -1249,6 +1398,103 @@ export class MainScene extends Phaser.Scene {
     g.fillRect(HUD_X, XP_BAR_Y, XP_BAR_WIDTH, XP_BAR_HEIGHT);
     g.fillStyle(COLOR_XP_FILL, 1);
     g.fillRect(HUD_X, XP_BAR_Y, XP_BAR_WIDTH * xpPct, XP_BAR_HEIGHT);
+  }
+
+  /**
+   * 武器胶囊芯片同步（G1）：每帧与 weaponStates 的键序/等级逐项 diff——无变化零写入
+   * （Text 不 setText / 不改样式，chipGfx 不重绘），仅键集或任一等级变化时更新对应芯片
+   * 并整帧重绘芯片底。芯片文本为常驻池：按需懒建、复用、隐藏多余，不逐帧 new 对象。
+   * 布局：竖排左对齐锚定经验条下方（CHIP_START_Y 起、CHIP_STRIDE 行距），宽度按文本
+   * 自适应 + 内边距；栏位上限 config.maxWeaponSlots = 4 → 单列至多 4 枚（详见 CHIP_START_Y
+   * 处注释），不溢出画布。武器顺序 = weaponStates 键序（addWeapon 插入序，确定性）；
+   * 数据表缺该武器 id 时退回显示 id（不抛错）。
+   * 等级表现：Lv.0 灰调（未强化）/ Lv.1~9 常规白 / 达到该武器 maxLevel 金描边 +「MAX」
+   * 角标替代 Lv.n 字样（无解锁后的 Lv.11+ 歧义：满级即 MAX，突破上限继续叠牌仍是满级）。
+   */
+  private syncWeaponChips(s: SimState): void {
+    const ids = Object.keys(s.weaponStates);
+
+    // —— diff：键序与等级逐项比对（长度 + 每项值），无变化直接返回（零写入） ——
+    let changed = ids.length !== this.chipIds.length || ids.length !== this.chipLevels.length;
+    if (!changed) {
+      for (let i = 0; i < ids.length; i++) {
+        const id = ids[i];
+        if (id !== this.chipIds[i] || s.weaponStates[id].level !== this.chipLevels[i]) {
+          changed = true;
+          break;
+        }
+      }
+    }
+    if (!changed) {
+      return;
+    }
+
+    // —— 同步芯片文本（仅变化项 setText/改样式/改位；新增项懒建） ——
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      const level = s.weaponStates[id].level;
+      if (
+        i < this.chipTexts.length &&
+        id === this.chipIds[i] &&
+        level === this.chipLevels[i] &&
+        this.chipTexts[i].visible
+      ) {
+        continue; // 该芯片无变化
+      }
+      const text = this.chipTexts[i] ?? this.createChipText();
+      const def = WEAPON_DEFS[id];
+      const maxed = level >= (def?.maxLevel ?? 10);
+      const style = maxed ? CHIP_STYLE_MAX : level <= 0 ? CHIP_STYLE_LV0 : CHIP_STYLE_STD;
+      text.setText(maxed ? `${def?.name ?? id} MAX` : `${def?.name ?? id} Lv.${level}`);
+      text.setColor(style.text);
+      text.setPosition(
+        CHIP_X + CHIP_PAD_X,
+        CHIP_START_Y + i * CHIP_STRIDE + (CHIP_HEIGHT - text.height) / 2,
+      );
+      text.setVisible(true);
+    }
+    for (let i = ids.length; i < this.chipTexts.length; i++) {
+      this.chipTexts[i].setVisible(false); // 武器减少（换局等）：多余芯片隐藏（池保留复用）
+    }
+
+    // —— 重绘芯片底（仅 diff 变化时）：圆角描边底，宽度随当前文本自适应 ——
+    const g = this.chipGfx;
+    g.clear();
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      const level = s.weaponStates[id].level;
+      const def = WEAPON_DEFS[id];
+      const maxed = level >= (def?.maxLevel ?? 10);
+      const style = maxed ? CHIP_STYLE_MAX : level <= 0 ? CHIP_STYLE_LV0 : CHIP_STYLE_STD;
+      const w = (this.chipTexts[i]?.width ?? 0) + CHIP_PAD_X * 2;
+      const y = CHIP_START_Y + i * CHIP_STRIDE;
+      g.fillStyle(CHIP_BG, 0.55);
+      g.fillRoundedRect(CHIP_X, y, w, CHIP_HEIGHT, CHIP_RADIUS);
+      g.lineStyle(1.5, style.stroke, maxed ? 1 : 0.85);
+      g.strokeRoundedRect(CHIP_X, y, w, CHIP_HEIGHT, CHIP_RADIUS);
+    }
+
+    // —— 记录 diff 基准（Object.keys 每帧返回新数组，可安全持有） ——
+    this.chipIds = ids;
+    const levels: number[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      levels.push(s.weaponStates[ids[i]].level);
+    }
+    this.chipLevels = levels;
+  }
+
+  /** 新建一枚芯片文本（常驻池懒建；字体/投影基线与 hudText 一致，仅字号缩小）。 */
+  private createChipText(): Phaser.GameObjects.Text {
+    const text = this.add
+      .text(0, 0, '', {
+        fontFamily: 'Consolas, "Courier New", monospace',
+        fontSize: '14px',
+        color: '#f2faff',
+      })
+      .setDepth(10)
+      .setShadow(0, 1, 'rgba(0,0,0,0.85)', 2);
+    this.chipTexts.push(text);
+    return text;
   }
 
   private formatTime(timeMs: number): string {

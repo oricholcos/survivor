@@ -68,8 +68,9 @@ function collectSegmentEnemies(
 export const behavior: WeaponBehavior = {
   name: 'piercing_bolt',
 
-  fire(state, weaponId, stats) {
-    const target = findTarget(state);
+  fire(state, weaponId, stats, forcedTarget?) {
+    // forcedTarget（灼热光束协同开火强制指定）：主射线指向它，三叉等分支照常。
+    const target = forcedTarget ?? findTarget(state);
     if (!target) {
       const ws = state.weaponStates[weaponId];
       if (ws) {

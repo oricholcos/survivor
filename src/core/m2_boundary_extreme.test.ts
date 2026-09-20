@@ -2,8 +2,7 @@
 // 覆盖：
 // 1. 连射待发队列 (burst_shot) 在开火后怪物瞬间全灭时的平滑表现与队列清理；
 // 2. 分裂弹 (split_shot) 在无可用存活目标（全部敌人死亡/仅有被排除目标）时的零报错与优雅降级；
-// 3. 多射4层 + 连射2层高并发弹幕下的弹丸完整生命周期闭环与对象池复用稳定性；
-// 4. 扇面霰弹 (scatter) 切换至龙息模式 (dragon_breath_mode) 时在途连射波作废、弹丸自然回收与互斥约束。
+// 3. 多射4层 + 连射2层高并发弹幕下的弹丸完整生命周期闭环与对象池复用稳定性。
 import { describe, expect, it } from 'vitest';
 import { loadEffectDefs } from '../data/effects';
 import { loadWeaponDefs } from '../data/weapons';
@@ -18,7 +17,9 @@ import './behaviors/index'; // 自动加载并注册所有武器行为
 
 loadEffectDefs();
 
-const BALLISTIC_WEAPONS = ['charge_sniper', 'scatter', 'homing_missile', 'mortar', 'prism'] as const;
+// 任务三：蓄能狙击已移出多射/连射/分裂三张通用牌的 applyTo（恒单发、无连射调度、
+// 无分裂），极端边界场景只覆盖仍在池内的四把弹道武器。
+const BALLISTIC_WEAPONS = ['scatter', 'homing_missile', 'mortar', 'prism'] as const;
 
 function makeEnemy(state: SimState, x: number, y: number, hp = 1e6): Enemy {
   const e: Enemy = {
@@ -105,11 +106,11 @@ describe('M2 极端边界 1: 开火后怪物瞬间全灭时连射波的表现', 
 
   it('游戏已结算 (state.over != null) 时，连射波重放被短路保护', () => {
     const state = createSimState(1);
-    const def = loadWeaponDefs().charge_sniper;
+    const def = loadWeaponDefs().prism;
     const beh = getBehavior(def.behavior);
 
     makeEnemy(state, 360, 1100);
-    fireWeaponWithCards(state, 'charge_sniper', ['burst_shot']);
+    fireWeaponWithCards(state, 'prism', ['burst_shot']);
 
     // 游戏在跟发波到达前判定胜负
     state.timeMs += 150;

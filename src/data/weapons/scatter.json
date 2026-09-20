@@ -18,14 +18,14 @@
     {
       "id": "burn_bullet",
       "name": "燃烧弹",
-      "description": "每枚弹丸命中附着燃烧",
+      "description": "每枚弹丸命中附着燃烧：每 0.5s 一跳、每跳 3 伤、持续 3s（dot 频率牌加快跳伤；一次性）",
       "once": true,
       "params": [{ "key": "burnBullet", "value": 1, "op": "set" }]
     },
     {
       "id": "knockback",
       "name": "击退",
-      "description": "命中把敌人沿弹来向击退",
+      "description": "命中把敌人竖直向上击退（推离城墙方向，冲量 60；生命上限越高的敌人被推得越短；一次性）",
       "once": true,
       "params": [
         { "key": "knockback", "value": 1, "op": "set" },
@@ -35,7 +35,7 @@
     {
       "id": "bounce_up",
       "name": "弹丸反弹",
-      "description": "弹丸死亡后向范围内新的敌人反弹一次（可叠 2 次，突破后上限 4 次）",
+      "description": "弹丸消亡（穿透耗尽或到时）时向 200px 内最近的未命中敌人反弹一次，继承伤害/燃烧/击退（弹射范围固定，不受范围强化影响；可叠 2 次，突破后上限 4 次）",
       "maxCount": 2,
       "hardMax": 4,
       "params": [

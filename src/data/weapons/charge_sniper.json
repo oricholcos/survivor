@@ -16,7 +16,7 @@
     {
       "id": "pierce_shot",
       "name": "贯穿弹",
-      "description": "穿透 +2（可叠 2 次，突破后上限 4 次）",
+      "description": "子弹获得 +2 次贯穿：命中后继续飞行，对沿线每个敌人独立结算伤害（可叠 2 次，突破后上限 4 次；持有边境折返时每张使命中计数 +2）",
       "maxCount": 2,
       "hardMax": 4,
       "params": [
@@ -27,7 +27,7 @@
     {
       "id": "headshot",
       "name": "斩首",
-      "description": "目标 hp ≥ 60% 上限时伤害 ×1.5",
+      "description": "开火瞬间若锁定目标当前生命 ≥ 60% 最大生命，本波伤害 ×1.5（残血目标不增伤；与处决强化乘区叠加；一次性）",
       "once": true,
       "params": [
         { "key": "headshot", "value": 1, "op": "set" },
@@ -38,18 +38,41 @@
     {
       "id": "execute_up",
       "name": "处决强化",
-      "description": "斩首倍率 +0.25（可叠 2 次，突破后上限 4 次）",
+      "description": "斩首倍率 +0.25/张（×1.5 → ×1.75 → ×2.0…；需先持有斩首；可叠 2 次，突破后上限 4 次）",
       "requiresCard": "headshot",
       "maxCount": 2,
       "hardMax": 4,
       "params": [{ "key": "headshotMultiplier", "value": 0.25, "op": "add" }]
     },
     {
-      "id": "slow_hit",
-      "name": "命中减速",
-      "description": "命中附带减速 50%、持续 2s",
+      "id": "crit_shot",
+      "name": "爆头",
+      "description": "每次命中时 15% 概率造成 550% 伤害（每次命中独立判定，可与斩首乘区叠乘；一次性）",
       "once": true,
-      "params": [{ "key": "slowHit", "value": 1, "op": "set" }]
+      "params": [
+        { "key": "critShot", "value": 1, "op": "set" },
+        { "key": "critChance", "value": 0.15, "op": "set" },
+        { "key": "critMultiplier", "value": 5.5, "op": "set" }
+      ]
+    },
+    {
+      "id": "execution_order",
+      "name": "死刑宣告",
+      "description": "本武器任何一次击杀（直接击杀、爆头击杀、边境折返多次命中击杀、处决击杀）该次击杀经验 ×1.25；并保留处决：伤害结算后目标存活且生命低于 20% 最大生命（Boss 为 7%）→ 立即击杀（每次命中独立判定；一次死亡只放大一次；一次性）",
+      "once": true,
+      "params": [
+        { "key": "executionOrder", "value": 1, "op": "set" },
+        { "key": "executionHpFactor", "value": 0.2, "op": "set" },
+        { "key": "executionBossHpFactor", "value": 0.07, "op": "set" },
+        { "key": "executionXpFactor", "value": 1.25, "op": "set" }
+      ]
+    },
+    {
+      "id": "border_ricochet",
+      "name": "边境折返",
+      "description": "子弹获得边境折返：撞地图边缘必反弹且不消耗命中计数，命中计数 = 1 + 2×贯穿弹张数；取消 1200ms 飞行时长上限——计数未耗尽子弹不会消失，持续反弹飞行直至计数耗尽的那次命中结算后销毁（未拿贯穿弹时计数 1，首个命中即毁；一次性）",
+      "once": true,
+      "params": [{ "key": "borderRicochet", "value": 1, "op": "set" }]
     }
   ]
 }

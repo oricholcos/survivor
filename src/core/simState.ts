@@ -74,6 +74,33 @@ export function setRngFactory(fn: (seed: number) => Rng): void {
   rngFactory = fn;
 }
 
+// —— 第二独立随机流（战斗期掷点专用，任务三「爆头」引入） ——
+// 契约（锁定）：
+// - 种子 = 会话种子 XOR 0x9E3779B9（黄金比例常数），走固定 LCG（createLcgRng）——
+//   刻意不经过 rngFactory：引导层把工厂替换为 mulberry32 只影响 state.rng 主随机流，
+//   战斗期掷点流不受引导层注入影响，任意引导下同种子同序列。
+// - 绝不消费 state.rng（升级三选一 / 开局武器抽取 / 修复包判定等主随机流序列零扰动）。
+// - 存于 state.meta 单键（meta 为自由扩展袋，不扩 SimState 类型契约）；同种子全程可复现。
+
+/** 第二独立随机流的 meta 单键（值为 Rng 实例）。 */
+export const BATTLE_RNG_META_KEY = 'battle_rng';
+
+/** 战斗期掷点流的种子扰动常数（黄金比例；与会话种子 XOR 后作 LCG 种子）。 */
+const BATTLE_RNG_SEED_XOR = 0x9e3779b9;
+
+/**
+ * 取一局的战斗期随机流（懒创建，幂等）：种子 = 会话种子 XOR 0x9E3779B9 的固定 LCG。
+ * 仅战斗期掷点（当前唯一消费方：蓄能狙击【爆头】）使用；测试可整体替换该 meta 键值注入桩。
+ */
+export function getBattleRng(state: SimState): Rng {
+  let rng = state.meta[BATTLE_RNG_META_KEY] as Rng | undefined;
+  if (!rng) {
+    rng = createLcgRng((state.seed ^ BATTLE_RNG_SEED_XOR) | 0);
+    state.meta[BATTLE_RNG_META_KEY] = rng;
+  }
+  return rng;
+}
+
 /**
  * 创建一局初始 SimState。
  * @param seed 随机种子（同种子 → 同序列 → 全程可复现）
@@ -82,7 +109,7 @@ export function setRngFactory(fn: (seed: number) => Rng): void {
 export function createSimState(seed: number, config?: Partial<SimConfig>): SimState {
   const mergedConfig: SimConfig = { ...DEFAULT_CONFIG, ...config };
   const layout: Layout = { ...DEFAULT_LAYOUT };
-  return {
+  const state: SimState = {
     layout,
     config: mergedConfig,
     seed,
@@ -102,4 +129,7 @@ export function createSimState(seed: number, config?: Partial<SimConfig>): SimSt
     nextId: 1,
     meta: {},
   };
+  // 第二独立随机流（战斗期掷点专用）：随局建立，种子 = 会话种子 XOR 0x9E3779B9（见上契约）。
+  state.meta[BATTLE_RNG_META_KEY] = createLcgRng((seed ^ BATTLE_RNG_SEED_XOR) | 0);
+  return state;
 }

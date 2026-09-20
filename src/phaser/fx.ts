@@ -59,18 +59,59 @@ export function zoneColor(effectKind: string | undefined, fallback: number | und
 
 /** meta 键前缀/键（与 core/behaviors 约定一致，视图只读）。 */
 export const HEAT_BEAM_VFX_PREFIX = 'heat_beam_vfx:';
-export const DRAGON_BREATH_VFX_PREFIX = 'dragon_breath_vfx:';
 /** 轨道贯穿炮 hitscan 射线（T5.2b）：按 weaponId 分键，值为 { segments, untilMs }。 */
 export const RAIL_VFX_PREFIX = 'rail_vfx:';
 /** 迫击榴弹落地爆炸（T5.2b）：共享单键，值为 MortarBlastVfx[] 滚动数组。 */
 export const MORTAR_BLAST_VFX_KEY = 'mortar_blast_vfx';
 /** 弹射棱镜连锁闪电（T5.3c）：共享单键，值为 PrismZapSegment[] 滚动数组。 */
 export const PRISM_ZAP_VFX_KEY = 'prism_zap_vfx';
+/** 蓄能狙击爆头星芒环（G5）：共享单键，值为 SniperHitVfx[] 滚动数组。 */
+export const SNIPER_CRIT_VFX_KEY = 'sniper_crit_vfx';
+/** 蓄能狙击死刑宣告斩杀（G5）：共享单键，值为 SniperHitVfx[] 滚动数组。 */
+export const SNIPER_EXECUTE_VFX_KEY = 'sniper_execute_vfx';
+/** 震波壁垒行进波（F3）：共享单键，值为 sweep 状态本体（视图字段 { startMs, waveDistance, thickness, untilMs }——波前从墙线向上行进，扫掠时长恒 400ms 后淡出）。 */
+export const SEISMIC_PULSE_VFX_KEY = 'seismic_pulse_vfx';
+/** 灼热光束协同开火触发脉冲（G6）：共享单键，值为 CoordinatedFireVfx 单对象（覆写式，同震波 sweep 键风格）。 */
+export const COORDINATED_FIRE_VFX_KEY = 'coordinated_fire_vfx';
+
+/** 震波壁垒冲击波带霓虹配色（外圈金橙泛光 / 内芯亮线 / 白热波前）。 */
+export const SEISMIC_PULSE_COLORS = {
+  outer: 0xffc94d,
+  core: 0xfff0b0,
+  hot: 0xffffff,
+};
 
 /** 连锁闪电霓虹色彩配置（外圈粗线 / 内芯亮线 / 中心白热）。 */
 export const PRISM_ZAP_COLORS = {
   outer: 0x8a3cff,
   core: 0xd8b4fe,
+  hot: 0xffffff,
+};
+
+/** 爆头星芒环霓虹配色（G5）：金色外圈泛光 / 亮金内芯 / 白热热点。 */
+export const SNIPER_CRIT_COLORS = {
+  outer: 0xffc94d,
+  core: 0xffe28a,
+  hot: 0xffffff,
+};
+
+/** 死刑宣告斩杀霓虹配色（G5）：暗红外圈泛光 / 亮红内芯 / 灼白热点。 */
+export const SNIPER_EXECUTE_COLORS = {
+  outer: 0xd0202a,
+  core: 0xff4038,
+  hot: 0xffc9b8,
+};
+
+/**
+ * 协同开火「同步脉冲」霓虹配色（G6）：金（触发目标端主色）+ 青（玩家响应/全队色）双色
+ * 组合 + 白热中心。与爆头的单色金（SNIPER_CRIT_COLORS 0xffc94d 系）拉开：本特效为
+ * 金/青双色双环 + 8 芒（青为全局 HUD 描边常用的 0x6fc3ff 系），色相与形态双重可辨识。
+ */
+export const COORDINATED_COLORS = {
+  goldOuter: 0xffd24a,
+  goldCore: 0xffe89a,
+  cyanOuter: 0x6fc3ff,
+  cyanCore: 0xa8dcff,
   hot: 0xffffff,
 };
 

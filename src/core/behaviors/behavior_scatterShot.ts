@@ -1,6 +1,6 @@
 // src/core/behaviors/behavior_scatterShot.ts —— 扇面霰弹：朝正上方（-y）扇形发射多枚短程弹丸，
-// 角度平方分布（越靠中心越密）；升级节点（燃烧弹/击退/弹丸反弹/龙息）全部以 JSON mods 数值
-// 开关表达（burnBullet/knockback/bounce/dragonBreath = 1），unlock 字符串仅供生成器展示，
+// 角度平方分布（越靠中心越密）；升级节点（燃烧弹/击退/弹丸反弹）全部以 JSON mods 数值
+// 开关表达（burnBullet/knockback/bounce = 1），unlock 字符串仅供生成器展示，
 // 行为只读 stats 开关——此约定对全部 M2 武器统一适用。
 // 数值契约：伤害/射速/弹速/穿透/寿命/弹数/扇角/弹射范围/弹射次数/击退力全部来自 WeaponStats
 // （weapons/*.json）；几何量（弹丸半径）允许硬编码。零随机（角度分布为确定性映射，任意种子可复现）。
@@ -17,10 +17,6 @@
 //   「最近且互不相同」（pickNearestDistinctEnemies）的存活敌人、与主弹同弹种（同弹速/半径/
 //   燃烧模板/击退随行；不继承弹丸反弹——次级弹为简化单体）、伤害 = 主弹 × splitDamageFactor、
 //   pierce 0、不再分裂（splitDone 旗标）、不经 fire 路径（不吃多射/连射）。每弹至多分裂一次。
-// - 龙息模式互斥（dragon_breath_mode 专属牌，stats.dragonBreath=1）：锥形持续伤害，不发弹丸——
-//   多射/连射/分裂全部忽略。行为侧双保险：fire 入口按 stats 短路（不发弹、不排波）；重放波
-//   额外按当前牌表（getCardCount(dragon_breath_mode)>0）短路——玩家先拿多射/连射再转龙息时，
-//   在途待发波不再喷弹（发射时数值结算约定的例外：质变牌立即生效）。
 // - dot 频率（dot_freq 通用牌，requiresCard=burn_bullet）：stats.dotTickMult = 1.3^张数（cards
 //   注入）——燃烧模板的 tick 间隔 ÷ 本值（effect.data.tickMs 逐实例覆盖；仅 mult>1 时写入，
 //   不给实例钉死与效果表无关的间隔）。
@@ -165,8 +161,7 @@ export const behavior: WeaponBehavior = {
   },
 
   /**
-   * 每帧钩子：消费连射待发波——到期波重放 fireVolley（再喷完整 projectileCount 枚；
-   * 玩家已转龙息模式则该波作废，见 fireVolley 的双保险短路）。
+   * 每帧钩子：消费连射待发波——到期波重放 fireVolley（再喷完整 projectileCount 枚）。
    */
   update(state, dtMs) {
     void dtMs; // 连射重放不随帧缩放：到期判定用 state.timeMs 绝对时间轴

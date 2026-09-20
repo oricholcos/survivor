@@ -1,0 +1,62 @@
+{
+  "id": "seismic_wall",
+  "name": "震波壁垒",
+  "behavior": "seismic_pulse",
+  "maxLevel": 10,
+  "base": {
+    "damage": 35,
+    "intervalMs": 2400,
+    "waveDistance": 220,
+    "bandDepth": 40,
+    "knockbackForce": 110,
+    "aftershockDelayMs": 400,
+    "projectileSpeed": 0,
+    "pierce": 0,
+    "ttlMs": 0
+  },
+  "rangeKeys": ["waveDistance"],
+  "cards": [
+    {
+      "id": "aftershock",
+      "name": "余震",
+      "description": "每次行进波发出后 400ms（波恰扫完全程时），对本次扫过的完整区带（距墙线 ≤ 发射时行进距离，全宽度）内当时存活的敌人追加一次余震：伤害 = 发射时基础伤害 ×（30% × 层数），不击退不眩晕；持有过载共振时，余震对仍处于眩晕中的敌人伤害 ×2（可叠 3 次，突破后上限 3 次）",
+      "maxCount": 3,
+      "hardMax": 3,
+      "params": [{ "key": "aftershockFactor", "value": 0.3, "op": "add" }]
+    },
+    {
+      "id": "stun_deepen",
+      "name": "震荡加深",
+      "description": "行进波波前经过时附着的眩晕时长 +150ms/层（基础 800ms；Boss 减半作用于叠加后的时长：2 层时普通 1100ms、Boss 550ms）（可叠 2 次，突破后上限 2 次）",
+      "maxCount": 2,
+      "hardMax": 2,
+      "params": [{ "key": "stunBonusMs", "value": 150, "op": "add" }]
+    },
+    {
+      "id": "earth_split",
+      "name": "地裂",
+      "description": "波前厚度 +20/层（基础 40px：波前经过判定带宽 |y − 波前| ≤ 厚度随其加厚，行进距离不变；范围强化牌只作用于行进距离）（可叠 2 次，突破后上限 2 次）",
+      "maxCount": 2,
+      "hardMax": 2,
+      "params": [{ "key": "bandDepth", "value": 20, "op": "add" }]
+    },
+    {
+      "id": "overload_resonance",
+      "name": "过载共振",
+      "description": "对处于眩晕中的敌人伤害 ×2：波前经过时的每次伤害结算即判（判定时刻 = 波前抵达该敌人的那一刻——本波自己震晕的目标在本波内不重复结算，下一波波前再经过时对其 ×2；余震结算时仍眩晕的目标同样 ×2；一次性）",
+      "once": true,
+      "params": [{ "key": "overloadResonance", "value": 1, "op": "set" }]
+    },
+    {
+      "id": "wall_resonance",
+      "name": "城垣共鸣",
+      "description": "单次行进波从发出到扫完累计命中 ≥8 个敌人（含被本波击杀者；余震命中不计数）时，城墙回复 4×层数 hp（上限钳制在墙血上限）（可叠 2 次，突破后上限 2 次）",
+      "maxCount": 2,
+      "hardMax": 2,
+      "params": [
+        { "key": "wallResonanceHeal", "value": 4, "op": "add" },
+        { "key": "wallResonanceHits", "value": 8, "op": "set" }
+      ]
+    }
+  ]
+}

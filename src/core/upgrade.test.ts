@@ -5,7 +5,12 @@
 // （card → cards++ 且 level+1、>10 允许；new_weapon → 0 级起步）、中文文案可直接供 UI 渲染。
 // 武器 defs 用手写字面量夹具（cards 即合并后的目录），不依赖真实数据表。
 import { describe, expect, it } from 'vitest';
-import { applyUpgrade, rollUpgradeOptions, sanitizeUnlimitedCardDescription } from './upgrade';
+import {
+  applyUpgrade,
+  buildCardDescription,
+  rollUpgradeOptions,
+  sanitizeUnlimitedCardDescription,
+} from './upgrade';
 import type { UpgradeOption } from './upgrade';
 import type { WeaponDef } from './weapons';
 import {
@@ -16,6 +21,7 @@ import {
 } from './cards';
 import { createSimState } from './simState';
 import type { Rng, SimState } from './types';
+import { loadCardDefs } from '../data/cards';
 import { loadWeaponDefs } from '../data/weapons';
 
 /** 牌夹具：一次性布尔牌。 */
@@ -676,15 +682,23 @@ describe('牌池升级流完整生命周期：0级起步 -> 选牌等级提升 -
 
   describe('突破上限卡牌描述清洗与分裂牌过滤', () => {
     it('sanitizeUnlimitedCardDescription 清洗上限文本，保留正常文案', () => {
-      expect(sanitizeUnlimitedCardDescription('同时多发射 1 颗弹体（可叠 4 次）')).toBe('同时多发射 1 颗弹体');
-      expect(sanitizeUnlimitedCardDescription('每颗弹体跟发 1 波同角度弹，波间隔 150ms（可叠 2 次）')).toBe('每颗弹体跟发 1 波同角度弹，波间隔 150ms');
-      expect(sanitizeUnlimitedCardDescription('该武器范围参数 ×1.2（可叠 5 次）')).toBe('该武器范围参数 ×1.2');
-      expect(sanitizeUnlimitedCardDescription('该武器附着的持续伤害 tick 间隔 ÷1.3（可叠 3 次）')).toBe('该武器附着的持续伤害 tick 间隔 ÷1.3');
+      expect(sanitizeUnlimitedCardDescription('同时多发射 1 枚弹丸（可叠 4 次）')).toBe('同时多发射 1 枚弹丸');
+      expect(sanitizeUnlimitedCardDescription('开火后跟发 1 波齐射（每波完整再发一轮弹丸），波间隔 150ms（可叠 2 次）')).toBe(
+        '开火后跟发 1 波齐射（每波完整再发一轮弹丸），波间隔 150ms',
+      );
+      expect(sanitizeUnlimitedCardDescription('该武器爆炸半径 ×1.2（可叠 5 次）')).toBe('该武器爆炸半径 ×1.2');
+      expect(sanitizeUnlimitedCardDescription('灼痕的灼烧每跳间隔 ÷1.3（可叠 3 次）')).toBe('灼痕的灼烧每跳间隔 ÷1.3');
+      // 「，上限 n 次」尾缀形式（合成的旧文案样本，覆盖清洗规则分支）：
       expect(sanitizeUnlimitedCardDescription('每次命中且折射计数>0时，折向300px内最近未受击敌人（折射-1，穿透-1，上限4次）')).toBe('每次命中且折射计数>0时，折向300px内最近未受击敌人（折射-1，穿透-1）');
       expect(sanitizeUnlimitedCardDescription('穿透 +1（可叠 4 次）')).toBe('穿透 +1');
       expect(sanitizeUnlimitedCardDescription('c1 ×N（上限 2）')).toBe('c1 ×N');
       expect(sanitizeUnlimitedCardDescription('该武器伤害 ×1.3（可叠加）')).toBe('该武器伤害 ×1.3（可叠加）');
-      expect(sanitizeUnlimitedCardDescription('目标 hp ≥ 60% 上限时伤害 ×1.5')).toBe('目标 hp ≥ 60% 上限时伤害 ×1.5');
+      expect(sanitizeUnlimitedCardDescription('散热速率 +6/s（基础 20/s；热量满 100 过热，开火间隔 ×1.6 持续 2.5s）（可叠 2 次）')).toBe(
+        '散热速率 +6/s（基础 20/s；热量满 100 过热，开火间隔 ×1.6 持续 2.5s）',
+      );
+      expect(sanitizeUnlimitedCardDescription('开火瞬间若锁定目标当前生命 ≥ 60% 最大生命，本波伤害 ×1.5（残血目标不增伤；与处决强化乘区叠加；一次性）')).toBe(
+        '开火瞬间若锁定目标当前生命 ≥ 60% 最大生命，本波伤害 ×1.5（残血目标不增伤；与处决强化乘区叠加；一次性）',
+      );
     });
 
     it('真实表解锁无限牌池后：无 hardMax 牌文案照旧清洗、hardMax 牌保留两段上限，且已持有分裂牌（split_shot）不再出现', () => {
@@ -710,10 +724,10 @@ describe('牌池升级流完整生命周期：0级起步 -> 选牌等级提升 -
       expect(splitOptions).toHaveLength(0);
 
       // 2. multi_shot 持有 4 < hardMax 8：解锁后依然进池，且因 hardMax 永久生效，
-      //    两段上限文案原样保留（不做突破清洗）。
+      //    两段上限文案原样保留（不做突破清洗）；描述为按武器生成的实体名词（榴弹壳体）。
       const multiMortar = options.find((o) => o.kind === 'card' && o.weaponId === 'mortar' && o.cardId === 'multi_shot');
       expect(multiMortar).toBeDefined();
-      expect(multiMortar!.description).toBe('同时多发射 1 颗弹体（可叠 4 次，突破后上限 8 次）');
+      expect(multiMortar!.description).toBe('同时多发射 1 枚榴弹壳体（可叠 4 次，突破后上限 8 次）');
 
       // 3. 不变式：凡保留「可叠 n 次」（带数字）文案的选项必是 hardMax 牌（带「突破后上限」两段说明）；
       //    dmg_up 等「（可叠加，上限 n 次）」措辞为纯 hardMax 牌，不在此列。
@@ -723,5 +737,175 @@ describe('牌池升级流完整生命周期：0级起步 -> 选牌等级提升 -
         }
       }
     });
+  });
+});
+
+describe('通用牌逐武器文案生成器（任务四：映射表驱动、无武器特判）', () => {
+  const REAL_DEFS = loadWeaponDefs();
+
+  /** 取某武器合并牌池里的通用牌 def（loadWeaponDefs 已把 cards.json 按 applyTo 合并进 def.cards）。 */
+  function genericOf(weaponId: string, cardId: string): CardDef {
+    const card = REAL_DEFS[weaponId].cards.find((c) => c.id === cardId);
+    if (!card) {
+      throw new Error(`武器 ${weaponId} 牌池缺少通用牌 ${cardId}`);
+    }
+    return card;
+  }
+
+  it('multi_shot：同一牌在不同武器生成不同弹体名词（弹丸/榴弹壳体/链弹/导弹；狙击已移出 applyTo）', () => {
+    expect(buildCardDescription(REAL_DEFS.scatter, genericOf('scatter', 'multi_shot'))).toBe(
+      '同时多发射 1 枚弹丸（可叠 4 次，突破后上限 8 次）',
+    );
+    expect(buildCardDescription(REAL_DEFS.mortar, genericOf('mortar', 'multi_shot'))).toBe(
+      '同时多发射 1 枚榴弹壳体（可叠 4 次，突破后上限 8 次）',
+    );
+    expect(buildCardDescription(REAL_DEFS.prism, genericOf('prism', 'multi_shot'))).toBe(
+      '同时多发射 1 枚链弹（可叠 4 次，突破后上限 8 次）',
+    );
+    expect(buildCardDescription(REAL_DEFS.homing_missile, genericOf('homing_missile', 'multi_shot'))).toContain('枚导弹');
+    // 任务三：蓄能狙击已移出三张通用牌的 applyTo——牌池里根本没有 multi_shot。
+    expect(REAL_DEFS.charge_sniper.cards.find((c) => c.id === 'multi_shot')).toBeUndefined();
+  });
+
+  it('burst_shot：跟发波文案带各武器弹体名词；波数/间隔数值来自牌表 params（狙击已移出 applyTo）', () => {
+    const nouns: Record<string, string> = {
+      scatter: '弹丸',
+      homing_missile: '导弹',
+      mortar: '榴弹壳体',
+      prism: '链弹',
+    };
+    for (const wid of Object.keys(nouns)) {
+      expect(buildCardDescription(REAL_DEFS[wid], genericOf(wid, 'burst_shot'))).toBe(
+        `开火后跟发 1 波齐射（每波完整再发一轮${nouns[wid]}），波间隔 150ms（跟发波重新索敌，无目标自动跳过）（可叠 2 次，突破后上限 4 次）`,
+      );
+    }
+    expect(REAL_DEFS.charge_sniper.cards.find((c) => c.id === 'burst_shot')).toBeUndefined();
+  });
+
+  it('split_shot：主/次弹名词与分裂触发点随武器（霰弹=弹丸命中后、榴弹=母弹爆炸后；狙击已移出 applyTo）', () => {
+    expect(buildCardDescription(REAL_DEFS.scatter, genericOf('scatter', 'split_shot'))).toBe(
+      '弹丸命中后分裂出至多 4 枚次级弹丸：各 20% 伤害、锁定最近的 4 个不同敌人（次级弹不再分裂、不触发多射与连射；本牌一次性）',
+    );
+    expect(buildCardDescription(REAL_DEFS.mortar, genericOf('mortar', 'split_shot'))).toContain('母弹爆炸后分裂出至多 4 枚次级榴弹');
+    expect(buildCardDescription(REAL_DEFS.homing_missile, genericOf('homing_missile', 'split_shot'))).toContain('导弹爆炸后分裂出至多 4 枚次级导弹');
+    expect(buildCardDescription(REAL_DEFS.prism, genericOf('prism', 'split_shot'))).toContain('主弹命中后分裂出至多 4 枚次级棱镜弹');
+    expect(REAL_DEFS.charge_sniper.cards.find((c) => c.id === 'split_shot')).toBeUndefined();
+  });
+
+  it('range_up：逐键列出该武器会被强化的范围名（heat_beam 为索敌半径）', () => {
+    expect(buildCardDescription(REAL_DEFS.scatter, genericOf('scatter', 'range_up'))).toBe(
+      '该武器扇角 ×1.2（可叠 5 次，突破后上限 8 次）',
+    );
+    expect(buildCardDescription(REAL_DEFS.homing_missile, genericOf('homing_missile', 'range_up'))).toBe(
+      '该武器爆炸半径 ×1.2（可叠 5 次，突破后上限 8 次）',
+    );
+    expect(buildCardDescription(REAL_DEFS.mortar, genericOf('mortar', 'range_up'))).toBe(
+      '该武器爆炸半径 ×1.2（可叠 5 次，突破后上限 8 次）',
+    );
+    expect(buildCardDescription(REAL_DEFS.prism, genericOf('prism', 'range_up'))).toBe(
+      '该武器弹跳范围 ×1.2（可叠 5 次，突破后上限 8 次）',
+    );
+    expect(buildCardDescription(REAL_DEFS.heat_beam, genericOf('heat_beam', 'range_up'))).toBe(
+      '该武器索敌半径 ×1.2（可叠 5 次，突破后上限 8 次）',
+    );
+  });
+
+  it('dot_freq：按武器生成对应持续伤害名（与各武器 requiresCard 附着牌一一对应）', () => {
+    expect(buildCardDescription(REAL_DEFS.heat_beam, genericOf('heat_beam', 'dot_freq'))).toBe(
+      '灼痕的灼烧每跳间隔 ÷1.3（可叠 3 次，突破后上限 6 次）',
+    );
+    expect(buildCardDescription(REAL_DEFS.scatter, genericOf('scatter', 'dot_freq'))).toContain('燃烧弹的燃烧每跳间隔 ÷1.3');
+    expect(buildCardDescription(REAL_DEFS.homing_missile, genericOf('homing_missile', 'dot_freq'))).toContain('燃烧云的燃烧');
+    expect(buildCardDescription(REAL_DEFS.mortar, genericOf('mortar', 'dot_freq'))).toContain('燃烧地的燃烧');
+    expect(buildCardDescription(REAL_DEFS.prism, genericOf('prism', 'dot_freq'))).toContain('冰毒附着的中毒');
+  });
+
+  it('映射表驱动、无武器特判：名词表没有的武器优雅回退 JSON 原文案（新武器漏配表不崩溃）', () => {
+    const future = makeDef('future_weapon', [genericOf('scatter', 'multi_shot')]);
+    const card = genericOf('scatter', 'multi_shot');
+    expect(buildCardDescription(future, card)).toBe(card.description);
+  });
+
+  it('文案数值随牌表参数：改 params/上限即随文案变化（数据驱动非硬编码）', () => {
+    const multi: CardDef = {
+      ...genericOf('scatter', 'multi_shot'),
+      params: [{ key: 'projectileCount', value: 2, op: 'add' }],
+      maxCount: 3,
+      hardMax: 6,
+    };
+    expect(buildCardDescription(REAL_DEFS.scatter, multi)).toBe('同时多发射 2 枚弹丸（可叠 3 次，突破后上限 6 次）');
+
+    const split: CardDef = {
+      ...genericOf('scatter', 'split_shot'),
+      params: [
+        { key: 'splitCount', value: 1, op: 'add' },
+        { key: 'splitDamageFactor', value: 0.3, op: 'set' },
+        { key: 'splitMaxTargets', value: 2, op: 'set' },
+      ],
+    };
+    expect(buildCardDescription(REAL_DEFS.scatter, split)).toContain('至多 2 枚次级弹丸：各 30% 伤害');
+  });
+
+  it('表完备性：各动态通用牌 applyTo 内的每把武器都生成逐武器文案（新增武器漏配表即刻红）', () => {
+    const dynamic = ['multi_shot', 'burst_shot', 'split_shot', 'range_up', 'dot_freq'];
+    for (const raw of loadCardDefs()) {
+      if (!dynamic.includes(raw.id)) {
+        continue;
+      }
+      for (const wid of raw.applyTo) {
+        if (wid === 'all') {
+          continue; // 动态文案必须逐武器配置映射表，不支持 all 兜底
+        }
+        const def = REAL_DEFS[wid];
+        expect(def, `武器 ${wid} 应存在于武器表`).toBeDefined();
+        const desc = buildCardDescription(def, genericOf(wid, raw.id));
+        expect(desc, `武器 ${wid} 的 ${raw.id} 应为逐武器生成文案`).not.toBe(raw.description);
+      }
+    }
+  });
+
+  it('与 sanitizeUnlimitedCardDescription 清洗兼容：生成文案的上限后缀可被正确清洗/保留', () => {
+    // 无 hardMax 的生成文案（单段式后缀）→ 突破后清洗为纯净描述：
+    const noHardMax: CardDef = { ...genericOf('scatter', 'multi_shot') };
+    delete noHardMax.hardMax;
+    const desc = buildCardDescription(REAL_DEFS.scatter, noHardMax);
+    expect(desc).toBe('同时多发射 1 枚弹丸（可叠 4 次）');
+    expect(sanitizeUnlimitedCardDescription(desc)).toBe('同时多发射 1 枚弹丸');
+
+    // hardMax 生成文案（两段式后缀）→ rollUpgradeOptions 对 hardMax 牌不清洗，原样保留：
+    expect(buildCardDescription(REAL_DEFS.scatter, genericOf('scatter', 'multi_shot'))).toContain('突破后上限 8 次');
+  });
+
+  it('端到端：rollUpgradeOptions 产出逐武器生成的文案（零随机抽 scatter 牌池）', () => {
+    const state = createSimState(1);
+    state.rng = zeroRng();
+    ownWeapon(state, 'scatter');
+    const options = rollUpgradeOptions(state, REAL_DEFS, 99);
+    const multi = options.find(
+      (o) => o.kind === 'card' && o.weaponId === 'scatter' && (o as { cardId: string }).cardId === 'multi_shot',
+    ) as Extract<UpgradeOption, { kind: 'card' }> | undefined;
+    expect(multi).toBeDefined();
+    expect(multi!.description).toBe('同时多发射 1 枚弹丸（可叠 4 次，突破后上限 8 次）');
+
+    const range = options.find(
+      (o) => o.kind === 'card' && (o as { cardId: string }).cardId === 'range_up',
+    ) as Extract<UpgradeOption, { kind: 'card' }> | undefined;
+    expect(range).toBeDefined();
+    expect(range!.description).toBe('该武器扇角 ×1.2（可叠 5 次，突破后上限 8 次）');
+
+    // dot_freq 前置（requiresCard=burn_bullet）未满足：不进池
+    expect(options.some((o) => o.kind === 'card' && (o as { cardId: string }).cardId === 'dot_freq')).toBe(false);
+  });
+
+  it('端到端：持有燃烧弹后 dot_freq 进池且文案为逐武器生成（灼痕→燃烧弹随武器而异）', () => {
+    const state = createSimState(1);
+    state.rng = zeroRng();
+    ownWeapon(state, 'scatter', 1, { burn_bullet: 1 });
+    const options = rollUpgradeOptions(state, REAL_DEFS, 99);
+    const dot = options.find(
+      (o) => o.kind === 'card' && (o as { cardId: string }).cardId === 'dot_freq',
+    ) as Extract<UpgradeOption, { kind: 'card' }> | undefined;
+    expect(dot).toBeDefined();
+    expect(dot!.description).toBe('燃烧弹的燃烧每跳间隔 ÷1.3（可叠 3 次，突破后上限 6 次）');
   });
 });

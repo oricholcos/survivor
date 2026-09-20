@@ -218,6 +218,117 @@ describe('pickNearestDistinctEnemies（T5.3b 分裂次级弹目标选取助手�
   });
 });
 
+// —— F2 扫掠碰撞（隧穿修复）测试 ——
+// 修复前的命中判定是离散点查询：每步先移动弹（x += vx*dt），再对「新位置」做 queryCircle。
+// 弹速 1600px/s（蓄能狙击 base）× 帧上限 50ms → 单步位移 80px，远超命中阈值
+// （弹 6 + 敌 10~34 ≈ 16~40px）：低速档/掉帧时弹会从相邻两采样点之间穿过敌人（隧穿），
+// 表现为「高速弹穿过主目标不掉血」。扫掠碰撞改为「本步位移线段」对敌圆的点-线段距离判交，
+// 命中按沿段先后次序结算，任意 dt 下满足不变式「弹轨迹与敌圆相交则至少结算一次」。
+describe('弹丸扫掠碰撞（F2 隧穿修复）', () => {
+  it('隧穿复现：高速弹 + 粗 dt（50ms），敌位于相邻两离散采样点之间——修复前必漏、修复后必中', () => {
+    const state = createSimState(1);
+    const e = makeEnemy(state, 440, 600, 1e6);
+    // 弹速 1600px/s、dt 50ms → 单步位移恒 80px，离散采样点恒为 x=80k；
+    // 敌心 x=440 距最近采样点（400 与 480）均 40px > 阈值 16px（弹 6 + 敌 10）
+    // → 修复前任何一帧的点查询都不会命中，弹径直穿过并飞到 ttl。
+    spawnProjectile(state, { x: 0, y: 600, vx: 1600, vy: 0, damage: 10, pierceLeft: 0, ttlMs: 5000 });
+    for (let f = 0; f < 12 && state.projectiles.length > 0; f++) {
+      updateProjectiles(state, 50, makeGrid());
+    }
+    expect(e.hp).toBe(1e6 - 10); // 扫掠段 [400,480] 覆盖敌心：必中
+    expect(state.projectiles).toHaveLength(0); // 非穿透弹命中即销毁回池
+  });
+
+  it('段上两敌按沿段先后次序结算：先碰到的先结算，穿透计数按次扣减', () => {
+    const state = createSimState(1);
+    const e1 = makeEnemy(state, 420, 600, 1e6); // 段 [400,480] 上 t=0.25（先碰到）
+    const e2 = makeEnemy(state, 470, 600, 1e6); // t=0.875（后碰到）
+    // pierceLeft 5 > 2：两敌结算后弹仍存活（死亡弹已回池 reset，hitIds 不可观测）
+    const p = spawnProjectile(state, { x: 400, y: 600, vx: 1600, vy: 0, damage: 10, pierceLeft: 5, ttlMs: 5000 });
+    updateProjectiles(state, 50, makeGrid());
+
+    expect(e1.hp).toBe(1e6 - 10); // 修复前点查询只够到 e2（|480-470|=10≤16）、漏掉 e1
+    expect(e2.hp).toBe(1e6 - 10);
+    expect(p.hitIds).toEqual([e1.id, e2.id]); // 严格按沿段先后次序
+    expect(p.pierceLeft).toBe(3); // 每次命中扣 1（5 - 2）
+    expect(state.projectiles).toHaveLength(1);
+  });
+
+  it('非穿透弹只结算段上最近（最先碰到）的一敌即销毁，后续敌不受波及', () => {
+    const state = createSimState(1);
+    const e1 = makeEnemy(state, 420, 600, 1e6);
+    const e2 = makeEnemy(state, 470, 600, 1e6);
+    spawnProjectile(state, { x: 400, y: 600, vx: 1600, vy: 0, damage: 10, pierceLeft: 0, ttlMs: 5000 });
+    updateProjectiles(state, 50, makeGrid());
+
+    expect(e1.hp).toBe(1e6 - 10); // 最近（t 最小）者先结算
+    expect(e2.hp).toBe(1e6); // 非穿透：第一击即亡，第二敌不结算
+    expect(state.projectiles).toHaveLength(0);
+  });
+
+  it('敌恰在线段延长线上但不相交：本帧不结算，下帧进入段内才结算', () => {
+    const state = createSimState(1);
+    const e = makeEnemy(state, 530, 600, 1e6); // 距段 [400,480] 终点 50px > 阈值 16px
+    spawnProjectile(state, { x: 400, y: 600, vx: 1600, vy: 0, damage: 10, pierceLeft: 0, ttlMs: 5000 });
+    updateProjectiles(state, 50, makeGrid());
+    expect(e.hp).toBe(1e6); // 延长线上不相交：不提前结算
+
+    updateProjectiles(state, 50, makeGrid()); // 段 [480,560] 覆盖敌心 530
+    expect(e.hp).toBe(1e6 - 10);
+    expect(state.projectiles).toHaveLength(0); // 非穿透命中即销毁回池
+  });
+
+  it('两敌重叠（同 t）都相交：按敌 id 升序确定性结算，穿透弹两敌都中', () => {
+    const state = createSimState(1);
+    const e1 = makeEnemy(state, 440, 590, 1e6); // 垂距 10 ≤ 16，t 与 e2 相同
+    const e2 = makeEnemy(state, 440, 610, 1e6);
+    const p = spawnProjectile(state, { x: 400, y: 600, vx: 1600, vy: 0, damage: 10, pierceLeft: 5, ttlMs: 5000 });
+    updateProjectiles(state, 50, makeGrid());
+
+    expect(e1.hp).toBe(1e6 - 10);
+    expect(e2.hp).toBe(1e6 - 10);
+    expect(p.hitIds).toEqual([e1.id, e2.id]); // 并列 t → id 升序（确定性裁决）
+  });
+
+  it('一段内敌人多于剩余计数：按沿段次序结算至计数耗尽，余敌不受波及', () => {
+    const state = createSimState(1);
+    const e1 = makeEnemy(state, 410, 600, 1e6);
+    const e2 = makeEnemy(state, 440, 600, 1e6);
+    const e3 = makeEnemy(state, 470, 600, 1e6);
+    spawnProjectile(state, { x: 400, y: 600, vx: 1600, vy: 0, damage: 10, pierceLeft: 1, ttlMs: 5000 });
+    updateProjectiles(state, 50, makeGrid());
+
+    expect(e1.hp).toBe(1e6 - 10);
+    expect(e2.hp).toBe(1e6); // 计数已在 e1 耗尽
+    expect(e3.hp).toBe(1e6);
+    expect(state.projectiles).toHaveLength(0);
+  });
+
+  it('不变式：任意 dt 下一帧轨迹与敌圆相交则至少结算一次（1~50ms 全档）', () => {
+    for (const dt of [1, 3, 8, 16.6, 33, 50]) {
+      const state = createSimState(1);
+      const e = makeEnemy(state, 440, 600, 1e6);
+      const p = spawnProjectile(state, { x: 0, y: 600, vx: 1600, vy: 0, damage: 10, pierceLeft: 0, ttlMs: 10000 });
+      // 以「弹仍在场上」为循环条件：命中即回池 reset（p.dead/p.x 被清洗），不可据 p 字段判停。
+      while (state.projectiles.length > 0 && p.x < 500) {
+        updateProjectiles(state, dt, makeGrid());
+      }
+      expect(e.hp, `dt=${dt}ms：轨迹扫过敌圆必须至少结算一次`).toBe(1e6 - 10);
+      expect(state.projectiles, `dt=${dt}ms：非穿透弹命中后销毁`).toHaveLength(0);
+    }
+  });
+
+  it('零长帧（dt=0）退化为原位置点查询：hitIds 去重不重复扣血（原契约保持）', () => {
+    const state = createSimState(1);
+    const e = makeEnemy(state, 406, 600, 1e6); // 距弹 6px ≤ 16：相交
+    const p = spawnProjectile(state, { x: 400, y: 600, vx: 0, vy: 0, damage: 10, pierceLeft: 5, ttlMs: 5000 });
+    updateProjectiles(state, 0, makeGrid());
+    updateProjectiles(state, 0, makeGrid());
+    expect(e.hp).toBe(1e6 - 10); // 恰好一次
+    expect(p.pierceLeft).toBe(4);
+  });
+});
+
 describe('全局弹丸数量护栏（T3 性能封顶）', () => {
   /** 注册一个只记录死亡时刻字段快照的测试行为（registry 同名后注册者胜，测试名唯一不污染他人）。 */
   function spyDeathBehavior(): Array<{ id: number; ttlMs: number; damage: number; pierceLeft: number }> {
