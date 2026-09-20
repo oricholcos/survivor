@@ -253,6 +253,13 @@
     - **音效（`audio/sfx.ts`）**：新合成 `coordinated`（D 大调八度上滑 80ms 蓄势 → 纯五度双音齐发，三角波为主），音频侧节流 300ms；静音开关链路自动覆盖。
     - **验收**：35 文件、**712 用例**全绿（707→712）；tsc/lint 通过；balance 面板与 M21 基线逐字一致（纯表现层零数值漂移）。另：5173 端口的残留 vite 进程（首启 dev server 的 node 子进程）已确认身份并清除。
 
+23. **M23: 难度评估、武器手册同步核验与难度调整立项（文档轮，零玩法代码改动）**：
+    - **难度数据评估（两模式分开）**：复现 balance 面板并逐项分析 waves/enemies/config 数据——结论：campaign 偏易且 390~600s 终局零压力（三种子全胜、最低墙血 84.7%~100%，根因为玩家乘区 DPS 成长远超敌方线性血量膨胀 ×6.76，且续航 ≈1340 占墙池 84%）；endless 为「假无尽」（600s 后每 40s 血量/密度/经验同乘 2^k，真人约 12 分钟堆屏速败、击退类成唯一生存轴；代理收敛 982.5s 偏离设计锚点）。完整结论与方案见 `difficulty-tuning-plan.md`。
+    - **weapons-reference.html 同步核验（M19~M21 增量）**：33 条专属牌文案脚本逐字比对发现 1 处 JSON 过期——`heat_beam.json`「协同开火」仍写旧词「位于震波冲击带内」，改为「位于震波行进波可达范围内」（对齐 F3 行进波语义与 `behavior_heatBeam.ts` 实际门槛 waveDistance+bandDepth=260px，属游戏内三选一牌面文案修复）；HTML 头部变更记录刷新至 2026-09-20、清理内部代号（G2b）。
+    - **weapons-reference.html 新增「怪物血量成长表」模块（#enemies）**：0→840s（14 分钟）每 30s 采样，基础血量 × 时间膨胀 ×（600s 后）无尽循环 2^k，按 `waveClock.ts` 公式脚本生成并逐行回验（29/29 一致）；标注战役终局行、循环锯齿警告（每 40s ×2 跳变）与表外修正（burst strengthFactor 0.5~0.8、Boss 豁免、对墙伤害/移速不膨胀）。
+    - **难度调整立项**：新建 `difficulty-tuning-plan.md`（自包含执行交接：第一轮战役收紧 4 处 JSON【hpPerSec 0.013 / 续航削减 / 晚期 tank 密度】；第二轮无尽曲线重设计【新增 `densityPerLoop` 键解耦密度与血量，scalingPerLoop 2.0→1.45】；调参决策表 / 断言校准指引 / 回退顺序 / 验证协议），待新会话执行。
+    - **存量提交（M18~M22 入库）**：4 commits——`22b112e` feat(weapons) 主体（54 文件，+5667/−2626）、`54d8e78` docs 计划、`0124986` chore .zcodeignore、`db9ddbe` docs 计划头修订；提交前验证 35 文件 / 712 用例全绿 + tsc / lint / `git diff --check` 通过。
+
 ---
 
 ## 4. 当前工程状态与质量指标
@@ -260,7 +267,7 @@
 - **当前工程是否能直接运行/编译：** **是**。
 - **全量测试结果 (`npm run test` / `vitest run`)：**
   - **35 / 35 test files passed (100%)**
-  - **707 / 707 tests passed (100%)**
+  - **712 / 712 tests passed (100%)**
   - 运行总耗时约 40~50s（endless 收敛点推迟使自动对局变长，墙钟护栏已放宽至 55s）。
 - **静态检查 (`npm run lint` / `eslint .`)：**
   - **ESLint 通过，0 errors, 0 warnings**。
@@ -271,14 +278,14 @@
   - campaign seed 42：`victory` @600s，最低墙血 84.7%，Lv.37（含狙击+边境+死刑 build）。
   - campaign seed 2024：`victory` @600s，零墙损（含震波 build）。
   - endless seed 2024：`defeat` @982.5s，击杀 4585，loop=10。
-- **后续观察项：** campaign 明显偏易（零墙损局出现）；如需收紧在 `waves.json` 单独立项（待用户决策）。
-- **开发分支：** `feature/dev-continue`。
+- **后续观察项：** campaign 偏易 / endless「假无尽」已立项 `difficulty-tuning-plan.md`（待新会话执行，方案与回退顺序见该文档；M23 评估结论摘要见第 3 节）。
+- **开发分支：** `feature/dev-continue`（M23 后最新提交 `db9ddbe`，M18~M22 存量已入库，工作区干净）。
 
 ---
 
 ## 5. 给接手 Agent 的后续建议
 
-1. **分支合并**：当前分支 `feature/dev-continue` 包含 M1 至 M22 的完整改动（M18 武器改造 / M19 修复轮 / M20 实玩优化轮 / M21 蓄能狙击二改 / M22 协同开火特效），35 个测试文件、712 个测试用例全绿，tsc/lint 通过。在用户确认后可提交并合并至 `main` 分支。
+1. **下一任务：难度调整**：按 `difficulty-tuning-plan.md` 在新会话执行（第一轮战役收紧 + 第二轮无尽曲线重设计，含调参决策表与回退顺序；两轮分开验证）。当前分支 `feature/dev-continue` 已包含 M1~M23 全部提交（35 个测试文件、712 个测试用例全绿，tsc/lint 通过）；难度调整落地并验收后，可在用户确认下合并至 `main` 分支。
 2. **人工试玩体验**：可启动 `npm run dev` 在浏览器中进行完整试玩体验：
    - M18 新体系：灼热光束为单体锁定持续光束（加载爬升 + 协同开火全队齐射）、震波壁垒为全宽防线节拍器（伤害+击退+眩晕）、蓄能狙击新增爆头/死刑宣告/边境折返三张专属牌；
    - 全部卡牌文案按新标准重写（触发条件/精确数值/上限/联动），通用牌文案按持武器动态生成；
