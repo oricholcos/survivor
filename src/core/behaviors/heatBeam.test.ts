@@ -653,10 +653,10 @@ describe('协同开火触发特效与音效（G6：coordinated_fire_vfx 单对�
 describe('灼痕（scorch 灼痕牌）', () => {
   it('每跳命中给存活锁定目标挂 burn（逐实例覆盖每跳 2）；DoT 真实逐跳掉血', () => {
     const state = createSimState(1);
-    const e = makeEnemy(state, 360, 1000);
+    const e = makeEnemy(state, 360, 1000, { hp: 100 });
     fireOnce(state, ['scorch']);
 
-    expect(e.hp).toBeCloseTo(1e6 - 9, 6); // 直击 base damage 9
+    expect(e.hp).toBeCloseTo(100 - 9, 6); // 直击 base damage 9
     expect(e.effects).toHaveLength(1);
     expect(e.effects[0].kind).toBe('burn');
     expect(e.effects[0].data.damagePerTick).toBe(2); // 逐实例覆盖（效果表默认 3）
@@ -664,7 +664,7 @@ describe('灼痕（scorch 灼痕牌）', () => {
 
     state.timeMs += 500;
     updateEffects(state, 500);
-    expect(e.hp).toBeCloseTo(1e6 - 9 - 2, 6); // 每跳 2 而非 3
+    expect(e.hp).toBeCloseTo(100 - 9 - 2, 6); // 每跳保底 2（100*0.02=2）
   });
 
   it('双束同打一目标：灼烧仍单实例（reset 刷新）；无灼痕牌不挂 burn', () => {

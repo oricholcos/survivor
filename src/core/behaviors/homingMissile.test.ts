@@ -632,16 +632,16 @@ describe('dot 频率（dot_freq 牌，requiresCard=burn_cloud：燃烧云 tick �
     }
 
     const state = createSimState(1);
-    const survivor = makeEnemy(state, 500, 850, 1e6); // 距爆心 50：吃溅射 + 燃烧
+    const survivor = makeEnemy(state, 500, 850, 150); // 距爆心 50：吃溅射 + 燃烧（hp=150 时 2% maxHp = 3 = 保底）
     const proj = makeBlastProj(state, 500, 800, 12, { burnCloud: 1, burnTickMs: 500 / 1.3 });
     proj.dead = true;
     behavior.onProjectileDeath!(state, proj);
-    expect(survivor.hp).toBeCloseTo(1e6 - 7.2, 6); // 溅射
+    expect(survivor.hp).toBeCloseTo(150 - 7.2, 6); // 溅射
     expect(survivor.effects[0].kind).toBe('burn');
     expect(survivor.effects[0].data.tickMs).toBeCloseTo(500 / 1.3, 9);
 
     state.timeMs += 384.7;
     updateEffects(state, 384.7);
-    expect(survivor.hp).toBeCloseTo(1e6 - 7.2 - 3, 6); // 首跳在 384.6ms（效果表每跳 3）
+    expect(survivor.hp).toBeCloseTo(150 - 7.2 - 3, 6); // 首跳在 384.6ms（2% maxHp 与保底均为 3）
   });
 });

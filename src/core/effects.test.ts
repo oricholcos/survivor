@@ -149,6 +149,7 @@ describe('数据表与注册表', () => {
     expect(getEffectDef('burn')).toEqual({
       id: 'burn', name: '燃烧', durationMs: 3000, tickMs: 500,
       maxStacks: 1, refresh: 'reset', damagePerTick: 3,
+      hpPctPerTick: 0.02, corpseExplosionRadius: 60,
     });
     expect(getEffectDef('knockback')).toEqual({
       id: 'knockback', name: '击退', durationMs: 0,
@@ -248,6 +249,19 @@ describe('knockback 击退：即时冲量', () => {
     const atTop = makeEnemy(state, 360, 10, 40);
     applyEffect(state, atTop, 'knockback', { force: 100 });
     expect(atTop.y).toBe(state.layout.spawnLineY); // spawnLineY 是 -40
+  });
+
+  it('类型固定抗性：优先使用 knockbackFactor，击退位移不随当前 hp/maxHp 膨胀变化', () => {
+    const state = createSimState(1);
+    const runner = makeEnemy(state, 360, 600, 99999);
+    runner.knockbackFactor = 0.539374;
+    applyEffect(state, runner, 'knockback', { force: 100 });
+    expect(runner.y).toBeCloseTo(600 - 100 * 0.539374, 5);
+
+    const tank = makeEnemy(state, 360, 600, 10);
+    tank.knockbackFactor = 0.044131;
+    applyEffect(state, tank, 'knockback', { force: 100 });
+    expect(tank.y).toBeCloseTo(600 - 100 * 0.044131, 5);
   });
 });
 
@@ -561,19 +575,18 @@ describe('overheat 过热：开火间隔乘区', () => {
 });
 
 describe('叠层 / 互斥 / refresh 语义', () => {
-  it('poison refresh=add：叠至 3 层封顶，每跳伤害 = damagePerTick × 层数', () => {
+  it('poison refresh=add：叠至 15 层封顶，每跳伤害 = damagePerTick × 层数', () => {
     const state = createSimState(1);
-    const e = makeEnemy(state, 0, 0, 100);
-    applyEffect(state, e, 'poison');
-    applyEffect(state, e, 'poison');
-    applyEffect(state, e, 'poison');
-    applyEffect(state, e, 'poison'); // 超上限：封顶 3
-    expect(effectStacks(e, 'poison')).toBe(3);
+    const e = makeEnemy(state, 0, 0, 1000);
+    for (let i = 0; i < 20; i++) {
+      applyEffect(state, e, 'poison');
+    }
+    expect(effectStacks(e, 'poison')).toBe(15);
 
     advance(state, 1000);
-    expect(e.hp).toBe(94); // 每跳 2×3=6
+    expect(e.hp).toBe(970); // 每跳 2×15=30
     advance(state, 1000);
-    expect(e.hp).toBe(88);
+    expect(e.hp).toBe(940);
   });
 
   it('refresh=reset：层数重置为 1，untilMs 重算（重复施加重新武装计时）', () => {
@@ -683,7 +696,7 @@ describe('同种子可复现', () => {
 describe('applyEffectsOnHit：模板 → 实例', () => {
   it('untilMs 按当前时刻重算、data 深拷贝、模板 stacks 不参与；模板不被污染', () => {
     const state = createSimState(1);
-    const e = makeEnemy(state, 0, 0, 1000);
+    const e = makeEnemy(state, 0, 0, 100);
     const template: EffectInstance = {
       kind: 'burn',
       untilMs: -999, // 模板的 untilMs 不参与
@@ -703,9 +716,9 @@ describe('applyEffectsOnHit：模板 → 实例', () => {
     expect(template.untilMs).toBe(-999);
     expect(template.stacks).toBe(5);
 
-    // 覆盖后的每跳伤害生效（t=500 第一跳）
+    // 覆盖后的每跳伤害生效（t=500 第一跳：9 > 100*0.02=2，取 9）
     advance(state, 500);
-    expect(e.hp).toBe(991); // 1000 - 9
+    expect(e.hp).toBe(91); // 100 - 9
 
     // untilMs 随施加时刻重算：t=500 施加 slow → 500 + 2000 = 2500
     applyEffectsOnHit(state, e, [{ kind: 'slow', untilMs: 0, stacks: 1, data: {} }]);
@@ -773,6 +786,97 @@ describe('弹丸命中集成（dealDamage 改道 + effectsOnHit）', () => {
       expect(drainEvents(state)).toEqual([
         { kind: 'enemyKilled', enemyId: e.id, typeId: 'tester', x: 400, y: 600, isBoss: false },
       ]);
+    } finally {
+      const idx = killHooks.indexOf(hook);
+      if (idx >= 0) {
+        killHooks.splice(idx, 1);
+      }
+    }
+  });
+});
+
+describe('DoT 持续伤害重构（灼烧百分比+余烬尸爆传染、中毒武器缩放+毒发斩杀）', () => {
+  it('灼烧：低血量怪物单跳享受 3 点保底，高血量怪物享受 2% 最大生命值跳伤', () => {
+    const state = createSimState(1);
+    // 低血量怪：50 HP，50 * 0.02 = 1 < 3，保底扣 3 点
+    const lowHpEnemy = makeEnemy(state, 100, 100, 50);
+    // 高血量怪：500 HP，500 * 0.02 = 10 > 3，扣 10 点
+    const highHpEnemy = makeEnemy(state, 200, 200, 500);
+
+    applyEffect(state, lowHpEnemy, 'burn');
+    applyEffect(state, highHpEnemy, 'burn');
+
+    advance(state, 500); // 第一跳
+    expect(lowHpEnemy.hp).toBe(47); // 50 - 3 (保底)
+    expect(highHpEnemy.hp).toBe(490); // 500 - 10 (2% maxHp)
+  });
+
+  it('灼烧余烬尸爆与火种传染：死亡时引爆剩余跳数伤害，波及周围 60px 敌人并对存活者传染灼烧', () => {
+    const state = createSimState(1);
+    // 中心怪：500 HP（单跳 10 点），挂上 burn（共 6 跳，总计 60 点）
+    const center = makeEnemy(state, 400, 400, 500);
+    // 附近怪 1：位于 (430, 400)，距离 30px（<= 60px），应受尸爆波及
+    const nearby = makeEnemy(state, 430, 400, 100);
+    // 远端怪 2：位于 (480, 400)，距离 80px（> 60px），不应受波及
+    const faraway = makeEnemy(state, 480, 400, 100);
+
+    applyEffect(state, center, 'burn');
+
+    // 推进 1000ms（结算了 2 跳，剩余 4 跳未结算：剩余 4 * 10 = 40 点伤害）
+    advance(state, 1000);
+    expect(center.hp).toBe(480); // 500 - 20
+
+    // 直伤击杀 center 触发余烬尸爆
+    dealDamage(state, center, 500);
+    expect(center.dead).toBe(true);
+
+    // nearby 受到 40 点爆炸伤害，且存活，并被传染灼烧
+    expect(nearby.hp).toBe(60); // 100 - 40
+    expect(hasEffect(nearby, 'burn')).toBe(true);
+
+    // faraway 不在爆炸范围内，保持满血且无灼烧
+    expect(faraway.hp).toBe(100);
+    expect(hasEffect(faraway, 'burn')).toBe(false);
+  });
+
+  it('中毒：单跳伤害与 weaponDamage 挂钩（单层 25%），且可稳定叠加至 15 层', () => {
+    const state = createSimState(1);
+    const e = makeEnemy(state, 0, 0, 2000);
+
+    // 传入 weaponDamage = 40，单层单跳 = max(2, 40 * 0.25) = 10
+    for (let i = 0; i < 15; i++) {
+      applyEffect(state, e, 'poison', { weaponDamage: 40 });
+    }
+    expect(effectStacks(e, 'poison')).toBe(15);
+
+    // 推进 1000ms（第一跳：10 × 15 = 150 点）
+    advance(state, 1000);
+    expect(e.hp).toBe(1850); // 2000 - 150
+  });
+
+  it('中毒毒发暴毙（斩杀）：当敌人生命值低于预期剩余总毒伤时，立即判定死亡', () => {
+    const state = createSimState(1);
+    // 敌人当前血量 80
+    const e = makeEnemy(state, 0, 0, 80);
+    let killedHookCount = 0;
+    const hook = (): void => {
+      killedHookCount += 1;
+    };
+    killHooks.push(hook);
+
+    try {
+      // 挂 2 层毒，weaponDamage = 40（单层跳伤 10 点，2层共 20 点/跳，持续 5s 共 5 跳，总预期伤害 100 点）
+      // 此时敌人血量 80 <= 100，触发毒发斩杀
+      applyEffect(state, e, 'poison', { weaponDamage: 40 });
+      applyEffect(state, e, 'poison', { weaponDamage: 40 });
+
+      // 仅推进一小帧 50ms（远未到 1000ms 的第一跳结算时刻）
+      advance(state, 50);
+
+      // 验证敌人直接毒发身亡，血量归零并触发死亡回调
+      expect(e.dead).toBe(true);
+      expect(e.hp).toBe(0);
+      expect(killedHookCount).toBe(1);
     } finally {
       const idx = killHooks.indexOf(hook);
       if (idx >= 0) {

@@ -25,7 +25,7 @@ function spawn(state: SimState, type: EnemyTypeData): Enemy {
 }
 
 describe('Boss 数值来自 enemies.json', () => {
-  it('boss_1 条目：isBoss 与战斗数值齐备且 bossHealPct = 0.055（T3.6 校准值）', () => {
+  it('boss_1 条目：isBoss 与战斗数值齐备且 bossHealPct = 0.045（T3.6/M24 校准值）', () => {
     const boss = TYPES['boss_1'] as BossTypeData;
     expect(boss).toBeDefined();
     expect(boss.isBoss).toBe(true);
@@ -35,11 +35,11 @@ describe('Boss 数值来自 enemies.json', () => {
     expect(boss.attackIntervalMs).toBe(1200);
     expect(boss.xp).toBe(80);
     expect(boss.radius).toBe(34);
-    expect(boss.bossHealPct).toBe(0.055); // T3.6 校准：0.2 → 0.055
+    expect(boss.bossHealPct).toBe(0.045); // M24 续航削减：0.055 → 0.045
   });
 
-  it('readBossHealPct：boss_1 取 0.055；普通怪条目无该字段 → 取 0', () => {
-    expect(readBossHealPct(TYPES['boss_1'])).toBe(0.055);
+  it('readBossHealPct：boss_1 取 0.045；普通怪条目无该字段 → 取 0', () => {
+    expect(readBossHealPct(TYPES['boss_1'])).toBe(0.045);
     expect(readBossHealPct(TYPES['runner'])).toBe(0);
     expect(readBossHealPct(TYPES['standard'])).toBe(0);
     expect(readBossHealPct(TYPES['tank'])).toBe(0);
@@ -55,9 +55,9 @@ describe('onBossDefeated：击杀奖励结算', () => {
     drainEvents(state); // 清掉 spawn 的 enemySpawned，只观察奖励事件
     onBossDefeated(state, boss, { healPct: readBossHealPct(TYPES['boss_1'] as BossTypeData) });
 
-    // 回复量 = maxHp × 0.055（恰好一次，不多不少）
-    expect(state.wall.hp).toBe(500 + state.wall.maxHp * 0.055);
-    expect(state.wall.hp).toBeCloseTo(500 + state.wall.maxHp * 0.055, 9);
+    // 回复量 = maxHp × 0.045（恰好一次，不多不少）
+    expect(state.wall.hp).toBe(500 + state.wall.maxHp * 0.045);
+    expect(state.wall.hp).toBeCloseTo(500 + state.wall.maxHp * 0.045, 9);
     expect(drainEvents(state)).toEqual([
       { kind: 'bossDefeated' },
       { kind: 'levelUp', level: state.progress.level },

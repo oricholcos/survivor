@@ -29,6 +29,8 @@ export interface EnemyTypeData {
   xp: number;
   radius: number;
   isBoss: boolean;
+  /** 击退位移倍率（缺省时回退 maxHp 公式）。 */
+  knockbackFactor?: number;
 }
 
 /**
@@ -60,6 +62,7 @@ export function spawnEnemy(state: SimState, type: EnemyTypeData, x: number): Ene
     shape: type.shape,
     effects: [],
     dead: false,
+    knockbackFactor: type.knockbackFactor,
   };
   state.enemies.push(enemy);
   pushEvent(state, { kind: 'enemySpawned', typeId: enemy.typeId, isBoss: enemy.isBoss });

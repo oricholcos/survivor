@@ -59,6 +59,7 @@ export function onBossDefeated(state: SimState, enemy: Enemy, spec: BossRewardSp
     state.meta.bossRewarded = rewarded;
   }
   rewarded[enemy.id] = true;
+  state.meta.bossKills = ((state.meta.bossKills as number | undefined) ?? 0) + 1;
 
   // 墙回复 = maxHp × healPct（走 healWall：钳到 wall.maxHp，回复不越上限）。
   healWall(state, state.wall.maxHp * spec.healPct);
@@ -66,4 +67,9 @@ export function onBossDefeated(state: SimState, enemy: Enemy, spec: BossRewardSp
   // 事件顺序：bossDefeated（击杀反馈）→ levelUp（额外一次三选一）。
   pushEvent(state, { kind: 'bossDefeated' });
   pushEvent(state, { kind: 'levelUp', level: state.progress.level });
+}
+
+/** 读取当前局已击杀并完成结算的 Boss 数量。 */
+export function getBossKills(state: SimState): number {
+  return (state.meta.bossKills as number | undefined) ?? 0;
 }

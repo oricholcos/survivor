@@ -160,11 +160,12 @@ function buildState(seed: number, mode: GameMode): SimState {
   // ④ 城墙受击结算与失败判定（墙破 → over='defeat'，step 停摆）。
   state.hooks.push(updateWallCombat);
 
-  // ④.5 胜利判定（T3.3，注册在墙战之后：失败与胜利先到先得——over 已非 null 时
-  //     checkVictory 直接返回，victory 不覆盖 defeat）。campaign 撑满时长 → over='victory'
+  // ④.5 胜利判定（注册在墙战之后：失败与胜利先到先得——over 已非 null 时
+  //     checkVictory 直接返回，victory 不覆盖 defeat）。campaign 击杀目标 Boss 数 → over='victory'
   //     + victory 事件；endless 永不胜利（扛到死）。
+  const targetBossKills = WAVES.campaignBossTarget ?? 6;
   state.hooks.push((s) => {
-    checkVictory(s, WAVES.campaignDurationSec * 1000, mode);
+    checkVictory(s, targetBossKills, mode);
   });
 
   // ⑤ 武器闭包：冷却节奏 + 行为分发 + 行为每帧 update 钩子（defs 数据表只加载一次）。

@@ -6,16 +6,19 @@
     "tickMs": 500,
     "maxStacks": 1,
     "refresh": "reset",
-    "damagePerTick": 3
+    "damagePerTick": 3,
+    "hpPctPerTick": 0.02,
+    "corpseExplosionRadius": 60
   },
   "poison": {
     "id": "poison",
     "name": "毒附着",
     "durationMs": 5000,
     "tickMs": 1000,
-    "maxStacks": 3,
+    "maxStacks": 15,
     "refresh": "add",
-    "damagePerTick": 2
+    "damagePerTick": 2,
+    "weaponDamageFactor": 0.25
   },
   "slow": {
     "id": "slow",

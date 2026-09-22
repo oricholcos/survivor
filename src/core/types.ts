@@ -109,6 +109,8 @@ export interface Enemy {
    * 实体一起废弃，零泄漏）；仅 core/effects.ts 的 blackhole 即时结算读写。
    */
   blackholePulledUntilMs?: number;
+  /** 击退位移倍率（由敌人图鉴按类型固定，缺省时回退 maxHp 兼容公式）。 */
+  knockbackFactor?: number;
 }
 
 /** 投射物（武器发射的子弹）。 */

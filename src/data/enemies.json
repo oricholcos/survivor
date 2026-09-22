@@ -10,6 +10,7 @@
     "attackIntervalMs": 2000,
     "xp": 1,
     "radius": 12,
+    "knockbackFactor": 0.539374,
     "isBoss": false
   },
   "standard": {
@@ -23,6 +24,7 @@
     "attackIntervalMs": 1500,
     "xp": 3,
     "radius": 16,
+    "knockbackFactor": 0.242718,
     "isBoss": false
   },
   "tank": {
@@ -36,6 +38,7 @@
     "attackIntervalMs": 2000,
     "xp": 15,
     "radius": 22,
+    "knockbackFactor": 0.044131,
     "isBoss": false
   },
   "boss_1": {
@@ -49,7 +52,8 @@
     "attackIntervalMs": 1200,
     "xp": 80,
     "radius": 34,
-    "bossHealPct": 0.055,
+    "bossHealPct": 0.045,
+    "knockbackFactor": 0.010704,
     "isBoss": true
   }
 }

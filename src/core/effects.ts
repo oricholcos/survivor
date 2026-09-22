@@ -59,6 +59,12 @@ export interface EffectDef {
   // —— 可选数值参数（消费方按 kind 解释；effect.data 同名键可逐实例覆盖）——
   /** burn/poison：每 tick 每 层 伤害。 */
   damagePerTick?: number;
+  /** burn：每 tick 目标最大生命值百分比（如 0.02 = 2%）。 */
+  hpPctPerTick?: number;
+  /** burn：带火死亡时的余烬尸爆半径（px）。 */
+  corpseExplosionRadius?: number;
+  /** poison：每 tick 每层武器单发伤害系数（如 0.25 = 25%）。 */
+  weaponDamageFactor?: number;
   /** slow/chill：速度乘区（^stacks，多实例取 min）。 */
   speedFactor?: number;
   /** mark/corrode：受伤乘区（^stacks，多实例叠乘）。 */
@@ -188,7 +194,7 @@ function applyInstant(
   def: EffectDef,
   data?: Record<string, number>,
 ): void {
-  const b = bearer as { x?: number; y?: number; maxHp?: number; hp?: number };
+  const b = bearer as { x?: number; y?: number; maxHp?: number; hp?: number; knockbackFactor?: number };
   if (typeof b.x !== 'number' || typeof b.y !== 'number') {
     return; // 无位置载体（如武器）：位移无处作用
   }
@@ -227,10 +233,21 @@ function applyInstant(
     return; // 无冲量参数：无即时位移语义
   }
   if (def.id === 'knockback') {
-    const maxHp = typeof b.maxHp === 'number' && Number.isFinite(b.maxHp)
-      ? b.maxHp
-      : (typeof b.hp === 'number' && Number.isFinite(b.hp) ? b.hp : 40);
-    const res = Math.min(1, 40 / Math.max(1, maxHp));
+    const res =
+      typeof b.knockbackFactor === 'number' && Number.isFinite(b.knockbackFactor)
+        ? b.knockbackFactor
+        : Math.min(
+            1,
+            40 /
+              Math.max(
+                1,
+                typeof b.maxHp === 'number' && Number.isFinite(b.maxHp)
+                  ? b.maxHp
+                  : typeof b.hp === 'number' && Number.isFinite(b.hp)
+                    ? b.hp
+                    : 40,
+              ),
+          );
     b.y -= force * res;
     clampInArena(state, b);
   } else {
@@ -275,6 +292,148 @@ function applyPull(
 }
 
 /**
+ * 计算 DoT 单层单跳伤害：
+ * - burn（灼烧）：max(damagePerTick 保底, maxHp × hpPctPerTick)；
+ * - poison（中毒）：max(damagePerTick 保底, weaponDamage × weaponDamageFactor)；
+ * - 缺省/其他：damagePerTick。
+ */
+export function calcDoTSingleDamage(def: EffectDef, inst: EffectInstance, target: Enemy): number {
+  let dmg = paramNum(def, inst, 'damagePerTick') ?? 0;
+
+  if (inst.kind === 'burn') {
+    const hpPct = paramNum(def, inst, 'hpPctPerTick');
+    if (hpPct !== undefined && hpPct > 0) {
+      const maxHp =
+        typeof target.maxHp === 'number' && Number.isFinite(target.maxHp) && target.maxHp > 0
+          ? target.maxHp
+          : typeof target.hp === 'number' && Number.isFinite(target.hp) && target.hp > 0
+            ? target.hp
+            : 0;
+      const pctDmg = maxHp * hpPct;
+      if (pctDmg > dmg) {
+        dmg = pctDmg;
+      }
+    }
+  } else if (inst.kind === 'poison') {
+    const wFactor = paramNum(def, inst, 'weaponDamageFactor');
+    const wDmg = inst.data.weaponDamage;
+    if (
+      wFactor !== undefined &&
+      wFactor > 0 &&
+      typeof wDmg === 'number' &&
+      Number.isFinite(wDmg) &&
+      wDmg > 0
+    ) {
+      const scaledDmg = wDmg * wFactor;
+      if (scaledDmg > dmg) {
+        dmg = scaledDmg;
+      }
+    }
+  }
+
+  return dmg;
+}
+
+interface PendingBurnExplosion {
+  sourceId: number;
+  x: number;
+  y: number;
+  radius: number;
+  damage: number;
+  canSpread: boolean;
+}
+
+const burnExplosionQueue: PendingBurnExplosion[] = [];
+let isProcessingBurnExplosions = false;
+const MAX_CHAIN_EXPLOSIONS = 64;
+
+/**
+ * 带有 burn 的敌人死亡时触发余烬尸爆与火种传染：
+ * - 提取未跳次数 × 单跳伤害 = 爆炸伤害；
+ * - 在尸爆半径内对其他存活敌人造成伤害；
+ * - 存活受击者传染灼烧（单代火种，次级火种只引爆伤害不再二度传染，避免怪潮无限裂变）；
+ * - 使用队列平铺消费，防止深层递归导致调用栈溢出。
+ */
+function triggerBurnExplosion(state: SimState, deadEnemy: Enemy): void {
+  const effects = deadEnemy.effects;
+  if (!effects || effects.length === 0) {
+    return;
+  }
+  const burnIdx = effects.findIndex((eff) => eff.kind === 'burn');
+  if (burnIdx === -1) {
+    return;
+  }
+  const burnInst = effects[burnIdx];
+  // 移除 burn 实例，防止同一尸体被重复引爆
+  effects.splice(burnIdx, 1);
+
+  const def = effectDefs['burn'];
+  if (!def) {
+    return;
+  }
+
+  const tickMs = tickIntervalOf(def, burnInst.data);
+  const remainingTicks =
+    tickMs > 0 ? Math.max(1, Math.ceil((burnInst.untilMs - state.timeMs) / tickMs)) : 1;
+  const singleDmg = calcDoTSingleDamage(def, burnInst, deadEnemy);
+  const explosionDmg = singleDmg * remainingTicks;
+  const radius = paramNum(def, burnInst, 'corpseExplosionRadius') ?? 60;
+
+  if (explosionDmg <= 0 || radius <= 0) {
+    return;
+  }
+
+  const canSpread = burnInst.data.spread !== 0;
+
+  burnExplosionQueue.push({
+    sourceId: deadEnemy.id,
+    x: deadEnemy.x,
+    y: deadEnemy.y,
+    radius,
+    damage: explosionDmg,
+    canSpread,
+  });
+
+  if (isProcessingBurnExplosions) {
+    return;
+  }
+
+  isProcessingBurnExplosions = true;
+  let head = 0;
+  try {
+    while (head < burnExplosionQueue.length && head < MAX_CHAIN_EXPLOSIONS) {
+      const exp = burnExplosionQueue[head++];
+      const r = exp.radius;
+      const rSq = r * r;
+      const enemies = state.enemies;
+      for (let i = 0; i < enemies.length; i++) {
+        const victim = enemies[i];
+        if (victim.id === exp.sourceId || victim.dead) {
+          continue;
+        }
+        const dx = victim.x - exp.x;
+        if (dx > r || dx < -r) {
+          continue;
+        }
+        const dy = victim.y - exp.y;
+        if (dy > r || dy < -r) {
+          continue;
+        }
+        if (dx * dx + dy * dy <= rSq) {
+          dealDamage(state, victim, exp.damage);
+          if (!victim.dead && exp.canSpread) {
+            applyEffect(state, victim, 'burn', { spread: 0 });
+          }
+        }
+      }
+    }
+  } finally {
+    burnExplosionQueue.length = 0;
+    isProcessingBurnExplosions = false;
+  }
+}
+
+/**
  * 统一伤害入口（弹丸命中、DoT tick、未来的近战/AoE 一律走这里）：
  * amount × damageTakenFactor（mark/corrode，每实例 ^stacks、多实例叠乘）→ enemy.hp -=；
  * hp <= 0 且未 dead → dead = true、pushEvent enemyKilled{enemyId,typeId,x,y,isBoss}、
@@ -299,6 +458,7 @@ export function dealDamage(state: SimState, enemy: Enemy, amount: number): void 
     for (let k = 0; k < killHooks.length; k++) {
       killHooks[k](state, enemy);
     }
+    triggerBurnExplosion(state, enemy);
   }
 }
 
@@ -453,21 +613,20 @@ function tickEffectList(
     if (def.tickMs !== undefined && def.tickMs > 0) {
       const tickMs = tickIntervalOf(def, inst.data);
       let next = inst.data.nextTickAt;
+      const target = bearer as Enemy;
+      const isEnemyTarget = typeof target.hp === 'number';
+
       while (
         typeof next === 'number' &&
         Number.isFinite(next) &&
         next <= now &&
         next <= inst.untilMs
       ) {
-        const dmg = paramNum(def, inst, 'damagePerTick');
-        const target = bearer as Enemy;
-        if (
-          dmg !== undefined &&
-          dmg > 0 &&
-          typeof target.hp === 'number' && // 仅敌人载体结算 DoT（tick 类效果不挂武器）
-          !isDeadEnemy(bearer)
-        ) {
-          dealDamage(state, target, dmg * inst.stacks); // 每层各结算一次伤害
+        if (isEnemyTarget && !isDeadEnemy(bearer)) {
+          const dmg = calcDoTSingleDamage(def, inst, target);
+          if (dmg > 0) {
+            dealDamage(state, target, dmg * inst.stacks); // 每层各结算一次伤害
+          }
         }
         next += tickMs;
         inst.data.nextTickAt = next;
@@ -475,6 +634,25 @@ function tickEffectList(
       if (isDeadEnemy(bearer)) {
         list.length = 0; // DoT 致死：清空尸体剩余效果
         return;
+      }
+
+      // 中毒专属：毒发身亡（斩杀）判定——若剩余时间内的预期毒伤足以致死，立即暴毙提前结算
+      if (inst.kind === 'poison' && isEnemyTarget && !isDeadEnemy(bearer) && inst.untilMs > now) {
+        const nextTick = inst.data.nextTickAt;
+        if (typeof nextTick === 'number' && Number.isFinite(nextTick) && nextTick <= inst.untilMs) {
+          const remainingTicks = Math.floor((inst.untilMs - nextTick) / tickMs) + 1;
+          if (remainingTicks > 0) {
+            const singleDmg = calcDoTSingleDamage(def, inst, target);
+            const expectedTotalDmg = singleDmg * inst.stacks * remainingTicks;
+            if (expectedTotalDmg > 0 && target.hp <= expectedTotalDmg) {
+              dealDamage(state, target, target.hp);
+              if (isDeadEnemy(bearer)) {
+                list.length = 0;
+                return;
+              }
+            }
+          }
+        }
       }
     }
 

@@ -17,6 +17,8 @@ export interface EndlessConfig {
   loopFromSec: number;
   /** 每轮膨胀系数：第 k 轮 loopScale = scalingPerLoop ** k（须 > 1，否则视为无循环）。 */
   scalingPerLoop: number;
+  /** 每轮刷怪密度膨胀系数：第 k 轮 densityScale = densityPerLoop ** k（可选，缺省或脏值回退 scalingPerLoop）。 */
+  densityPerLoop?: number;
 }
 
 /** 波次时钟结果：结构与 waves.ts 的 WaveClockInput 一致，可直接作为其 clock 参数传入。 */
@@ -25,8 +27,10 @@ export interface WaveClockResult {
   timelineSec: number;
   /** 已进入的循环轮数（表尾后每过 unit +1；爆发波触发键含它，跨轮可重触发）。 */
   loopCount: number;
-  /** 本轮膨胀系数（刷怪密度与血量同乘，单调递增）。 */
+  /** 本轮膨胀系数（血量与经验同乘，单调递增）。 */
   loopScale: number;
+  /** 本轮刷怪密度膨胀系数（与血量解耦，单调递增；通关/未进环模式恒 1）。 */
+  densityScale: number;
 }
 
 /**
@@ -49,12 +53,12 @@ export function resolveWaveClock(
   // 线性结果：通关模式恒线性；脏配置（unit 过小含 NaN、系数不膨胀）按无循环处理；
   // 未越过表尾（含恰等、容差内噪声）也不进环。
   if (endless === null) {
-    return { timelineSec: elapsedSec, loopCount: 0, loopScale: 1 };
+    return { timelineSec: elapsedSec, loopCount: 0, loopScale: 1, densityScale: 1 };
   }
   const unit = timelineEndSec - endless.loopFromSec;
   // !(unit >= EPSILON) 同时拦截 unit <= 0 与 NaN（NaN 参与比较恒 false）。
   if (!(unit >= EPSILON) || endless.scalingPerLoop <= 1 || elapsedSec <= timelineEndSec + EPSILON) {
-    return { timelineSec: elapsedSec, loopCount: 0, loopScale: 1 };
+    return { timelineSec: elapsedSec, loopCount: 0, loopScale: 1, densityScale: 1 };
   }
 
   // 循环时钟：offset = 表尾后流逝量（> EPSILON 保证）。
@@ -65,5 +69,11 @@ export function resolveWaveClock(
   const timelineSec = endless.loopFromSec + ((offset - 1) % unit) + 1;
   // 每轮膨胀：第 k 轮系数 = scalingPerLoop ** k，单调递增。
   const loopScale = endless.scalingPerLoop ** loopCount;
-  return { timelineSec, loopCount, loopScale };
+  // 每轮密度膨胀：合法 densityPerLoop（> 1 且有限）独立计算，缺省或脏值（<= 1 / NaN 等）回退 scalingPerLoop。
+  const densityPerLoop =
+    endless.densityPerLoop !== undefined && Number.isFinite(endless.densityPerLoop) && endless.densityPerLoop > 1
+      ? endless.densityPerLoop
+      : endless.scalingPerLoop;
+  const densityScale = densityPerLoop ** loopCount;
+  return { timelineSec, loopCount, loopScale, densityScale };
 }

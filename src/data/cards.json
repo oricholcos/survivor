@@ -13,7 +13,7 @@
     "description": "该武器开火间隔 ÷1.3（可叠加，上限 6 次）",
     "params": [{ "key": "intervalMs", "value": 1.3, "op": "div" }],
     "hardMax": 6,
-    "applyTo": ["all"]
+    "applyTo": ["heat_beam", "homing_missile", "mortar", "prism", "rail_piercer", "scatter", "seismic_wall"]
   },
   {
     "id": "multi_shot",

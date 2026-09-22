@@ -238,6 +238,42 @@ describe('clock 参数（T3.4 消费面）', () => {
     expect(scaled.enemies.length).toBe(14);
   });
 
+  it('densityScale 与 loopScale 解耦：匀速段累加乘 densityScale，怪物血量按 loopScale 膨胀', () => {
+    const config = makeConfig([{ fromSec: 0, spawn: { enemy: 'mook', perSec: 1 } }], 0);
+    const state = createSimState(21);
+    // dt = 10s, perSec = 1, densityScale = 1.08, loopScale = 1.45
+    updateWaves(state, 10000, config, TYPES, {
+      timelineSec: 10,
+      loopCount: 1,
+      loopScale: 1.45,
+      densityScale: 1.08,
+    });
+    // acc = 1 * 10 * 1.08 = 10.8 -> 刷 10 只，余 0.8
+    expect(state.enemies.length).toBe(10);
+    for (const e of state.enemies) {
+      // 血量仅受 loopScale 影响，与 densityScale 无关
+      expect(e.maxHp).toBeCloseTo(10 * 1.45, 9);
+      expect(e.hp).toBeCloseTo(10 * 1.45, 9);
+    }
+  });
+
+  it('爆发波不受 densityScale 影响：count 为静态配置，血量受 loopScale 膨胀', () => {
+    const config = makeConfig([{ fromSec: 5, burst: { enemy: 'brute', count: 4 } }], 0);
+    const state = createSimState(23);
+    updateWaves(state, 1000, config, TYPES, {
+      timelineSec: 6,
+      loopCount: 1,
+      loopScale: 1.45,
+      densityScale: 1.08,
+    });
+    // 爆发波数量恒为 count（4 只），不受 densityScale 缩放
+    expect(countBy(state, 'brute')).toBe(4);
+    for (const e of state.enemies) {
+      // 爆发怪 maxHp 40 * loopScale 1.45 * strengthFactor 1 = 58
+      expect(e.maxHp).toBeCloseTo(40 * 1.45, 9);
+    }
+  });
+
   it('loopCount 换轮后爆发波重触发（键含 loopCount），同轮不重复', () => {
     const config = makeConfig([{ fromSec: 5, burst: { enemy: 'brute', count: 3, boss: 'bigboss' } }]);
     const state = createSimState(17);
@@ -374,8 +410,9 @@ describe('waves.json 数据契约护栏（T3.6 平衡校准后的结构约束）
     expect(REAL.campaignDurationSec).toBe(600);
     // T5.2b 重校准：轨道炮 hitscan 化后整体清场能力上调，血量膨胀系数 0.0042 → 0.0052
     // M3 翻倍重校准：血量膨胀系数 0.0052 → 0.008，endless 循环参数 1.08 → 1.22
-    expect(REAL.scaling).toEqual({ hpPerSec: 0.0096 });
-    expect(REAL.endlessLoop).toEqual({ loopFromSec: 560, scalingPerLoop: 2.0 });
+    // M24 战役收紧：血量膨胀系数 0.0096 → 0.013；无尽曲线重设计：scalingPerLoop 2.0 → 1.60，densityPerLoop 1.20
+    expect(REAL.scaling).toEqual({ hpPerSec: 0.013 });
+    expect(REAL.endlessLoop).toEqual({ loopFromSec: 560, scalingPerLoop: 1.60, densityPerLoop: 1.20 });
     expect(REAL.timeline.length).toBeGreaterThan(0);
     let prev = -Infinity;
     for (const entry of REAL.timeline) {

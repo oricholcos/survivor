@@ -239,15 +239,19 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
       } else {
         const curLv = s.state.weaponStates[option.weaponId]?.level ?? 0;
         const nextLv = curLv + 1;
+        const countBadge =
+          option.maxCount !== undefined && !option.description.includes(`/${option.maxCount}）`)
+            ? `（${option.currentCount ?? 0}/${option.maxCount}）`
+            : '';
         if (curLv >= 10) {
           top.appendChild(el('span', 'ov-kind ov-kind--break', '突破上限'));
-          top.appendChild(el('span', 'ov-name', option.name));
+          top.appendChild(el('span', 'ov-name', `${option.name}${countBadge}`));
           card.appendChild(top);
           card.appendChild(el('div', 'ov-desc', option.description));
           card.appendChild(el('div', 'ov-level-indicator ov-level-indicator--break', `等级突破 Lv.${curLv} → Lv.${nextLv}`));
         } else {
           top.appendChild(el('span', 'ov-kind ov-kind--up', '武器牌'));
-          top.appendChild(el('span', 'ov-name', option.name));
+          top.appendChild(el('span', 'ov-name', `${option.name}${countBadge}`));
           card.appendChild(top);
           card.appendChild(el('div', 'ov-desc', option.description));
           card.appendChild(el('div', 'ov-level-indicator', `强化升级 Lv.${curLv} → Lv.${nextLv}`));

@@ -24,7 +24,7 @@ function clockAt(elapsedSec: number, endless: EndlessConfig | null = ENDLESS, en
 
 /** 线性时钟期望值（通关模式 / 未进环 / 脏配置路径的统一形态）。 */
 function linear(elapsedSec: number): WaveClockResult {
-  return { timelineSec: elapsedSec, loopCount: 0, loopScale: 1 };
+  return { timelineSec: elapsedSec, loopCount: 0, loopScale: 1, densityScale: 1 };
 }
 
 /** 形态契约：返回值必须可直接赋给 waves.ts 的 WaveClockInput（编译期检查 + 运行时透传）。 */
@@ -129,7 +129,12 @@ describe('loopCount 与 loopScale 逐轮膨胀', () => {
 describe('边界用例', () => {
   it('恰等表尾不进环；表尾 +1s 为循环第 1 轮起点', () => {
     expect(clockAt(END_SEC)).toEqual(linear(END_SEC));
-    expect(clockAt(END_SEC + 1)).toEqual({ timelineSec: ENDLESS.loopFromSec + 1, loopCount: 1, loopScale: 1.35 });
+    expect(clockAt(END_SEC + 1)).toEqual({
+      timelineSec: ENDLESS.loopFromSec + 1,
+      loopCount: 1,
+      loopScale: 1.35,
+      densityScale: 1.35,
+    });
   });
 
   it('浮点容差：表尾处 1e-12 级噪声不进环，越过容差后正常进环', () => {
@@ -138,6 +143,7 @@ describe('边界用例', () => {
     expect(r.loopCount).toBe(1);
     expect(r.timelineSec).toBeCloseTo(ENDLESS.loopFromSec, 6); // 540.00000001
     expect(r.loopScale).toBe(1.35);
+    expect(r.densityScale).toBe(1.35);
   });
 });
 
@@ -156,17 +162,19 @@ describe('脏配置防御：按无循环处理，恒返回线性结果', () => {
     const r = resolveWaveClock(900, { loopFromSec: Number.NaN, scalingPerLoop: 1.35 }, 600);
     expect(r.loopCount).toBe(0);
     expect(r.loopScale).toBe(1);
+    expect(r.densityScale).toBe(1);
     expect(r.timelineSec).toBe(900);
   });
 });
 
 describe('与 waves 消费端形态匹配', () => {
-  it('返回对象恰含 timelineSec / loopCount / loopScale 三个 number 字段', () => {
+  it('返回对象恰含 timelineSec / loopCount / loopScale / densityScale 四个 number 字段', () => {
     for (const r of [clockAt(300), clockAt(END_SEC + 1), clockAt(END_SEC + 90)]) {
-      expect(Object.keys(r).sort()).toEqual(['loopCount', 'loopScale', 'timelineSec']);
+      expect(Object.keys(r).sort()).toEqual(['densityScale', 'loopCount', 'loopScale', 'timelineSec']);
       expect(typeof r.timelineSec).toBe('number');
       expect(typeof r.loopCount).toBe('number');
       expect(typeof r.loopScale).toBe('number');
+      expect(typeof r.densityScale).toBe('number');
     }
   });
 
@@ -175,5 +183,46 @@ describe('与 waves 消费端形态匹配', () => {
     expect(clock.timelineSec).toBe(ENDLESS.loopFromSec + 1);
     expect(clock.loopCount).toBe(1);
     expect(clock.loopScale).toBe(1.35);
+    expect(clock.densityScale).toBe(1.35);
+  });
+});
+
+describe('densityPerLoop 与 densityScale（M24 密度解耦）', () => {
+  it('densityPerLoop 缺省时回退为 scalingPerLoop（densityScale 恒等 loopScale）', () => {
+    const r1 = clockAt(END_SEC + 1);
+    expect(r1.densityScale).toBe(r1.loopScale);
+    const r2 = clockAt(END_SEC + 2 * UNIT + 1);
+    expect(r2.densityScale).toBe(r2.loopScale);
+  });
+
+  it('指定合法 densityPerLoop 时逐轮计算，与 loopScale 解耦', () => {
+    const config: EndlessConfig = { loopFromSec: 560, scalingPerLoop: 1.45, densityPerLoop: 1.08 };
+    const r1 = resolveWaveClock(601, config, 600);
+    expect(r1.loopCount).toBe(1);
+    expect(r1.loopScale).toBe(1.45);
+    expect(r1.densityScale).toBe(1.08);
+
+    const r2 = resolveWaveClock(641, config, 600); // 600 + 40 + 1 = 2 轮起点
+    expect(r2.loopCount).toBe(2);
+    expect(r2.loopScale).toBeCloseTo(1.45 ** 2, 10);
+    expect(r2.densityScale).toBeCloseTo(1.08 ** 2, 10);
+    expect(r2.densityScale).not.toBe(r2.loopScale);
+  });
+
+  it('通关/线性分支下 densityScale 恒为 1', () => {
+    const config: EndlessConfig = { loopFromSec: 560, scalingPerLoop: 1.45, densityPerLoop: 1.08 };
+    expect(resolveWaveClock(300, config, 600).densityScale).toBe(1);
+    expect(resolveWaveClock(600, config, 600).densityScale).toBe(1);
+    expect(resolveWaveClock(700, null, 600).densityScale).toBe(1);
+  });
+
+  it('脏配置防呆：densityPerLoop <= 1 或 NaN 时安全回退为 scalingPerLoop', () => {
+    const dirtyLte1: EndlessConfig = { loopFromSec: 560, scalingPerLoop: 1.45, densityPerLoop: 1 };
+    const r1 = resolveWaveClock(601, dirtyLte1, 600);
+    expect(r1.densityScale).toBe(1.45);
+
+    const dirtyNaN: EndlessConfig = { loopFromSec: 560, scalingPerLoop: 1.45, densityPerLoop: Number.NaN };
+    const r2 = resolveWaveClock(601, dirtyNaN, 600);
+    expect(r2.densityScale).toBe(1.45);
   });
 });

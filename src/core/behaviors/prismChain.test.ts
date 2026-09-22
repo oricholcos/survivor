@@ -401,10 +401,10 @@ describe('冰/毒附着（frost_venom 牌）', () => {
     expect(tank.effects[1].stacks).toBe(1);
     expect(tank.effects[0].untilMs).toBeGreaterThan(state.timeMs); // 随效果表 durationMs 武装
     expect(tank.effects[1].untilMs).toBeGreaterThan(state.timeMs);
-    // poison（effects.json：1000ms tick / 每跳每层 2）真实结算一跳。
+    // poison（1000ms tick / 每跳每层 25% 武器面板伤害 = 10 * 0.25 = 2.5）真实结算一跳。
     state.timeMs += 1000;
     updateEffects(state, 1000);
-    expect(tank.hp).toBeCloseTo(10000 - 8 - 2, 6);
+    expect(tank.hp).toBeCloseTo(10000 - 8 - 2.5, 6);
   });
 
   it('直调钩子（timeMs=0）：幸存者 untilMs = 效果表 durationMs；死者不挂；下一跳伤害已递减', () => {
@@ -451,7 +451,7 @@ describe('冰/毒附着（frost_venom 牌）', () => {
 });
 
 describe('聚能折返（focus_return 牌）', () => {
-  it('直调钩子与属性契约：宽体光梭属性（radius=16、pierce=999、ttl=1500、hitIds清空、飞向角色、returning=1）', () => {
+  it('直调钩子与属性契约：宽体光梭属性（radius=16、pierce=999、ttl=1500、hitIds清空、竖直向下、returning=1）', () => {
     const state = createSimState(1); // 角色 (360, 1220)
     const e = makeEnemy(state, 360, 1120, 10000);
     const proj = spawnProjectile(state, {
@@ -475,9 +475,8 @@ describe('聚能折返（focus_return 牌）', () => {
     expect(beam.behavior).toBe('prism_chain');
     expect(beam.x).toBe(500); // 死亡点出生
     expect(beam.y).toBe(800);
-    const expected = scale(normalize({ x: state.character.x - 500, y: state.character.y - 800 }), 800);
-    expect(beam.vx).toBeCloseTo(expected.x, 9); // 朝角色方向、速度大小不变
-    expect(beam.vy).toBeCloseTo(expected.y, 9);
+    expect(beam.vx).toBe(0); // 竖直向下发射、速度大小不变
+    expect(beam.vy).toBeCloseTo(800, 9);
     expect(Math.hypot(beam.vx, beam.vy)).toBeCloseTo(800, 9);
     expect(beam.radius).toBe(16); // 宽体贯穿光梭
     expect(beam.pierceLeft).toBe(999);
@@ -930,12 +929,12 @@ describe('dot 频率（dot_freq 牌，requiresCard=frost_venom：中毒 tick 间
     expect(poison.data.tickMs).toBeCloseTo(1000 / 1.3, 9); // dot 频率覆盖
     expect('tickMs' in e.effects.find((x) => x.kind === 'chill')!.data).toBe(false); // chill 无 tick
 
-    // 首跳时序：769.2ms 才跳（效果表每跳 2）
+    // 首跳时序：769.2ms 才跳（单跳 25% 武器面板伤害 = 10 * 0.25 = 2.5）
     state.timeMs += 500;
     updateEffects(state, 500);
     expect(e.hp).toBeCloseTo(1e6 - 10, 6); // 500 < 769.2：无跳
     state.timeMs += 269.3;
     updateEffects(state, 269.3);
-    expect(e.hp).toBeCloseTo(1e6 - 10 - 2, 6); // 累计 769.3 ≥ 769.2：首跳
+    expect(e.hp).toBeCloseTo(1e6 - 10 - 2.5, 6); // 累计 769.3 ≥ 769.2：首跳
   });
 });

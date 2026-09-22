@@ -18,7 +18,15 @@ import type { Rng, SimState } from './types';
 /** 升级三选一的一个选项（视图层按 kind 分支渲染与点击应用；文案为面向玩家的中文）。 */
 export type UpgradeOption =
   | { kind: 'new_weapon'; weaponId: string; name: string; description: string }
-  | { kind: 'card'; weaponId: string; cardId: string; name: string; description: string };
+  | {
+      kind: 'card';
+      weaponId: string;
+      cardId: string;
+      name: string;
+      description: string;
+      currentCount?: number;
+      maxCount?: number;
+    };
 
 /**
  * 从池中不重复随机抽 count 个（部分 Fisher-Yates：只洗前 take 位， rng 消耗次数确定）。
@@ -35,6 +43,29 @@ function pickWithoutReplacement<T>(pool: readonly T[], count: number, rng: Rng):
   }
   items.length = take;
   return items;
+}
+
+/**
+ * 选牌时卡牌描述处理：
+ * 为有上限的卡牌呈现当前已选数量与上限（格式：（已选/最大））。
+ * 若已有旧上限说明（如（可叠...）、（上限...）、（一次性）），统一替换为（已选/最大）；
+ * 若无，则追加在末尾。
+ * 无上限卡牌不追加。
+ */
+export function formatCardDescriptionWithLimit(
+  desc: string,
+  currentCount: number,
+  maxLimit: number | undefined,
+): string {
+  if (maxLimit === undefined) {
+    return desc;
+  }
+  const countTag = `（${currentCount}/${maxLimit}）`;
+  const capRegex = /[（(]\s*(?:(?:可叠加[，,]\s*)?(?:可叠\s*\d+\s*次(?:[，,]\s*突破后上限\s*\d+\s*次)?|上限\s*\d+\s*次?)|一次性)\s*[）)]/g;
+  if (capRegex.test(desc)) {
+    return desc.replace(capRegex, countTag);
+  }
+  return `${desc}${countTag}`;
 }
 
 /**
@@ -134,7 +165,7 @@ const GENERIC_CARD_DESC: Record<string, (def: WeaponDef, card: WeaponCardDef) =>
     }
     const waves = cardParam(card, 'burstWaves') ?? 1;
     const interval = cardParam(card, 'burstIntervalMs') ?? 150;
-    return `开火后跟发 ${waves} 波齐射（每波完整再发一轮${noun.single}），波间隔 ${interval}ms（跟发波重新索敌，无目标自动跳过）${capSuffix(card)}`;
+    return `开火后跟发 ${waves} 波齐射（每波再发一轮${noun.single}），波间隔 ${interval}ms${capSuffix(card)}`;
   },
   split_shot: (def, card) => {
     const noun = VOLLEY_NOUNS[def.id];
@@ -144,7 +175,7 @@ const GENERIC_CARD_DESC: Record<string, (def: WeaponDef, card: WeaponCardDef) =>
     const targets = cardParam(card, 'splitMaxTargets') ?? 4;
     const factor = cardParam(card, 'splitDamageFactor');
     const pct = factor !== undefined ? Math.round(factor * 100) : 20;
-    return `${noun.main}${noun.splitSite}分裂出至多 ${targets} 枚${noun.secondary}：各 ${pct}% 伤害、锁定最近的 ${targets} 个不同敌人（次级弹不再分裂、不触发多射与连射；本牌一次性）`;
+    return `${noun.main}${noun.splitSite}分裂出至多 ${targets} 枚${noun.secondary}：各 ${pct}% 伤害、锁定最近的 ${targets} 个不同敌人（一次性）`;
   },
   range_up: (def, card) => {
     const names = def.rangeKeys.map((k) => RANGE_KEY_ZH[k] ?? k);
@@ -185,7 +216,7 @@ export function buildCardDescription(def: WeaponDef, card: WeaponCardDef): strin
  * - new_weapon → name=def.name、description=「新武器」；
  * - card → name=`${def.name}·${card.name}`（如「轨道贯穿炮·伤害强化」）、
  *   description=牌表文案（通用牌经 buildCardDescription 按当前武器动态拼装；
- *   突破后无 hardMax 牌再经 sanitizeUnlimitedCardDescription 剥除上限说明）。
+ *   有上限的卡牌格式化呈现当前已选数量（已选/最大））。
  */
 export function rollUpgradeOptions(state: SimState, defs: Record<string, WeaponDef>, count = 3): UpgradeOption[] {
   if (count <= 0) {
@@ -221,17 +252,36 @@ export function rollUpgradeOptions(state: SimState, defs: Record<string, WeaponD
     const cards = availableCards(def, ws, unlocked);
     for (let c = 0; c < cards.length; c++) {
       const card = cards[c];
+      const currentCount = ws.cards[card.id] ?? 0;
+      let maxLimit: number | undefined;
+      if (unlocked) {
+        if (card.hardMax !== undefined) {
+          maxLimit = card.hardMax;
+        }
+      } else {
+        if (card.maxCount !== undefined) {
+          maxLimit = card.maxCount;
+        } else if (card.hardMax !== undefined) {
+          maxLimit = card.hardMax;
+        } else if (card.once) {
+          maxLimit = 1;
+        }
+      }
+
       // 文案两步：① 通用牌按武器动态生成（buildCardDescription；专属牌原样）；
-      // ② 清洗只对没有 hardMax 的牌执行：hardMax 牌的上限在突破后依然真实存在，
-      //    描述中的两段上限说明（可叠 n 次 / 突破后上限 m 次）必须原样保留，否则误导玩家。
+      // ② 清洗只对没有 hardMax 的牌执行：hardMax 牌的上限在突破后依然真实存在；
+      // ③ 有上限的卡牌在选牌时呈现当前已选数量（已选/最大）。
       const baseDesc = buildCardDescription(def, card);
-      const desc = unlocked && card.hardMax === undefined ? sanitizeUnlimitedCardDescription(baseDesc) : baseDesc;
+      const cleanedDesc = unlocked && card.hardMax === undefined ? sanitizeUnlimitedCardDescription(baseDesc) : baseDesc;
+      const desc = formatCardDescriptionWithLimit(cleanedDesc, currentCount, maxLimit);
       candidates.push({
         kind: 'card',
         weaponId,
         cardId: card.id,
         name: `${def.name}·${card.name}`,
         description: desc,
+        currentCount,
+        maxCount: maxLimit,
       });
     }
   }

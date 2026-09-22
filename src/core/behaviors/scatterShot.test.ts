@@ -533,7 +533,7 @@ describe('分裂（split_shot 牌：弹丸首命中分裂次级弹丸）', () =>
 describe('dot 频率（dot_freq 牌，requiresCard=burn_bullet：燃烧 tick 间隔 ÷1.3）', () => {
   it('燃烧模板 tickMs = 500/1.3；命中后效果实例按覆盖节奏跳 DoT', () => {
     const state = createSimState(1);
-    const e = makeEnemy(state, 360, 1100, 1e6);
+    const e = makeEnemy(state, 360, 1100, 150); // hp=150 时 2% maxHp = 3 = 保底
     fireScatter(state, ['burn_bullet', 'dot_freq']);
     // 弹上模板即带覆盖 tick（4 枚带燃烧模板的弹 + 1 枚分裂无模板? —— 全部 5 枚同模板）
     for (const p of state.projectiles) {

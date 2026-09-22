@@ -29,7 +29,7 @@
 //   怪必中）；弹跳跳转【不加预测】——朝目标当前位置直线飞（弹跳速度快、距离短，且这正是
 //   与追踪武器的区分点：追踪弹逐帧转向制导，本弹一旦跳转就不再修正方向）。
 // - 聚能折返：弹跳链终结（chainsLeft 用尽或寻的无候选）且 focusReturn=1 → 在死亡点 spawn
-//   宽体贯穿光梭（朝角色方向、速度同、ttl 1500、damage = baseDamage × (1 + 0.25 × N)、
+//   宽体贯穿光梭（竖直向下发射、速度同、ttl 1500、damage = baseDamage × (1 + 0.25 × N)、
 //   pierce 999、radius 16、hitIds 清空——可贯穿扫过敌人、data.returning = 1）；否则弹亡。
 // - 折返弹（data.returning=1）：命中只吃框架统一结算（新 hitIds 可再打已打过的敌人——
 //   贯穿扫过人群的语义），到 ttl / pierce 用尽正常死亡，不再弹跳/闪电/附着/折返。
@@ -398,7 +398,13 @@ export const behavior: WeaponBehavior = {
     //    poison 的 tick 间隔按 dot 频率牌经弹上 poisonTickMs 快照逐实例覆盖）。
     if (numOr0(d.frostVenom) === 1 && !enemy.dead) {
       applyEffect(state, enemy, 'chill');
-      applyEffect(state, enemy, 'poison', numOr0(d.poisonTickMs) > 0 ? { tickMs: numOr0(d.poisonTickMs) } : undefined);
+      const poisonData: Record<string, number> = {
+        weaponDamage: numOr0(d.baseDamage),
+      };
+      if (numOr0(d.poisonTickMs) > 0) {
+        poisonData.tickMs = numOr0(d.poisonTickMs);
+      }
+      applyEffect(state, enemy, 'poison', poisonData);
     }
 
     // 3) 连锁闪电（chainLightning=1）：以被命中敌人为圆心的 zapRadius 内、不在 hitIds 的
@@ -431,13 +437,12 @@ export const behavior: WeaponBehavior = {
       const n = proj.hitIds.length;
       const damage = numOr0(d.baseDamage) * (1 + 0.25 * n);
       const speed = Math.hypot(proj.vx, proj.vy);
-      const dir = normalize({ x: state.character.x - proj.x, y: state.character.y - proj.y });
       spawnProjectile(state, {
         behavior: BEHAVIOR_NAME,
         x: proj.x,
         y: proj.y,
-        vx: dir.x * speed,
-        vy: dir.y * speed,
+        vx: 0,
+        vy: speed,
         radius: FOCUS_RETURN_RADIUS,
         damage,
         pierceLeft: FOCUS_RETURN_PIERCE,

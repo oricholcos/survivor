@@ -59,6 +59,8 @@ export interface WaveTimelineEntry {
 export interface WavesConfig {
   /** 通关模式总时长（秒）：本解释器不消费，通关判定（T3.3）与循环时钟（T3.4）使用。 */
   campaignDurationSec: number;
+  /** 通关模式目标击杀 Boss 数（缺省时从 timeline 统计 burst.boss 条目总数）。 */
+  campaignBossTarget?: number;
   /** 时间轴（建议按 fromSec 升序排列；解释器对 burst 触发按数组顺序、spawn 段取「最后一个匹配」）。 */
   timeline: WaveTimelineEntry[];
   /** 无尽循环配置：loopFromSec 起按 scalingPerLoop 逐轮膨胀（真实时钟由 T3.4 实现）。 */
@@ -74,6 +76,7 @@ export interface WaveClockInput {
   timelineSec: number;
   loopCount: number;
   loopScale: number;
+  densityScale?: number;
 }
 
 /** 波次游标（存 state.meta.waves，懒初始化）。 */
@@ -156,6 +159,13 @@ export function updateWaves(
   const timelineSec = clock !== undefined ? clock.timelineSec : state.timeMs / 1000;
   const loopCount = clock !== undefined ? clock.loopCount : 0;
   const loopScale = clock !== undefined ? clock.loopScale : 1;
+  const densityScale =
+    clock !== undefined &&
+    clock.densityScale !== undefined &&
+    Number.isFinite(clock.densityScale) &&
+    clock.densityScale > 0
+      ? clock.densityScale
+      : loopScale;
 
   const meta = getMeta(state);
 
@@ -197,7 +207,7 @@ export function updateWaves(
   if (spawnRule !== undefined) {
     const type = enemyTypes[spawnRule.enemy];
     if (type !== undefined) {
-      meta.spawnAcc += spawnRule.perSec * (dtMs / 1000) * loopScale;
+      meta.spawnAcc += spawnRule.perSec * (dtMs / 1000) * densityScale;
       const n0 = Math.floor(meta.spawnAcc);
       if (n0 >= 1) {
         // 数量护栏：拟刷 n0 钳到剩余额度（budget 可能 <= 0，取 max(0,·)）。

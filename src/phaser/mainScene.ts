@@ -1385,9 +1385,13 @@ export class MainScene extends Phaser.Scene {
 
   /** HUD（左上角等宽字体）：当前模式 / 存活时间 mm:ss / 等级 / 击杀数 + 细经验条；武器列表改为胶囊芯片（G1）。 */
   private renderHud(s: SimState): void {
-    const modeLabel = this.session.mode === 'endless' ? '无尽' : '通关';
+    const bossKills = (s.meta.bossKills as number | undefined) ?? 0;
+    const modeLabel =
+      this.session.mode === 'endless'
+        ? '模式 无尽'
+        : `模式 通关 (${bossKills}/6)`;
     this.hudText.setText(
-      `模式 ${modeLabel}\n存活 ${this.formatTime(s.timeMs)}\n等级 ${s.progress.level}\n击杀 ${this.kills}`,
+      `${modeLabel}\n存活 ${this.formatTime(s.timeMs)}\n等级 ${s.progress.level}\n击杀 ${this.kills}`,
     );
     this.syncWeaponChips(s);
 

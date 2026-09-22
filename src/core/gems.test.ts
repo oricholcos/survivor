@@ -49,7 +49,7 @@ describe('src/data/config 加载层', () => {
       xpTier2Step: 8,
       gemFlySpeed: 600,
       dropFlySpeed: 600,
-      repairDropChance: 0.02,
+      repairDropChance: 0.015,
       repairHeal: 30,
       wallMaxHp: 1600,
       maxWeaponSlots: 4,

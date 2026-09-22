@@ -5,7 +5,7 @@
   "maxLevel": 10,
   "base": {
     "damage": 60,
-    "intervalMs": 2400,
+    "intervalMs": 2000,
     "projectileSpeed": 1600,
     "pierce": 0,
     "ttlMs": 1200,
@@ -13,17 +13,6 @@
   },
   "rangeKeys": [],
   "cards": [
-    {
-      "id": "pierce_shot",
-      "name": "贯穿弹",
-      "description": "子弹获得 +2 次贯穿：命中后继续飞行，对沿线每个敌人独立结算伤害（可叠 2 次，突破后上限 4 次；持有边境折返时每张使命中计数 +2）",
-      "maxCount": 2,
-      "hardMax": 4,
-      "params": [
-        { "key": "pierceShot", "value": 1, "op": "set" },
-        { "key": "pierce", "value": 2, "op": "add" }
-      ]
-    },
     {
       "id": "headshot",
       "name": "斩首",
@@ -47,18 +36,19 @@
     {
       "id": "crit_shot",
       "name": "爆头",
-      "description": "每次命中时 15% 概率造成 550% 伤害（每次命中独立判定，可与斩首乘区叠乘；一次性）",
-      "once": true,
+      "description": "每次命中时有概率造成 550% 伤害（每层 +20% 概率，可叠 5 次；独立战斗随机流；与斩首乘区叠乘）",
+      "maxCount": 5,
+      "hardMax": 5,
       "params": [
         { "key": "critShot", "value": 1, "op": "set" },
-        { "key": "critChance", "value": 0.15, "op": "set" },
+        { "key": "critChance", "value": 0.2, "op": "add" },
         { "key": "critMultiplier", "value": 5.5, "op": "set" }
       ]
     },
     {
       "id": "execution_order",
       "name": "死刑宣告",
-      "description": "本武器任何一次击杀（直接击杀、爆头击杀、边境折返多次命中击杀、处决击杀）该次击杀经验 ×1.25；并保留处决：伤害结算后目标存活且生命低于 20% 最大生命（Boss 为 7%）→ 立即击杀（每次命中独立判定；一次死亡只放大一次；一次性）",
+      "description": "本武器任何一次击杀（直接击杀、爆头击杀、穿透多次命中击杀、处决击杀）该次击杀经验 ×1.25；并保留处决：伤害结算后目标存活且生命低于 20% 最大生命（Boss 为 7%）→ 立即击杀（每次命中独立判定；一次死亡只放大一次；一次性）",
       "once": true,
       "params": [
         { "key": "executionOrder", "value": 1, "op": "set" },
@@ -68,11 +58,23 @@
       ]
     },
     {
-      "id": "border_ricochet",
-      "name": "边境折返",
-      "description": "子弹获得边境折返：撞地图边缘必反弹且不消耗命中计数，命中计数 = 1 + 2×贯穿弹张数；取消 1200ms 飞行时长上限——计数未耗尽子弹不会消失，持续反弹飞行直至计数耗尽的那次命中结算后销毁（未拿贯穿弹时计数 1，首个命中即毁；一次性）",
+      "id": "bullet_fly",
+      "name": "让子弹飞",
+      "description": "命中敌人时若触发爆头或成功击杀，子弹不销毁并继续直线穿透；未暴击且未击杀时击中销毁（需先持有爆头；一次性）",
+      "requiresCard": "crit_shot",
       "once": true,
-      "params": [{ "key": "borderRicochet", "value": 1, "op": "set" }]
+      "params": [{ "key": "bulletFly", "value": 1, "op": "set" }]
+    },
+    {
+      "id": "sniper_god",
+      "name": "狙神",
+      "description": "子弹每穿透 1 个敌人，对后续敌人的伤害提升 20%（需先持有让子弹飞；一次性）",
+      "requiresCard": "bullet_fly",
+      "once": true,
+      "params": [
+        { "key": "sniperGod", "value": 1, "op": "set" },
+        { "key": "penetrateAmp", "value": 0.2, "op": "set" }
+      ]
     }
   ]
 }

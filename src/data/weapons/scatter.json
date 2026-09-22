@@ -18,14 +18,14 @@
     {
       "id": "burn_bullet",
       "name": "燃烧弹",
-      "description": "每枚弹丸命中附着燃烧：每 0.5s 一跳、每跳 3 伤、持续 3s（dot 频率牌加快跳伤；一次性）",
+      "description": "每枚弹丸命中附着燃烧：每 0.5s 造成目标 2% 最大生命值伤害（保底 3 伤）、持续 3s，死于灼烧或带火死亡时引爆剩余伤害并传染周围敌人（dot 频率牌加快跳伤；一次性）",
       "once": true,
       "params": [{ "key": "burnBullet", "value": 1, "op": "set" }]
     },
     {
       "id": "knockback",
       "name": "击退",
-      "description": "命中把敌人竖直向上击退（推离城墙方向，冲量 60；生命上限越高的敌人被推得越短；一次性）",
+      "description": "命中将敌人向上击退（冲量 60；体型越大的敌人抗性越高）",
       "once": true,
       "params": [
         { "key": "knockback", "value": 1, "op": "set" },

@@ -188,7 +188,15 @@ describe('rollUpgradeOptions 候选池构成', () => {
     const options = rollUpgradeOptions(state, DEFS, 99);
     // 栏满：无新武器；解锁判定 false：满级武器（w1..w3）不进候选，只有 w4 的 dmg_up。
     expect(options).toEqual([
-      { kind: 'card', weaponId: 'w4', cardId: 'dmg_up', name: '武器w4·数值牌dmg_up', description: 'dmg_up 乘区' },
+      {
+        kind: 'card',
+        weaponId: 'w4',
+        cardId: 'dmg_up',
+        name: '武器w4·数值牌dmg_up',
+        description: 'dmg_up 乘区',
+        currentCount: 3,
+        maxCount: undefined,
+      },
     ]);
   });
 
@@ -214,6 +222,8 @@ describe('rollUpgradeOptions 候选池构成', () => {
         cardId: 'dmg_up',
         name: `武器${id}·数值牌dmg_up`,
         description: 'dmg_up 乘区',
+        currentCount: 10,
+        maxCount: undefined,
       });
     }
   });
@@ -266,7 +276,9 @@ describe('rollUpgradeOptions 候选池构成', () => {
       (o) => o.kind === 'card' && o.weaponId === 'wh' && (o as { cardId: string }).cardId === 'wh_hm',
     ) as Extract<UpgradeOption, { kind: 'card' }> | undefined;
     expect(hmOpt).toBeDefined(); // hardMax 4 > 持有 2：解锁后重现
-    expect(hmOpt!.description).toBe('wh_hm 效果（可叠 2 次，突破后上限 4 次）'); // 文案原样保留
+    expect(hmOpt!.description).toBe('wh_hm 效果（2/4）'); // 选牌时呈现（已选/最大）
+    expect(hmOpt!.currentCount).toBe(2);
+    expect(hmOpt!.maxCount).toBe(4);
 
     const repOpt = options.find(
       (o) => o.kind === 'card' && o.weaponId === 'wh' && (o as { cardId: string }).cardId === 'wh_rep',
@@ -412,7 +424,9 @@ describe('面向玩家的中文文案（UI 直接渲染）', () => {
       | undefined;
     expect(cardOption).toBeDefined();
     expect(cardOption!.name).toBe('武器w1·叠加牌w1_rep');
-    expect(cardOption!.description).toBe('w1_rep ×N（上限 2）');
+    expect(cardOption!.description).toBe('w1_rep ×N（0/2）');
+    expect(cardOption!.currentCount).toBe(0);
+    expect(cardOption!.maxCount).toBe(2);
 
     const fresh = createSimState(1);
     fresh.rng = zeroRng();
@@ -724,16 +738,20 @@ describe('牌池升级流完整生命周期：0级起步 -> 选牌等级提升 -
       expect(splitOptions).toHaveLength(0);
 
       // 2. multi_shot 持有 4 < hardMax 8：解锁后依然进池，且因 hardMax 永久生效，
-      //    两段上限文案原样保留（不做突破清洗）；描述为按武器生成的实体名词（榴弹壳体）。
-      const multiMortar = options.find((o) => o.kind === 'card' && o.weaponId === 'mortar' && o.cardId === 'multi_shot');
+      //    选牌时显示当前已选数量与硬上限（4/8）；描述为按武器生成的实体名词（榴弹壳体）。
+      const multiMortar = options.find(
+        (o): o is Extract<UpgradeOption, { kind: 'card' }> =>
+          o.kind === 'card' && o.weaponId === 'mortar' && o.cardId === 'multi_shot',
+      );
       expect(multiMortar).toBeDefined();
-      expect(multiMortar!.description).toBe('同时多发射 1 枚榴弹壳体（可叠 4 次，突破后上限 8 次）');
+      expect(multiMortar!.description).toBe('同时多发射 1 枚榴弹壳体（4/8）');
+      expect(multiMortar!.currentCount).toBe(4);
+      expect(multiMortar!.maxCount).toBe(8);
 
-      // 3. 不变式：凡保留「可叠 n 次」（带数字）文案的选项必是 hardMax 牌（带「突破后上限」两段说明）；
-      //    dmg_up 等「（可叠加，上限 n 次）」措辞为纯 hardMax 牌，不在此列。
+      // 3. 不变式：凡有上限的选项在选牌时均呈现（已选/最大）格式：
       for (const o of options) {
-        if (o.kind === 'card' && /（?可叠\s*\d+\s*次/.test(o.description)) {
-          expect(o.description).toContain('突破后上限');
+        if (o.kind === 'card' && o.maxCount !== undefined) {
+          expect(o.description).toMatch(/（\d+\/\d+）/);
         }
       }
     });
@@ -776,7 +794,7 @@ describe('通用牌逐武器文案生成器（任务四：映射表驱动、无�
     };
     for (const wid of Object.keys(nouns)) {
       expect(buildCardDescription(REAL_DEFS[wid], genericOf(wid, 'burst_shot'))).toBe(
-        `开火后跟发 1 波齐射（每波完整再发一轮${nouns[wid]}），波间隔 150ms（跟发波重新索敌，无目标自动跳过）（可叠 2 次，突破后上限 4 次）`,
+        `开火后跟发 1 波齐射（每波再发一轮${nouns[wid]}），波间隔 150ms（可叠 2 次，突破后上限 4 次）`,
       );
     }
     expect(REAL_DEFS.charge_sniper.cards.find((c) => c.id === 'burst_shot')).toBeUndefined();
@@ -784,7 +802,7 @@ describe('通用牌逐武器文案生成器（任务四：映射表驱动、无�
 
   it('split_shot：主/次弹名词与分裂触发点随武器（霰弹=弹丸命中后、榴弹=母弹爆炸后；狙击已移出 applyTo）', () => {
     expect(buildCardDescription(REAL_DEFS.scatter, genericOf('scatter', 'split_shot'))).toBe(
-      '弹丸命中后分裂出至多 4 枚次级弹丸：各 20% 伤害、锁定最近的 4 个不同敌人（次级弹不再分裂、不触发多射与连射；本牌一次性）',
+      '弹丸命中后分裂出至多 4 枚次级弹丸：各 20% 伤害、锁定最近的 4 个不同敌人（一次性）',
     );
     expect(buildCardDescription(REAL_DEFS.mortar, genericOf('mortar', 'split_shot'))).toContain('母弹爆炸后分裂出至多 4 枚次级榴弹');
     expect(buildCardDescription(REAL_DEFS.homing_missile, genericOf('homing_missile', 'split_shot'))).toContain('导弹爆炸后分裂出至多 4 枚次级导弹');
@@ -885,13 +903,17 @@ describe('通用牌逐武器文案生成器（任务四：映射表驱动、无�
       (o) => o.kind === 'card' && o.weaponId === 'scatter' && (o as { cardId: string }).cardId === 'multi_shot',
     ) as Extract<UpgradeOption, { kind: 'card' }> | undefined;
     expect(multi).toBeDefined();
-    expect(multi!.description).toBe('同时多发射 1 枚弹丸（可叠 4 次，突破后上限 8 次）');
+    expect(multi!.description).toBe('同时多发射 1 枚弹丸（0/4）');
+    expect(multi!.currentCount).toBe(0);
+    expect(multi!.maxCount).toBe(4);
 
     const range = options.find(
       (o) => o.kind === 'card' && (o as { cardId: string }).cardId === 'range_up',
     ) as Extract<UpgradeOption, { kind: 'card' }> | undefined;
     expect(range).toBeDefined();
-    expect(range!.description).toBe('该武器扇角 ×1.2（可叠 5 次，突破后上限 8 次）');
+    expect(range!.description).toBe('该武器扇角 ×1.2（0/5）');
+    expect(range!.currentCount).toBe(0);
+    expect(range!.maxCount).toBe(5);
 
     // dot_freq 前置（requiresCard=burn_bullet）未满足：不进池
     expect(options.some((o) => o.kind === 'card' && (o as { cardId: string }).cardId === 'dot_freq')).toBe(false);
@@ -906,6 +928,8 @@ describe('通用牌逐武器文案生成器（任务四：映射表驱动、无�
       (o) => o.kind === 'card' && (o as { cardId: string }).cardId === 'dot_freq',
     ) as Extract<UpgradeOption, { kind: 'card' }> | undefined;
     expect(dot).toBeDefined();
-    expect(dot!.description).toBe('燃烧弹的燃烧每跳间隔 ÷1.3（可叠 3 次，突破后上限 6 次）');
+    expect(dot!.description).toBe('燃烧弹的燃烧每跳间隔 ÷1.3（0/3）');
+    expect(dot!.currentCount).toBe(0);
+    expect(dot!.maxCount).toBe(3);
   });
 });

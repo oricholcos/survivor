@@ -1,5 +1,6 @@
 {
   "campaignDurationSec": 600,
+  "campaignBossTarget": 6,
   "timeline": [
     { "fromSec": 0, "spawn": { "enemy": "runner", "perSec": 0.84 } },
     { "fromSec": 60, "spawn": { "enemy": "runner", "perSec": 1.4 } },
@@ -13,24 +14,24 @@
     { "fromSec": 215, "spawn": { "enemy": "runner", "perSec": 3.08 } },
     { "fromSec": 240, "spawn": { "enemy": "runner", "perSec": 3.36 } },
     { "fromSec": 285, "burst": { "enemy": "standard", "count": 34, "boss": "boss_1", "strengthFactor": 0.55 } },
-    { "fromSec": 300, "spawn": { "enemy": "tank", "perSec": 0.7 } },
+    { "fromSec": 300, "spawn": { "enemy": "tank", "perSec": 0.85 } },
     { "fromSec": 330, "spawn": { "enemy": "runner", "perSec": 3.5 } },
-    { "fromSec": 370, "spawn": { "enemy": "tank", "perSec": 0.7 } },
+    { "fromSec": 370, "spawn": { "enemy": "tank", "perSec": 0.85 } },
     { "fromSec": 390, "spawn": { "enemy": "standard", "perSec": 2.52 } },
     { "fromSec": 415, "burst": { "enemy": "standard", "count": 34, "boss": "boss_1", "strengthFactor": 0.65 } },
     { "fromSec": 430, "spawn": { "enemy": "runner", "perSec": 3.64 } },
     { "fromSec": 470, "burst": { "enemy": "standard", "count": 34, "boss": "boss_1", "strengthFactor": 0.75 } },
     { "fromSec": 480, "spawn": { "enemy": "runner", "perSec": 3.92 } },
-    { "fromSec": 500, "spawn": { "enemy": "tank", "perSec": 0.7 } },
+    { "fromSec": 500, "spawn": { "enemy": "tank", "perSec": 0.85 } },
     { "fromSec": 525, "burst": { "enemy": "standard", "count": 36, "boss": "boss_1", "strengthFactor": 0.75 } },
     { "fromSec": 535, "spawn": { "enemy": "runner", "perSec": 4.2 } },
     { "fromSec": 550, "burst": { "enemy": "runner", "count": 50, "strengthFactor": 0.75 } },
     { "fromSec": 555, "spawn": { "enemy": "standard", "perSec": 2.1 } },
-    { "fromSec": 560, "spawn": { "enemy": "tank", "perSec": 1.68 } },
+    { "fromSec": 560, "spawn": { "enemy": "tank", "perSec": 1.9 } },
     { "fromSec": 570, "spawn": { "enemy": "standard", "perSec": 4.2 } },
-    { "fromSec": 580, "burst": { "enemy": "tank", "count": 25, "boss": "boss_1", "strengthFactor": 0.8 } },
+    { "fromSec": 580, "burst": { "enemy": "tank", "count": 28, "boss": "boss_1", "strengthFactor": 0.8 } },
     { "fromSec": 585, "spawn": { "enemy": "runner", "perSec": 7.0 } }
   ],
-  "endlessLoop": { "loopFromSec": 560, "scalingPerLoop": 2.0 },
-  "scaling": { "hpPerSec": 0.0096 }
+  "endlessLoop": { "loopFromSec": 560, "scalingPerLoop": 1.60, "densityPerLoop": 1.20 },
+  "scaling": { "hpPerSec": 0.013 }
 }
