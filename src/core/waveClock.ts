@@ -65,8 +65,8 @@ export function resolveWaveClock(
   const offset = elapsedSec - timelineEndSec;
   // k = 循环轮数：表尾后每过 unit +1（减 EPSILON 抵消轮界浮点噪声，恰过 unit 仍记为该轮）。
   const loopCount = Math.ceil((offset - EPSILON) / unit);
-  // 时间轴回绕位置：落在 (loopFromSec, timelineEndSec]，轮内随 elapsed 连续推进。
-  const timelineSec = endless.loopFromSec + ((offset - 1) % unit) + 1;
+  // 时间轴回绕位置：落在 (loopFromSec, timelineEndSec]，轮内随 elapsed 严格连续推进。
+  const timelineSec = endless.loopFromSec + (offset - (loopCount - 1) * unit);
   // 每轮膨胀：第 k 轮系数 = scalingPerLoop ** k，单调递增。
   const loopScale = endless.scalingPerLoop ** loopCount;
   // 每轮密度膨胀：合法 densityPerLoop（> 1 且有限）独立计算，缺省或脏值（<= 1 / NaN 等）回退 scalingPerLoop。

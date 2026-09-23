@@ -150,6 +150,7 @@ describe('数据表与注册表', () => {
       id: 'burn', name: '燃烧', durationMs: 3000, tickMs: 500,
       maxStacks: 1, refresh: 'reset', damagePerTick: 3,
       hpPctPerTick: 0.02, corpseExplosionRadius: 60,
+      maxDamageCap: 50,
     });
     expect(getEffectDef('knockback')).toEqual({
       id: 'knockback', name: '击退', durationMs: 0,
@@ -883,5 +884,39 @@ describe('DoT 持续伤害重构（灼烧百分比+余烬尸爆传染、中毒�
         killHooks.splice(idx, 1);
       }
     }
+  });
+
+  it('高频刷新 DoT 持续时间（受击间隔 < tick 间隔）时跳伤正常按周期结算，不被持续后推', () => {
+    const state = createSimState(1);
+    // 敌人血量 200，单跳 2% maxHp = 4 点（保底 3 点，取 4）
+    const e = makeEnemy(state, 0, 0, 200);
+
+    // 初始挂灼烧：tickMs 为 500ms
+    applyEffect(state, e, 'burn');
+    expect(e.hp).toBe(200);
+
+    // 模拟高频受击：每隔 100ms 刷新一次灼烧，持续推进到 600ms
+    for (let step = 0; step < 6; step++) {
+      advance(state, 100);
+      applyEffect(state, e, 'burn');
+    }
+    // 在 500ms 时应该正常发生第 1 跳伤害（-4 HP），即使在 100ms, 200ms, 300ms, 400ms, 500ms, 600ms 被连续刷新
+    expect(e.hp).toBe(196);
+  });
+
+  it('灼烧最大伤害封顶（maxDamageCap: 50）：极高血量敌人的单跳与尸爆伤害受上限钳制', () => {
+    const state = createSimState(1);
+    // 超高血量怪：100,000 HP，理论 2% maxHp = 2000 点，但应被 maxDamageCap 限制为 50 点
+    const superEnemy = makeEnemy(state, 100, 100, 100000);
+    const bystander = makeEnemy(state, 130, 100, 10000); // 距离 30px，在 60px 尸爆内
+
+    applyEffect(state, superEnemy, 'burn');
+    advance(state, 500); // 第一跳
+    expect(superEnemy.hp).toBe(99950); // 100000 - 50（而非 -2000）
+
+    // 直伤致死，剩余 5 跳未结算，尸爆伤害应为 5 * 50 = 250 点（而非 5 * 2000 = 10000 点）
+    dealDamage(state, superEnemy, 100000);
+    expect(superEnemy.dead).toBe(true);
+    expect(bystander.hp).toBe(9750); // 10000 - 250
   });
 });

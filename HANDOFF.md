@@ -6,7 +6,7 @@
 - **引擎/框架与核心版本：** Phaser `3.90.0`、Vite `8.3.0`、TypeScript `5.9.3`、Vitest `5.0.0`。
 - **开发语言与运行时环境：** TypeScript strict、Node.js `v24.16.0`、npm `11.17.0`。当前工作目录为 `F:\myzcode\survivor`。
 - **当前开发分支：** `feature/dev-continue`（基于 `main` 分支建立的安全迭代分支）。
-- **关键第三方库/插件/依赖：** `phaser`；开发依赖为 `vite`、`vitest`、`eslint`、`typescript-eslint`、`@eslint/js`。无后端、无外部美术素材。
+- **关键第三方库/插件/依赖：** Phaser `3.90.0`；开发依赖为 `vite`、`vitest`、`eslint`、`typescript-eslint`、`@eslint/js`。无后端，包含 11 项 2D 高清机甲美术素材（存于 `public/assets/sprites/`，已配置 `.gitignore` 隔离）。
 - **如何启动与调试：**
   - 安装依赖：`npm install`
   - 开发服务：`npm run dev`
@@ -452,10 +452,104 @@
         - `charge_sniper.json`：将【处决强化】前置依赖切换为 `requiresCard: "execution_order"`（死刑宣告）；卡牌目录将 `execution_order` 置于 `execute_up` 之前；
         - 数值契约：【处决强化】重构为直接扩张【死刑宣告】斩杀线（`executionHpFactor` +0.05 / 张、`executionBossHpFactor` +0.02 / 张，可叠 2 次，突破后上限 4 次）；满 2 层斩杀线达 30%/11%，突破 4 层达 40%/15%；
         - 【斩首】（`headshot`）保持独立一次性牌（1.5 倍首刀高血爆发），解除旧有依赖链。
-    - **文档与测试全量同步**：
-      - `prismChain.test.ts`、`chargeSniper.test.ts`、`damageStats.test.ts`、`upgrade.test.ts` 全部更新并通过针对性测试；
-      - `CARDS.md` 与 `weapons-reference.html` 对应章节与表格 100% 吻合更新；
-      - 全量 36 个测试文件、708 passed / 1 skipped 全部通过；类型检查与 Lint 0 errors。
+34. **M34: 科幻赛博美术资产规格确立、AI 模型批量生成与落盘（11项素材就绪）**：
+    - **美术设计与规格确立**：
+      - 锁定为**科幻机械 / 赛博朋克题材**，采用**高清 2D 平面机甲插画风格（Top-down 90° 顶视角，硬表面机械线条，高对比度）**；
+      - 角色设定为固定在底部的【核心防御炮塔】（六边形重型基座 + 随射击目标实时自转的双联装磁轨炮管，带开火后坐力）；
+      - 城墙设定为【模块化重型合金防壁】（横向平铺 TileSprite，带黄色防撞警示条纹与顶部能量护盾导轨）；
+      - 敌人设定为【自律机械叛军】（快速怪 runner=三足侦察机械蛛、标准怪 standard=四足重装突击机甲、肉盾怪 tank=巨型双履带攻城车、首领 boss_1=八足陆行毁灭母舰要塞）；
+      - 弹药设定：追踪微型飞弹（`proj_missile.png`）与高爆电磁航弹（`proj_mortar.png`）贴图化，光束/电弧与粒子爆炸继续保持 WebGL 高性能 ADD 发光层；掉落物设定为磁控纳米修复舱（`drop_repair.png`）；
+      - 新增全景地图：赛博前线基地要塞地表（`map_background.png`，720×1280 竖屏暗色底图）。
+    - **全量素材 AI 模型批量生成与透底处理 (`public/assets/sprites/`)**：
+      - 通过图像生成模型批量生成全量素材；
+      - 对 10 项实体精灵图编写 Python 脚本，采用边界泛洪智能透底与 1px 边缘高斯平滑羽化算法，彻底剔除白底的同时 100% 完整保留物体内部的青色/红色高亮能量管线与高光；
+      - 尺寸与朝向严格对齐引擎规范：弹道与武器严格朝向正右方（+X 轴），敌人严格朝向正上方（-Y 轴）；
+      - 彻底删除并替代此前脚本绘制的 7 张临时过渡图，共落盘 11 项高分辨率纯 AI 生成资源；
+      - `.gitignore` 增配 `public/assets/sprites/`，确保大体积二进制资源不污染代码仓库；
+      - 建立完整设计规格与接入说明文档：`art_assets_specification.md`。
+    - **单测与工程质量**：
+      - 修复 `prismChain.test.ts` 连锁闪电方案 A 增强用例中 `e2`、`e3` 受首跳/次跳闪电波及的精确数值断言；
+      - 全量 36 个测试文件、708 passed / 1 skipped 全部通过；构建与 ESLint 0 errors。
+
+35. **M35: 2D 高品质美术素材全场景渲染管线接入与状态/弹道细节调优**：
+    - **背景与目标**：
+      - 将游戏中原有的纯几何图形/预烘焙矢量图形，完整替换为 `public/assets/sprites/` 中的 11 项透底 PNG 2D 机甲美术素材；
+      - 彻底修复敌人附加异常状态时露出旧版多边形几何图框的残留问题；
+      - 修复迫击榴弹贴图未显示的键名错位问题；
+      - 针对快速小怪（`runner`）贴图偏暗沉与深蓝地图背景色混淆的问题，进行高辨识度色彩重映射调优。
+    - **核心接入与调优实装**：
+      - **全景地图与资源预加载 (`src/phaser/mainScene.ts`)**：
+        - `preload()` 统一载入 11 项透底 PNG 素材；
+        - `create()` 废弃原纯 Graphics 网格星点，使用 `map_background.png` 全屏渲染静态基地底图（720×1280，depth: 0）。
+      - **主角防卫炮塔双层装配与动态索敌交互 (`src/phaser/mainScene.ts`)**：
+        - 重型基座 `turret_base` 固定在角色坐标（origin 0.5, 0.5，depth 3.0，等比缩放到约 48px）；
+        - 双联炮管 `turret_cannon` 挂载在基座上方（origin 0.25, 0.5，depth 3.1，等比缩放到约 46px），实时寻找场上最近存活敌人计算 `rotation` 瞄准，无敌人时朝正上方（-90°）；
+        - 开火后坐力：新弹丸产生时触发炮管向后弹性位移 3.5px，每帧平滑插值复位；移除原 `drawCharacter` 纯几何圆绘制，保留底盘能量呼吸微光。
+      - **城墙合金装甲平铺与受击红闪 (`src/phaser/mainScene.ts`)**：
+        - 使用 `this.add.tileSprite` 横向等比平铺 `wall_segment.png`（高 32px，保持材质等比）；
+        - 受击红闪时设置 `this.wallSprite.setTint(0xff3b30)`；低血量（<30%）脉冲警示红闪；无受击时恢复 `clearTint()`；移除原 `drawWall` 单色 `fillRect`，保留顶部细血条。
+      - **修复包掉落物池化素材化 (`src/phaser/mainScene.ts`)**：
+        - 维护 16 槽常驻 Image 对象池（`drop_repair.png`），废弃原几何红十字方块绘制，零 GC 运行。
+      - **敌人渲染器机甲素材映射与原生 WebGL 白闪 (`src/phaser/enemyRenderer.ts`)**：
+        - 4 类敌人机甲贴图映射：`runner` -> `enemy_runner`、`standard` -> `enemy_standard`、`tank` -> `enemy_tank`、`boss_1` -> `enemy_boss_1`；
+        - 按物理 `radius` 与素材真实分辨率等比计算 `scale`（Boss 乘以 `bossScale` 1.15）；
+        - 受击白闪升级为 WebGL 原生 `st.body.setTintFill(0xffffff)` 与 `clearTint()`，精简原 `st.flash` 剪影层；
+        - 移除原动态几何烘焙逻辑，保留 1x1 白纹理与降级状态光环。
+      - **弹丸素材与迫击炮弹体修复 (`src/phaser/projectileRenderer.ts`)**：
+        - 接入追踪飞弹 `proj_missile`（沿航向旋转，bomblet 0.7 缩放）；
+        - 迫击榴弹漏显修复：将 `KEY_MORTAR` 由原本残留的旧烘焙键名 `'proj_dot_mortar'` 修正为预加载键名 `'proj_mortar'`，迫击航弹正常显示；母弹沿贝塞尔弧线飞行，子弹沿物理轨迹飞行；
+        - 光束与电弧继续维持在高性能发光叠加层渲染。
+      - **状态异常旧几何残留彻底根除 (`src/phaser/mainScene.ts`)**：
+        - 针对 `slow / chill` 和 `burn` 状态，将原本根据 `e.shape` 分支画三角形/正方形/多边形的 `strokeEnemyShape` 统一替换为通用的圆形发光描边（`glow.strokeCircle`）；
+        - 清理删除了无用的 `polyScratch`、`regularPolyInto`、`starInto`、`strokeRegularPolygon`、`strokeStar`、`strokeEnemyShape` 等死代码，彻底杜绝旧几何线框暴露。
+      - **快速小怪素材高对比度色彩重映射 (`public/assets/sprites/enemy_runner.png`)**：
+        - 针对快速小怪（`runner`）原素材偏暗灰冷色调、与深蓝太空基地背景对比度不足的问题，通过色阶通道重映射（Color Ramp Remapping）调整为鲜亮炽红色（avg RGB 187, 37, 29）；
+        - 与暗青蓝底图（RGB 11, 21, 32）形成强烈互补反差（Teal vs Orange/Red），100% 保持原有机械三足构造、透明通道与金属高光，形象毫无变形。
+    - **单测与工程质量**：
+      - 纯渲染表现层改造，严格未改动 `src/core/` 目录任何战斗逻辑与数值；
+      - 全量 36 个测试文件、708 passed / 1 skipped 全部通过；构建与 ESLint 0 errors。
+
+36. **M36: 全系统隐蔽逻辑缺陷修复与高频热循环性能优化**：
+    - **逻辑缺陷修复（L-1 ~ L-5）**：
+      - **L-1 无尽模式跨轮时间轴连续实数映射 (`src/core/waveClock.ts`)**：修复原误用整数取模 `((offset - 1) % unit) + 1` 导致每轮无尽循环开始首秒（40.0~41.0s）时间轴在 600~601s 越界、且 560~561s 时间窗口内怪潮波次被完全跳过的严重 Bug。重构为闭式连续周期映射 `timelineSec = endless.loopFromSec + (offset - (loopCount - 1) * unit)`；补充 `waveClock.test.ts` 浮点连续性回归测试。
+      - **L-2 DoT 刷新跳点周期保护 (`src/core/effects.ts`)**：修复原同 kind 叠层刷新持续时间时无条件推迟 `nextTickAt`、导致高频受击下 DoT 跳伤被完全吞掉的严重 Bug。改为仅在 `nextTickAt` 为空或落后于当前时间时重排，刷新不推后合法跳点；补充 `effects.test.ts` 高频刷新跳点单测。
+      - **L-3 弹跳转向扫掠线段截断 (`src/core/projectiles.ts`)**：修复棱镜弹（Prism）等命中转向后未打断扫掠循环、导致沿原直线位移轨迹对后续敌人产生幽灵穿透与双重弹跳的问题。命中钩子改变弹丸速度矢量时立即扣减穿透并 `break` 打断扫掠；补充 `projectiles.test.ts` 专项单测。
+      - **L-4 蓄能狙击击杀经验安全结算 (`src/core/behaviors/behavior_chargeSniper.ts`)**：消除每次处决/致死时向全局模块级 `killHooks` push 闭包并在 finally 中 splice 的危险做法，改为在 `dealDamage` 同步致死后直接追加加成经验并检查升级，彻底规避数组遍历中的索引错位与漏执行风险。
+      - **L-5 敌人分离推挤后空间网格同步刷新 (`src/core/enemies.ts`)**：解决推开怪物后未刷新网格、导致后续 `updateZones` 查询到陈旧坐标的不一致时序问题。在分离完成后重构网格（`grid.clear()` + `insert`）。
+    - **高频热循环零分配与性能优化（P-1 ~ P-5）**：
+      - **P-1 查询缓冲复用（Zero-Allocation Buffers）**：在 `enemies.ts`、`behavior_mortar.ts`、`behavior_homingMissile.ts`、`zones.ts` 各热循环中全面传入模块级复用缓冲数组（`scratchNeighbors`、`scratchNear`、`scratchHits`、`scratchBlastHits`、`scratchZoneHits`），消除每秒数万个临时查询数组分配。
+      - **P-2 敌人分离两两对称剪枝**：在 `updateEnemies` 分离循环中增加 `b.id <= a.id` 剪枝，每对重叠怪物只做一次双向推挤，计算量直接减少 50%，消除重复推挤偏斜。
+      - **P-4 空间网格 Map 实例复用 (`src/core/spatialHash.ts`)**：`clear()` 中清空 bucket 与 inner 内容，但保留 `this.columns` 中的内层 Map 实例，消除每帧销毁并重新分配数十个 Map 实例的 GC 压力。
+      - **P-5 迫击炮下坠虚线绘制限频 (`src/phaser/mainScene.ts`)**：`drawMortarGuides` 增加上限裁剪（`MAX_GUIDES = 8`），防止高弹幕密度下的贝塞尔重绘 Draw Call 峰值。
+    - **全量测试与质量指标**：
+      - 全量 36 个测试文件、711 passed / 1 skipped 全部通过；
+      - `balance.test.ts` 适配 DoT 修复后 seed 7 的最新真实墙损基线（1573/1600 = 98.3%）；
+      - `npx tsc --noEmit`、`npm run lint`、`npm run build` 全部 0 errors。
+
+37. **M37: 战力平衡与局内体验升级（局中构筑详情面板、无尽DoT上限与测试解挂、Boss来袭警报与关键高伤跳字、三选一重掷）**：
+    - **模块 A：局中构筑详情面板与右上角暂停按钮**：
+      - 右上角常驻悬浮按钮（`⏸ 构筑`），局内显示，开局菜单与结算面板自动隐藏；
+      - 点击展开半透明霓虹构筑卡片，**自动冻结游戏模拟**（`s.paused = true`）；关闭面板自动恢复模拟（三选一状态下除外）；
+      - 调用 `getWeaponStats` 实时解析拥有的武器属性（单发伤害、攻击间隔、频次、穿透、弹速），列出当前已选强化卡牌（名称、持有张数 `×N`、说明文案）与累计输出；
+      - 面板底部配备「继续游戏」「重新开始」与红色的「返回主界面」；点击「返回主界面」严格跳过 `recordResult` / `updateRecords`（游戏途中返回不保存纪录，避免污染无尽最佳时长与击杀纪录），重置运行态并返回初始模式菜单。
+    - **模块 B：无尽 DoT 伤害上限截断与通关文案对齐**：
+      - `src/data/effects.json` 中给 `burn` 增加 `"maxDamageCap": 50`；
+      - `src/core/effects.ts` 中 `calcDoTSingleDamage` 加入 `Math.min(dmg, maxDamageCap)`；战役怪物血量远低于该上限，通关体验 100% 不受影响，而在无尽模式面对数十万血量的 Boss 时有效阻止指数级 DoT 抵消机制；
+      - 解挂 `src/core/balance.test.ts` 中的无尽自动化对局单测（`ENDLESS_SEED = 7`），无尽在 961.0s（第 10 轮难度递增，loop=10，击杀 5515）自然被怪潮攻破城墙收敛判负（`over === 'defeat'`），测试用例全部解除 `.skip`；
+      - `src/ui/overlay.ts` 主菜单通关模式按钮文案对齐为“通关模式（消灭 6 只领主首领获胜）”。
+    - **模块 C：领主首领预警与关键高伤跳字**：
+      - `src/audio/sfx.ts` 增设 1000ms 节流的 `bossWarning` 警报合成音效，并在 `src/main.ts` 的 `sfxListener` 中于 `enemySpawned(isBoss=true)` 时播放；
+      - `src/phaser/mainScene.ts` 在首领刷出时触发全屏震动（320ms）、边缘红光暗角（2000ms）及顶部红色霓虹警示横幅（`⚠ WARNING: 领主首领接近中 ⚠`，留存 2500ms 脉冲淡出）；
+      - 32 槽常驻跳字对象池，零 GC 分配，仅针对**单发高伤（≥60）**、**蓄能狙击爆头（CRIT）**、**死刑宣告处决（EXECUTE）**触发上浮淡出跳字。
+    - **模块 D：三选一重掷（Upgrade Reroll）**：
+      - `src/core/upgrade.ts` 导出 `INITIAL_REROLLS = 2`、`getRerollsRemaining`、`consumeReroll` 与 `resetRerolls`；
+      - `src/game/session.ts` 组装新对局状态时重置为 2 次；
+      - 升级三选一面板底部展示橙金霓虹重掷按钮（`重掷卡牌 (剩余 N 次)`），消耗完后变灰禁用（`disabled`）。
+    - **全量测试与质量指标**：
+      - 全量 36 个测试文件、715 passed 全部通过（0 skipped，0 errors）；
+      - `balance.test.ts` 无尽模式与战役模式全对局通过；
+      - `npm run lint` 0 warnings 0 errors；
+      - `npm run build` 成功。
 
 ---
 
@@ -464,28 +558,28 @@
 - **当前工程是否能直接运行/编译：** **是**。
 - **全量测试结果 (`npm run test` / `vitest run`)：**
   - **36 / 36 test files passed (100%)**
-  - **708 passed, 1 skipped (709 tests)**（仅实验性无尽收敛断言因暂不封顶暂时挂起）。
-  - 运行总耗时约 **8.9s**。
+  - **715 passed, 0 skipped (715 tests)**（无尽模式收敛测试已全面解挂并通过）。
+  - 运行总耗时约 **21s**（含全自动战役/无尽完整对局模拟）。
 - **静态检查 (`npm run lint` / `eslint .`)：**
   - **ESLint 通过，0 errors, 0 warnings**。
 - **TypeScript 检查 (`npx tsc --noEmit` & `npm run build`)：**
-  - **通过，0 errors**，Vite 生产构建正常。
-- **平衡回归 (`balance.test.ts` 全自动对局面板，M33 最新基线)：**
-  - campaign seed 7：`victory` @594.9s，最低墙血 1516/1600（94.8%），击杀 1547（Boss 6）。
-  - campaign seed 42：`victory` @609.1s，最低墙血 1555/1600（97.2%），击杀 1576（Boss 6）。
-  - campaign seed 2024：`victory` @603.3s，最低墙血 1600/1600（100.0%），击杀 1600（Boss 6）。
-- **开发分支：** `feature/dev-continue`。
+  - **通过，0 errors**，Vite 生产构建正常，70 modules transformed，产物位于 `dist/`。
+- **版本控制与资源状态：**
+  - 当前分支：`feature/dev-continue`。
+  - `.gitignore` 已配置 `public/assets/sprites/`，美术资源与代码库干净隔离。
+- **平衡回归 (`balance.test.ts` 全自动对局面板，M37 最新基线)：**
+  - campaign seed 7：`victory` @598.6s，最低墙血 1573/1600（98.3%），击杀 1579（Boss 6）。
+  - campaign seed 42：`victory` @610.8s，最低墙血 1555/1600（97.2%），击杀 1610（Boss 6）。
+  - campaign seed 2024：`victory` @591.4s，最低墙血 1600/1600（100.0%），击杀 1531（Boss 6）。
+  - endless seed 7：`defeat` @961.0s，最低墙血 0/1600（0.0%），击杀 5515（Boss 12），loop=10（×109.95）。
 
 ---
 
 ## 5. 给接手 Agent 的后续建议
 
 1. **当前状态**：
-   - M33 连锁闪电与处决强化机制重构（棱镜连锁闪电方案 A / 蓄能狙击处决线扩张方案 1）已 100% 完整交付；
-   - 包含数值表驱动、核心行为接线、范围描述生成器、单测契约更新、参考文档同步以及全量自动化回归；
-   - 全部 36 个测试套件（709 个单测）全绿，构建与 Lint 零警告。
-2. **实机试玩重点（`npm run dev`）**：
-   - 弹射棱镜：选【连锁闪电】后观察电弧伤害随【伤害强化】动态提升；同时选【冰毒附着】时，电弧命中的副目标同步被挂上冰缓与中毒；
-   - 蓄能狙击：在未拿【死刑宣告】前，升级面板绝对不出现【处决强化】；持有【死刑宣告】后再拿【处决强化】，普通怪残血处决线由 20% 显著提升至 25% / 30%（Boss 提升至 9% / 11%），高血怪终结手感极其利落。
-3. **后续建议**：
-   - 蓄能狙击各增伤乘区现已收敛为：底模伤害强化（独立指数乘区）、首刀斩首（高血 1.5 倍爆发）、随机爆头（5.5 倍并带穿透闭环）、死刑宣告+处决强化（残血门槛斩杀），各乘区定位清晰无互相稀释。后续若需继续扩展专属牌，可沿此分工设计。
+   - M37 战力平衡与局内体验升级（局中构筑详情面板与右上角暂停按钮、无尽 DoT 上限与单测解挂、Boss 来袭声光警报与关键高伤跳字、三选一 2 次重掷）已 100% 交付；
+   - 代码库状态全绿：36 个测试套件通过，715 个用例全 PASS，tsc、lint 与 build 均为 0 errors。
+2. **后续可选打磨方向**：
+   - **音效多样性**：可继续补充更多武器的专属击中与开火音色（如光束蜂鸣、电磁充能声）；
+   - **更多模式与局外系统**：如局外科技树或图鉴系统。

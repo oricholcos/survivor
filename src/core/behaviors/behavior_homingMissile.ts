@@ -61,6 +61,7 @@ function numOr0(v: unknown): number {
 const blastGrid = new SpatialHash<Enemy>(64);
 let blastGridState: SimState | null = null;
 let blastGridTimeMs = NaN; // NaN !== 任何值：强制首帧重建
+const scratchBlastHits: Enemy[] = [];
 
 function ensureBlastGrid(state: SimState): SpatialHash<Enemy> {
   if (blastGridState !== state || blastGridTimeMs !== state.timeMs) {
@@ -306,7 +307,7 @@ export const behavior: WeaponBehavior = {
     const d = proj.data;
 
     // 1) 爆炸：半径内存活敌人统一吃溅射；燃烧只挂幸存者（致死一击附着尸体无意义）。
-    const hits = ensureBlastGrid(state).queryCircle(proj.x, proj.y, numOr0(d.aoeRadius));
+    const hits = ensureBlastGrid(state).queryCircle(proj.x, proj.y, numOr0(d.aoeRadius), scratchBlastHits);
     const burnData = numOr0(d.burnTickMs) > 0 ? { tickMs: numOr0(d.burnTickMs) } : undefined;
     for (let i = 0; i < hits.length; i++) {
       const e = hits[i];

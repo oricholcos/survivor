@@ -61,18 +61,25 @@ import {
   STATUS_EFFECT_COLORS,
   COLOR_TRACK,
   bezier,
-  drawStaticBackground,
   projectileStyle,
   zoneColor,
 } from './fx';
 
+/** 关键高伤跳字条目（模块 C：单发 ≥60 伤害 / CRIT / EXECUTE）。 */
+interface DamagePopupItem {
+  text: Phaser.GameObjects.Text;
+  active: boolean;
+  startX: number;
+  startY: number;
+  spawnMs: number;
+  durationMs: number;
+}
+
 // —— 布局/样式常量（视图层允许硬编码；页面深色底 #05050d） ——
 
-const WALL_THICKNESS = 20; // 墙体横条高度
 const WALL_BAR_MARGIN = 40; // 墙血条左右留边
 const WALL_BAR_HEIGHT = 8;
 const WALL_BAR_OFFSET = 20; // 墙血条距墙线的上移量
-const CHARACTER_RADIUS = 14;
 const HUD_X = 16;
 const HUD_Y = 12;
 const XP_BAR_Y = 188; // 四行 HUD 文本下方（模式/时间/等级/击杀；武器行已改为胶囊芯片，见 G1）
@@ -128,7 +135,6 @@ const MORTAR_BLAST_DRAW_CAP = 32;
 
 const COLOR_XP_FILL = 0x8be9fd;
 const COLOR_CHARACTER = 0xffe066;
-const COLOR_CHARACTER_STROKE = 0xfff6c0; // 角色亮描边（霓虹高光）
 
 /** 武器定义表（HUD 武器列表行名称用；数据表只加载一次、内容共享只读）。 */
 const WEAPON_DEFS = loadWeaponDefs();
@@ -163,55 +169,6 @@ function healthColor(pct: number): number {
   return (r << 16) | (g << 8) | b;
 }
 
-// 多边形顶点 scratch：预分配复用，避免每帧为每个敌人分配点对象（strokePoints 需切片）。
-const MAX_POLY_POINTS = 10;
-const polyScratch: Array<{ x: number; y: number }> = Array.from({ length: MAX_POLY_POINTS }, () => ({
-  x: 0,
-  y: 0,
-}));
-
-/** 正多边形顶点写入 scratch（顶点从正上方起），返回顶点数。 */
-function regularPolyInto(cx: number, cy: number, r: number, sides: number, rot = 0): number {
-  for (let i = 0; i < sides; i++) {
-    const a = -Math.PI / 2 + rot + (i * 2 * Math.PI) / sides;
-    const p = polyScratch[i];
-    p.x = cx + Math.cos(a) * r;
-    p.y = cy + Math.sin(a) * r;
-  }
-  return sides;
-}
-
-/** 五角星顶点写入 scratch（外接圆半径 r，内半径 0.45r），返回顶点数 10。 */
-function starInto(cx: number, cy: number, r: number, rot = 0): number {
-  const inner = r * 0.45;
-  for (let i = 0; i < MAX_POLY_POINTS; i++) {
-    const a = -Math.PI / 2 + rot + (i * Math.PI) / 5;
-    const rad = i % 2 === 0 ? r : inner;
-    const p = polyScratch[i];
-    p.x = cx + Math.cos(a) * rad;
-    p.y = cy + Math.sin(a) * rad;
-  }
-  return MAX_POLY_POINTS;
-}
-
-/** 正多边形描边（scratch 复用版）。 */
-function strokeRegularPolygon(
-  g: Phaser.GameObjects.Graphics,
-  cx: number,
-  cy: number,
-  r: number,
-  sides: number,
-): void {
-  const n = regularPolyInto(cx, cy, r, sides);
-  g.strokePoints(polyScratch.slice(0, n), true);
-}
-
-/** 五角星描边。 */
-function strokeStar(g: Phaser.GameObjects.Graphics, cx: number, cy: number, r: number): void {
-  starInto(cx, cy, r);
-  g.strokePoints(polyScratch, true);
-}
-
 /** 直线段描边（发光层/光束通用小工具）。 */
 function strokeLine(
   g: Phaser.GameObjects.Graphics,
@@ -228,37 +185,6 @@ function strokeLine(
   g.moveTo(x1, y1);
   g.lineTo(x2, y2);
   g.strokePath();
-}
-
-// —— 敌人霓虹几何形 ——
-
-/** 按图鉴 shape 描边敌人几何形（高饱和霓虹描边 / 微光外圈复用）。 */
-function strokeEnemyShape(
-  g: Phaser.GameObjects.Graphics,
-  e: Enemy,
-  r: number,
-  width: number,
-  color: number,
-  alpha: number,
-): void {
-  g.lineStyle(width, color, alpha);
-  switch (e.shape) {
-    case 'triangle':
-      strokeRegularPolygon(g, e.x, e.y, r, 3);
-      break;
-    case 'square':
-      g.strokeRect(e.x - r * 0.8, e.y - r * 0.8, r * 1.6, r * 1.6);
-      break;
-    case 'hexagon':
-      strokeRegularPolygon(g, e.x, e.y, r, 6);
-      break;
-    case 'star':
-      strokeStar(g, e.x, e.y, r);
-      break;
-    default:
-      g.strokeCircle(e.x, e.y, r);
-      break;
-  }
 }
 
 /**
@@ -307,8 +233,10 @@ export function drawEnemyStatusEffects(
   // 1) 减速 / 冰附着（slow / chill）：冰蓝微弱脉动冷光描边与外轮廓冰霜圈
   if (hasSlow || hasChill) {
     const pulse = 0.5 + 0.5 * Math.sin(timeMs * 0.005 + e.id * 0.7);
-    strokeEnemyShape(glow, e, r, 2, STATUS_EFFECT_COLORS.chillCore, 0.55 + 0.25 * pulse);
-    strokeEnemyShape(glow, e, r + 2.5, 4, STATUS_EFFECT_COLORS.chillOuter, 0.2 + 0.15 * pulse);
+    glow.lineStyle(2, STATUS_EFFECT_COLORS.chillCore, 0.55 + 0.25 * pulse);
+    glow.strokeCircle(e.x, e.y, r);
+    glow.lineStyle(4, STATUS_EFFECT_COLORS.chillOuter, 0.2 + 0.15 * pulse);
+    glow.strokeCircle(e.x, e.y, r + 2.5);
 
     const frostR = r + 5 + 2 * pulse;
     glow.lineStyle(1.5, STATUS_EFFECT_COLORS.chillOuter, 0.4 + 0.2 * pulse);
@@ -360,8 +288,10 @@ export function drawEnemyStatusEffects(
   // 3) 灼烧（burn）：亮橙红高频脉动烈焰描边 + 向上抖动的微型火星三角/细菱形
   if (hasBurn) {
     const burnPulse = 0.5 + 0.5 * Math.sin(timeMs * 0.024 + e.id * 4.3);
-    strokeEnemyShape(glow, e, r + 1.8 + burnPulse * 2, 2.5, STATUS_EFFECT_COLORS.burnOuter, 0.6 + 0.3 * burnPulse);
-    strokeEnemyShape(glow, e, r, 1.5, STATUS_EFFECT_COLORS.burnCore, 0.75 + 0.25 * burnPulse);
+    glow.lineStyle(2.5, STATUS_EFFECT_COLORS.burnOuter, 0.6 + 0.3 * burnPulse);
+    glow.strokeCircle(e.x, e.y, r + 1.8 + burnPulse * 2);
+    glow.lineStyle(1.5, STATUS_EFFECT_COLORS.burnCore, 0.75 + 0.25 * burnPulse);
+    glow.strokeCircle(e.x, e.y, r);
 
     // 向上抖动的微型火星细菱形/三角
     const sparkCycle = 420;
@@ -443,14 +373,23 @@ export class MainScene extends Phaser.Scene {
   /** 相机 postFX 降级开关（?fx=0 关闭；Canvas 渲染器下 postFX 不可用，自动跳过）。 */
   private readonly fxEnabled: boolean;
 
-  private bgGfx!: Phaser.GameObjects.Graphics; // 静态背景（一次性）
-  private underGfx!: Phaser.GameObjects.Graphics; // 常规混合·底层：区域/墙/修复包/Boss 覆盖层
-  private overGfx!: Phaser.GameObjects.Graphics; // 常规混合·顶层：角色/HUD 条
+  private underGfx!: Phaser.GameObjects.Graphics; // 常规混合·底层：区域/墙血条/Boss 覆盖层
+  private overGfx!: Phaser.GameObjects.Graphics; // 常规混合·顶层：HUD 条
   private glowGfx!: Phaser.GameObjects.Graphics; // ADD 混合：发光层
   /** 敌人渲染器（T6a）：预烘焙纹理 + 池化 Image（本体/白闪/血条/降级光环）。 */
   private enemyRenderer!: EnemyRenderer;
   /** 弹丸渲染器（T6b）：预烘焙纹理 + 池化 ADD Image（按 behavior 分弹种贴图）。 */
   private projectileRenderer!: ProjectileRenderer;
+  /** 城墙材质装甲横向平铺 TileSprite。 */
+  private wallSprite!: Phaser.GameObjects.TileSprite;
+  /** 主角防卫炮塔（双层渲染：基座 + 旋转炮管）。 */
+  private turretBase!: Phaser.GameObjects.Image;
+  private turretCannon!: Phaser.GameObjects.Image;
+  /** 炮管后坐力位移 px（开火时触发位移，平滑回弹复位）。 */
+  private recoilOffset = 0;
+  /** 修复包常驻对象池（容量 16，depth 1.2）。 */
+  private readonly dropPool: Phaser.GameObjects.Image[] = [];
+
   private hudText!: Phaser.GameObjects.Text;
   /** 武器胶囊芯片底（G1）：仅武器键集/等级 diff 变化时才 clear+重绘，稳态零写入。 */
   private chipGfx!: Phaser.GameObjects.Graphics;
@@ -488,6 +427,13 @@ export class MainScene extends Phaser.Scene {
   /** 受击红 vignette：截止时刻 + 强度 0..1。 */
   private vignetteUntilMs = 0;
   private vignetteStrength = 0;
+  /** 领主首领接近警告横幅（模块 C）：截止时刻 + UI 文本。 */
+  private bossWarningUntilMs = 0;
+  private bossWarningBanner!: Phaser.GameObjects.Text;
+  /** 关键高伤跳字对象池（模块 C：32 槽，零 GC 分配）。 */
+  private readonly popupPool: DamagePopupItem[] = [];
+  private readonly seenCritVfx = new WeakSet<object>();
+  private readonly seenExecuteVfx = new WeakSet<object>();
 
   constructor(session: GameSession, fxEnabled = true) {
     super('main');
@@ -496,23 +442,69 @@ export class MainScene extends Phaser.Scene {
     this.fxEnabled = fxEnabled;
   }
 
+  preload(): void {
+    // 统一预加载 11 项透底 PNG 资源
+    this.load.image('map_background', '/assets/sprites/map_background.png');
+    this.load.image('turret_base', '/assets/sprites/turret_base.png');
+    this.load.image('turret_cannon', '/assets/sprites/turret_cannon.png');
+    this.load.image('wall_segment', '/assets/sprites/wall_segment.png');
+    this.load.image('enemy_runner', '/assets/sprites/enemy_runner.png');
+    this.load.image('enemy_standard', '/assets/sprites/enemy_standard.png');
+    this.load.image('enemy_tank', '/assets/sprites/enemy_tank.png');
+    this.load.image('enemy_boss_1', '/assets/sprites/enemy_boss_1.png');
+    this.load.image('proj_missile', '/assets/sprites/proj_missile.png');
+    this.load.image('proj_mortar', '/assets/sprites/proj_mortar.png');
+    this.load.image('drop_repair', '/assets/sprites/drop_repair.png');
+  }
+
   create(): void {
     this.cameras.main.setBackgroundColor('#05050d');
-    this.bgGfx = this.add.graphics().setDepth(0);
+    // 全屏地图背景底图（depth: 0，720×1280 竖屏大图）
+    this.add.image(0, 0, 'map_background').setOrigin(0, 0).setDepth(0);
     this.underGfx = this.add.graphics().setDepth(1);
     this.overGfx = this.add.graphics().setDepth(3);
     this.glowGfx = this.add.graphics().setDepth(4).setBlendMode(Phaser.BlendModes.ADD);
     const layout = this.session.state.layout;
-    drawStaticBackground(this.bgGfx, layout.width, layout.height, layout.wallLineY);
-    // 敌人渲染池（T6a）：create 时按图鉴逐类型烘焙本体/白闪/光环纹理，并建满固定容量池。
-    // 容量 = maxEnemies + 34 余量（core 实体护栏封顶 350 → 池 384）；上限 512 防坏配置爆池。
+
+    // 城墙装甲 TileSprite 横向平铺（装甲墙高度 32px，保持等比平铺）
+    const wallTileScale = 32 / 644;
+    this.wallSprite = this.add
+      .tileSprite(0, layout.wallLineY, layout.width, 32, 'wall_segment')
+      .setOrigin(0, 0)
+      .setTileScale(wallTileScale, wallTileScale)
+      .setDepth(1);
+
+    // 修复包常驻对象池（16 槽常驻 Image）
+    for (let i = 0; i < 16; i++) {
+      const dropImg = this.add
+        .image(0, -200, 'drop_repair')
+        .setOrigin(0.5, 0.5)
+        .setScale(22 / 847)
+        .setDepth(1.2)
+        .setVisible(false);
+      this.dropPool.push(dropImg);
+    }
+
+    // 主角防卫炮塔：双层装配（基座 + 炮管）
+    const ch = this.session.state.character;
+    this.turretBase = this.add
+      .image(ch.x, ch.y, 'turret_base')
+      .setOrigin(0.5, 0.5)
+      .setScale(48 / 834)
+      .setDepth(3.0);
+    this.turretCannon = this.add
+      .image(ch.x, ch.y, 'turret_cannon')
+      .setOrigin(0.25, 0.5)
+      .setScale(46 / 1175)
+      .setDepth(3.1);
+
+    // 敌人渲染池（T6a）：按图鉴逐类型绑定真实贴图，并建满固定容量池。
     const cfgMax = this.session.state.config.maxEnemies;
     const poolCap =
       Number.isFinite(cfgMax) && cfgMax > 0 ? Math.min(cfgMax + 34, 512) : 384;
     this.enemyRenderer = new EnemyRenderer(this, ENEMY_TYPES, poolCap, AURA_POOL_CAP);
-    // 弹丸渲染池（T6b）：create 时按 behavior 烘焙弹体贴图（glow 光晕烘进贴图），并建满
-    // 固定容量池（ADD Image）。容量 = maxProjectiles + 40 余量（core 硬上限 600 → 池 640，
-    // 吸收同帧内的瞬时超额）；上限 640 防坏配置爆池。
+
+    // 弹丸渲染池（T6b）：按 behavior 绑定真实贴图，建满固定容量池。
     const cfgMaxProj = this.session.state.config.maxProjectiles;
     const projPoolCap =
       Number.isFinite(cfgMaxProj) && cfgMaxProj > 0 ? Math.min(cfgMaxProj + 40, 640) : 640;
@@ -528,6 +520,43 @@ export class MainScene extends Phaser.Scene {
       .setShadow(0, 2, 'rgba(0,0,0,0.85)', 3);
     // 武器胶囊芯片层（G1）：depth 同 hudText（10），压在敌人/弹丸之上；仅 diff 变化时重绘。
     this.chipGfx = this.add.graphics().setDepth(10);
+
+    // 领主首领来袭顶部警告横幅（模块 C）
+    this.bossWarningBanner = this.add
+      .text(layout.width / 2, 70, '⚠ WARNING: 领主首领接近中 ⚠', {
+        fontFamily: 'Consolas, "Courier New", monospace',
+        fontSize: '24px',
+        fontStyle: 'bold',
+        color: '#ff2f40',
+      })
+      .setOrigin(0.5, 0.5)
+      .setDepth(15)
+      .setShadow(0, 0, '#ff0033', 10)
+      .setVisible(false);
+
+    // 关键高伤跳字常驻对象池（模块 C：32 槽）
+    for (let i = 0; i < 32; i++) {
+      const popupText = this.add
+        .text(0, 0, '', {
+          fontFamily: 'Consolas, "Courier New", monospace',
+          fontSize: '18px',
+          fontStyle: 'bold',
+          color: '#ffffff',
+        })
+        .setOrigin(0.5, 0.5)
+        .setDepth(14)
+        .setShadow(0, 1, '#000000', 3)
+        .setVisible(false);
+      this.popupPool.push({
+        text: popupText,
+        active: false,
+        startX: 0,
+        startY: 0,
+        spawnMs: 0,
+        durationMs: 600,
+      });
+    }
+
     this.lastState = this.session.state;
     this.applyCameraBloom();
   }
@@ -564,8 +593,9 @@ export class MainScene extends Phaser.Scene {
 
     this.consumeEvents(this.session.drain());
 
-    // 粒子推进：paused 冻结；帧长钳 50ms 防后台切回时大步跳变。
+    // 粒子与开火后坐力推进：paused 冻结；帧长钳 50ms 防后台切回时大步跳变。
     const dt = this.session.paused ? 0 : Math.min(delta, 50);
+    this.recoilOffset = Math.max(0, this.recoilOffset - dt * 0.02);
     this.deathBurst.update(dt);
     this.muzzle.update(dt);
     this.waves.update(dt);
@@ -578,12 +608,21 @@ export class MainScene extends Phaser.Scene {
     this.flashUntil.clear();
     this.lastHp.clear();
     this.lastProjectileId = 0;
+    this.recoilOffset = 0;
     this.blastWatermark = 0;
     this.seismicWatermark = 0;
     this.wallFlashUntilMs = 0;
     this.wallFlashStrength = 0;
     this.vignetteUntilMs = 0;
     this.vignetteStrength = 0;
+    this.bossWarningUntilMs = 0;
+    if (this.bossWarningBanner) {
+      this.bossWarningBanner.setVisible(false);
+    }
+    for (let i = 0; i < this.popupPool.length; i++) {
+      this.popupPool[i].active = false;
+      this.popupPool[i].text.setVisible(false);
+    }
     this.deathBurst.clear();
     this.muzzle.clear();
     this.waves.clear();
@@ -639,6 +678,14 @@ export class MainScene extends Phaser.Scene {
           break;
         }
         case 'enemySpawned':
+          // 模块 C：领主首领出现视听警告（警报音效由 sfxListener 播放，场景负责震屏/红视效/警报横幅）
+          if (ev.isBoss) {
+            this.cameras.main.shake(320, 0.009, false);
+            this.vignetteUntilMs = s.timeMs + 2000;
+            this.vignetteStrength = 1.0;
+            this.bossWarningUntilMs = s.timeMs + 2500;
+          }
+          break;
         case 'sfx':
           // sfx 按名播放音效由并行任务负责（core 事件层），视图层不消费。
           break;
@@ -659,6 +706,11 @@ export class MainScene extends Phaser.Scene {
       const prev = this.lastHp.get(e.id);
       if (!e.dead && prev !== undefined && e.hp < prev) {
         this.flashUntil.set(e.id, now + ENEMY_FLASH_MS);
+        // 模块 C：关键高伤跳字（单发 ≥60 伤害）
+        const diff = prev - e.hp;
+        if (diff >= 60) {
+          this.spawnDamagePopup(e.x, e.y - e.radius - 8, `${Math.round(diff)}`, 0x18c9ff, 1.15);
+        }
       }
       this.lastHp.set(e.id, e.hp);
     }
@@ -678,6 +730,7 @@ export class MainScene extends Phaser.Scene {
       const p = s.projectiles[i];
       if (p.id > maxId) {
         maxId = p.id;
+        this.recoilOffset = 3.5;
         if (spawned < 3) {
           this.muzzle.spawn(s.character.x, s.character.y, 70);
           spawned += 1;
@@ -685,6 +738,73 @@ export class MainScene extends Phaser.Scene {
       }
     }
     this.lastProjectileId = maxId;
+  }
+
+  /** 弹出关键高伤跳字（模块 C：单发 ≥60 伤害 / CRIT / EXECUTE）。 */
+  private spawnDamagePopup(
+    x: number,
+    y: number,
+    msg: string,
+    colorHex: number,
+    scale = 1.0,
+    durationMs = 600,
+  ): void {
+    let item: DamagePopupItem | null = null;
+    for (let i = 0; i < this.popupPool.length; i++) {
+      if (!this.popupPool[i].active) {
+        item = this.popupPool[i];
+        break;
+      }
+    }
+    if (!item) {
+      let oldestIdx = 0;
+      let oldestMs = Infinity;
+      for (let i = 0; i < this.popupPool.length; i++) {
+        if (this.popupPool[i].spawnMs < oldestMs) {
+          oldestMs = this.popupPool[i].spawnMs;
+          oldestIdx = i;
+        }
+      }
+      item = this.popupPool[oldestIdx];
+    }
+
+    const s = this.session.state;
+    item.active = true;
+    const jitterX = ((s.timeMs % 17) - 8) * 1.5;
+    item.startX = x + jitterX;
+    item.startY = y;
+    item.spawnMs = s.timeMs;
+    item.durationMs = durationMs;
+
+    const colorStr = '#' + colorHex.toString(16).padStart(6, '0');
+    item.text
+      .setText(msg)
+      .setColor(colorStr)
+      .setScale(scale)
+      .setAlpha(1)
+      .setPosition(item.startX, item.startY)
+      .setVisible(true);
+  }
+
+  /** 更新活跃跳字动画（沿 y 轴缓慢上浮淡出）。 */
+  private updateDamagePopups(s: SimState): void {
+    const now = s.timeMs;
+    for (let i = 0; i < this.popupPool.length; i++) {
+      const item = this.popupPool[i];
+      if (!item.active) {
+        continue;
+      }
+      const elapsed = now - item.spawnMs;
+      if (elapsed >= item.durationMs) {
+        item.active = false;
+        item.text.setVisible(false);
+        continue;
+      }
+      const t = elapsed / item.durationMs;
+      const dy = 34 * (1 - Math.pow(1 - t, 2));
+      const alpha = t < 0.25 ? 1 : 1 - (t - 0.25) / 0.75;
+      item.text.setPosition(item.startX, item.startY - dy).setAlpha(alpha);
+    }
   }
 
   /**
@@ -741,6 +861,19 @@ export class MainScene extends Phaser.Scene {
     this.muzzle.draw(glow);
     this.drawVignette(glow, s);
 
+    // 关键高伤跳字动画更新（模块 C）
+    this.updateDamagePopups(s);
+
+    // 领主首领警告横幅渲染（模块 C）
+    if (s.timeMs < this.bossWarningUntilMs) {
+      const remain = this.bossWarningUntilMs - s.timeMs;
+      const fade = Math.min(1, remain / 300);
+      const pulse = 0.6 + 0.4 * Math.sin(s.timeMs * 0.018);
+      this.bossWarningBanner.setAlpha(fade * pulse).setVisible(true);
+    } else {
+      this.bossWarningBanner.setVisible(false);
+    }
+
     this.renderHud(s);
   }
 
@@ -766,10 +899,15 @@ export class MainScene extends Phaser.Scene {
    */
   private drawMortarGuides(g: Phaser.GameObjects.Graphics, s: SimState): void {
     const ch = s.character;
+    let guideCount = 0;
+    const MAX_GUIDES = 8;
     for (let i = 0; i < s.projectiles.length; i++) {
       const p = s.projectiles[i];
       if (p.behavior !== 'mortar' || p.data.bomblet === 1) {
         continue;
+      }
+      if (++guideCount > MAX_GUIDES) {
+        break; // 限制同屏渲染至多 8 条下坠虚线弧线，杜绝高弹幕密度下的 CPU/WebGL 峰值
       }
       const tx = p.data.tx;
       const ty = p.data.ty;
@@ -824,29 +962,22 @@ export class MainScene extends Phaser.Scene {
     }
   }
 
-  /** 墙：横条（血量青→红渐变）+ 顶缘高光 + 低血红色脉冲 + 受击红闪 + 上方血条。 */
+  /** 墙：装甲 TileSprite 受击红闪 / 低血脉冲 + 上方血条。 */
   private drawWall(g: Phaser.GameObjects.Graphics, s: SimState): void {
     const layout = s.layout;
     const wallPct = s.wall.maxHp > 0 ? clamp01(s.wall.hp / s.wall.maxHp) : 0;
     const wallColor = healthColor(wallPct);
     const now = s.timeMs;
 
-    g.fillStyle(wallColor, 0.95);
-    g.fillRect(0, layout.wallLineY, layout.width, WALL_THICKNESS);
-    g.fillStyle(0xffffff, 0.4); // 顶缘霓虹高光线
-    g.fillRect(0, layout.wallLineY, layout.width, 2);
-
-    if (wallPct < WALL_LOW_PCT) {
-      // 低血（<30%）常驻红色脉冲警示。
-      const pulse = 0.5 + 0.5 * Math.sin(now / 220);
-      g.fillStyle(0xff2020, 0.18 + 0.28 * pulse);
-      g.fillRect(0, layout.wallLineY, layout.width, WALL_THICKNESS);
-    }
+    // 城墙装甲 TileSprite 受击红闪与低血警示
     if (now < this.wallFlashUntilMs) {
-      // 受击红闪：短促，幅度随 wallDamaged.amount。
-      const fade = clamp01((this.wallFlashUntilMs - now) / WALL_FLASH_MS);
-      g.fillStyle(0xff3b30, 0.55 * fade * (0.4 + 0.6 * this.wallFlashStrength));
-      g.fillRect(0, layout.wallLineY, layout.width, WALL_THICKNESS);
+      this.wallSprite.setTint(0xff3b30);
+      void this.wallFlashStrength;
+    } else if (wallPct < WALL_LOW_PCT) {
+      const pulse = 0.5 + 0.5 * Math.sin(now / 220);
+      this.wallSprite.setTint(pulse > 0.45 ? 0xff4040 : 0xffffff);
+    } else {
+      this.wallSprite.clearTint();
     }
 
     // 墙血条：墙上方细条（低血时外框同步脉冲）。
@@ -863,45 +994,65 @@ export class MainScene extends Phaser.Scene {
     }
   }
 
-  /** 修复包：白底方块 + 红十字 + 淡蓝描边 + ADD 微光。 */
+  /** 修复包：池化 Image（drop_repair.png）+ ADD 微光。 */
   private drawDrops(
-    g: Phaser.GameObjects.Graphics,
+    _g: Phaser.GameObjects.Graphics,
     glow: Phaser.GameObjects.Graphics,
     s: SimState,
   ): void {
-    for (let i = 0; i < s.drops.length; i++) {
-      const d = s.drops[i];
-      glow.fillStyle(0xffffff, 0.1);
-      glow.fillCircle(d.x, d.y, 13);
-      g.fillStyle(0xf2f8ff, 0.95);
-      g.fillRect(d.x - 7.5, d.y - 7.5, 15, 15);
-      g.lineStyle(1.5, 0x8fd8ff, 0.9);
-      g.strokeRect(d.x - 7.5, d.y - 7.5, 15, 15);
-      g.fillStyle(0xff3b3b, 1);
-      g.fillRect(d.x - 1.5, d.y - 5, 3, 10);
-      g.fillRect(d.x - 5, d.y - 1.5, 10, 3);
+    const drops = s.drops;
+    let count = 0;
+    for (let i = 0; i < drops.length && count < this.dropPool.length; i++) {
+      const d = drops[i];
+      const img = this.dropPool[count++];
+      img.setPosition(d.x, d.y).setVisible(true);
+      glow.fillStyle(0x8fd8ff, 0.2);
+      glow.fillCircle(d.x, d.y, 14);
+    }
+    for (let i = count; i < this.dropPool.length; i++) {
+      this.dropPool[i].setVisible(false);
     }
   }
 
-  /** 角色：本体 + 亮描边 + 白色内核 + 呼吸光晕（ADD，正弦驱动）。 */
+  /** 主角防卫炮塔：双层装配（基座 + 旋转炮管）+ 实时索敌 + 开火后坐力。 */
   private drawCharacter(
-    g: Phaser.GameObjects.Graphics,
+    _g: Phaser.GameObjects.Graphics,
     glow: Phaser.GameObjects.Graphics,
     s: SimState,
   ): void {
     const cx = s.character.x;
     const cy = s.character.y;
+
+    // 索敌朝向：优先场上最近的存活敌人，无存活敌人时默认朝向正上方 (-PI/2)
+    let targetAngle = -Math.PI / 2;
+    let minDistSq = Infinity;
+    const enemies = s.enemies;
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      if (e.dead) {
+        continue;
+      }
+      const dx = e.x - cx;
+      const dy = e.y - cy;
+      const dSq = dx * dx + dy * dy;
+      if (dSq < minDistSq) {
+        minDistSq = dSq;
+        targetAngle = Math.atan2(dy, dx);
+      }
+    }
+
+    // 后坐力向后位移
+    const recoilX = -Math.cos(targetAngle) * this.recoilOffset;
+    const recoilY = -Math.sin(targetAngle) * this.recoilOffset;
+
+    this.turretBase.setPosition(cx, cy);
+    this.turretCannon.setPosition(cx + recoilX, cy + recoilY);
+    this.turretCannon.setRotation(targetAngle);
+
+    // 炮塔呼吸底光（保留科幻感氛围）
     const breath = 0.5 + 0.5 * Math.sin(s.timeMs / 620);
-    glow.fillStyle(COLOR_CHARACTER, 0.09 + 0.05 * breath);
-    glow.fillCircle(cx, cy, 22 + 3 * breath);
-    glow.fillStyle(COLOR_CHARACTER_STROKE, 0.07);
-    glow.fillCircle(cx, cy, 32 + 4 * breath);
-    g.fillStyle(COLOR_CHARACTER, 1);
-    g.fillCircle(cx, cy, CHARACTER_RADIUS);
-    g.lineStyle(2.5, COLOR_CHARACTER_STROKE, 1);
-    g.strokeCircle(cx, cy, CHARACTER_RADIUS);
-    glow.fillStyle(0xffffff, 0.75);
-    glow.fillCircle(cx, cy - 3, 3.5);
+    glow.fillStyle(COLOR_CHARACTER, 0.08 + 0.04 * breath);
+    glow.fillCircle(cx, cy, 26 + 3 * breath);
   }
 
   /** meta VFX 分发（视图只读 meta，逐键前缀匹配；条目结构运行时守卫）。 */
@@ -1182,6 +1333,10 @@ export class MainScene extends Phaser.Scene {
       if (!v || !Number.isFinite(v.x + v.y + v.untilMs)) {
         continue;
       }
+      if (!this.seenCritVfx.has(v)) {
+        this.seenCritVfx.add(v);
+        this.spawnDamagePopup(v.x, v.y - 14, 'CRIT!', 0xffd24a, 1.3);
+      }
       const remain = v.untilMs - s.timeMs;
       if (remain <= 0) {
         continue; // 已过期：不再渲染（core 侧写入时滚动淘汰）
@@ -1248,6 +1403,10 @@ export class MainScene extends Phaser.Scene {
       const v = list[i] as SniperHitVfx | undefined;
       if (!v || !Number.isFinite(v.x + v.y + v.untilMs)) {
         continue;
+      }
+      if (!this.seenExecuteVfx.has(v)) {
+        this.seenExecuteVfx.add(v);
+        this.spawnDamagePopup(v.x, v.y - 20, 'EXECUTE!', 0xff2f40, 1.45);
       }
       const remain = v.untilMs - s.timeMs;
       if (remain <= 0) {

@@ -84,6 +84,8 @@ export function spawnEnemy(state: SimState, type: EnemyTypeData, x: number): Ene
  * 4) 同一帧内多对分离叠加允许；遍历顺序固定（enemies 数组顺序），全程不用 rng。
  * 模拟已结束（state.over !== null）时直接 return（与 wall.ts 同款防重入）。
  */
+const scratchNeighbors: Enemy[] = [];
+
 export function updateEnemies(state: SimState, dtMs: number, grid: SpatialHash<Enemy>): void {
   if (state.over !== null) {
     return;
@@ -121,16 +123,16 @@ export function updateEnemies(state: SimState, dtMs: number, grid: SpatialHash<E
     }
   }
 
-  // 3) 分离：网格查询做广域过滤（O(邻居数)），精确判定与推移用实体实时坐标。
+  // 3) 分离：网格查询做广域过滤，b.id <= a.id 剪枝保证每对重叠怪只对称推挤一次
   for (let i = 0; i < enemies.length; i++) {
     const a = enemies[i];
     if (a.dead) {
       continue;
     }
-    const neighbors = grid.queryCircle(a.x, a.y, a.radius);
+    const neighbors = grid.queryCircle(a.x, a.y, a.radius, scratchNeighbors);
     for (let j = 0; j < neighbors.length; j++) {
       const b = neighbors[j];
-      if (b === a || b.dead) {
+      if (b.id <= a.id || b.dead) {
         continue;
       }
       const dx = b.x - a.x;
@@ -165,6 +167,15 @@ export function updateEnemies(state: SimState, dtMs: number, grid: SpatialHash<E
       if (b.state === 'attack' && b.y > wallLineY) {
         b.y = wallLineY;
       }
+    }
+  }
+
+  // 4) 分离后重构空间网格：确保网格内记录的实体坐标为推挤后的最新物理位置
+  grid.clear();
+  for (let i = 0; i < enemies.length; i++) {
+    const e = enemies[i];
+    if (!e.dead) {
+      grid.insert(e, e.x, e.y, e.radius);
     }
   }
 }

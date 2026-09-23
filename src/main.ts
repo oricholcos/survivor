@@ -62,8 +62,13 @@ function sfxListener(ev: GameEvent): void {
     case 'bossDefeated':
       playSfx('bossDown');
       break;
+    case 'enemySpawned':
+      if (ev.isBoss) {
+        playSfx('bossWarning');
+      }
+      break;
     default:
-      break; // enemyKilled / enemySpawned：不发声
+      break; // enemyKilled：不发声
   }
 }
 

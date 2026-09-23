@@ -31,7 +31,7 @@ import { checkLevelUp } from '../gems';
 import { dealDamage, damageTakenFactor } from '../effects';
 import { pushEvent } from '../events';
 import { getBattleRng } from '../simState';
-import { killHooks, spawnProjectile } from '../projectiles';
+import { spawnProjectile } from '../projectiles';
 import { findTarget, leadAim } from '../targeting';
 import type { EffectInstance, Enemy, SimState } from '../types';
 import type { WeaponBehavior } from './registry';
@@ -139,25 +139,11 @@ function dealDamageWithKillXpBonus(
   sourceWeaponId?: string,
 ): void {
   const xpBonusRatio = xpFactor - 1;
-  if (!(xpBonusRatio > 0)) {
-    dealDamage(state, enemy, amount, sourceWeaponId);
-    return;
-  }
-  const hook = (s: SimState, killed: Enemy): void => {
-    if (killed !== enemy) {
-      return;
-    }
-    s.progress.xp += killed.xp * xpBonusRatio;
-    checkLevelUp(s);
-  };
-  killHooks.push(hook);
-  try {
-    dealDamage(state, enemy, amount, sourceWeaponId);
-  } finally {
-    const idx = killHooks.indexOf(hook);
-    if (idx !== -1) {
-      killHooks.splice(idx, 1);
-    }
+  const wasDead = enemy.dead;
+  dealDamage(state, enemy, amount, sourceWeaponId);
+  if (xpBonusRatio > 0 && !wasDead && enemy.dead) {
+    state.progress.xp += enemy.xp * xpBonusRatio;
+    checkLevelUp(state);
   }
 }
 

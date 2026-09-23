@@ -26,10 +26,17 @@
 
 import type { GameEvent } from '../core/events';
 import type { GameMode } from '../core/victory';
-import { applyUpgrade, rollUpgradeOptions, type UpgradeOption } from '../core/upgrade';
+import {
+  applyUpgrade,
+  consumeReroll,
+  getRerollsRemaining,
+  rollUpgradeOptions,
+  type UpgradeOption,
+} from '../core/upgrade';
 import type { GameSession } from '../game/session';
 import { loadRecords, recordResult } from '../game/records';
 import { loadWeaponDefs } from '../data/weapons';
+import { getWeaponStats } from '../core/weapons';
 import { allMaxedUnlocked } from '../core/cards';
 import { OVERLAY_CSS } from './styles';
 import { formatDamageNum, formatTime } from './format';
@@ -117,7 +124,7 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
   startCard.appendChild(el('div', 'ov-title ov-title--main', '城墙 survivor'));
   startCard.appendChild(el('div', 'ov-sub', '抵御进攻，守住城墙'));
   const modeBox = el('div', 'ov-modes');
-  const campaignBtn = el('button', 'ov-btn ov-btn--mode', '通关模式（存活 10 分钟获胜）');
+  const campaignBtn = el('button', 'ov-btn ov-btn--mode', '通关模式（消灭 6 只领主首领获胜）');
   const endlessBtn = el('button', 'ov-btn ov-btn--mode', '无尽模式（扛到死，冲击最长存活）');
   modeBox.appendChild(campaignBtn);
   modeBox.appendChild(endlessBtn);
@@ -127,6 +134,9 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
   startCard.appendChild(recordsSummary);
   startPanel.appendChild(startCard);
 
+  // —— 悬浮暂停/构筑详情按钮（模块 A：右上角常驻悬浮，局内显示） ——
+  const pauseBtn = el('button', 'ov-pause-btn ov-hidden', '⏸ 构筑');
+
   // —— 面板二：升级三选一 ——
   const levelupPanel = el('div', 'ov-panel ov-hidden');
   const levelupCard = el('div', 'ov-card');
@@ -135,7 +145,26 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
   levelupCard.appendChild(levelupSub);
   const optionsBox = el('div', 'ov-options');
   levelupCard.appendChild(optionsBox);
+  // 模块 D：三选一重掷按钮（每局固定 2 次）
+  const rerollBtn = el('button', 'ov-btn ov-btn--reroll') as HTMLButtonElement;
+  levelupCard.appendChild(rerollBtn);
   levelupPanel.appendChild(levelupCard);
+
+  // —— 面板二点五：局中构筑详情面板（模块 A：点击打开并自动暂停，关闭后继续） ——
+  const inspectPanel = el('div', 'ov-panel ov-hidden');
+  const inspectCard = el('div', 'ov-card ov-card--inspect');
+  inspectCard.appendChild(el('div', 'ov-title', '战斗暂停 · 构筑详情'));
+  const inspectWeaponsBox = el('div', 'ov-inspect-weapons');
+  inspectCard.appendChild(inspectWeaponsBox);
+  const inspectBtnRow = el('div', 'ov-btnrow');
+  const inspectResumeBtn = el('button', 'ov-btn', '继续游戏');
+  const inspectRestartBtn = el('button', 'ov-btn ov-btn--ghost', '重新开始');
+  const inspectQuitBtn = el('button', 'ov-btn ov-btn--danger', '返回主界面');
+  inspectBtnRow.appendChild(inspectResumeBtn);
+  inspectBtnRow.appendChild(inspectRestartBtn);
+  inspectBtnRow.appendChild(inspectQuitBtn);
+  inspectCard.appendChild(inspectBtnRow);
+  inspectPanel.appendChild(inspectCard);
 
   // —— 面板三：结算（标题/统计按模式与胜负动态填充；含纪录对比行 T4.2） ——
   const overPanel = el('div', 'ov-panel ov-hidden');
@@ -158,17 +187,23 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
   overCard.appendChild(overBtnRow);
   overPanel.appendChild(overCard);
 
+  root.appendChild(pauseBtn);
   root.appendChild(startPanel);
   root.appendChild(levelupPanel);
+  root.appendChild(inspectPanel);
   root.appendChild(overPanel);
   document.body.appendChild(root);
+
+  let inspectOpen = false; // 构筑详情面板展开中
 
   // —— 本局派生值归位（开局 / 重开共用）。 ——
   function resetRunState(): void {
     kills = 0;
     pendingLevels = [];
     upgradeOpen = false;
+    inspectOpen = false;
     gameEnded = false;
+    hide(inspectPanel);
   }
 
   // —— 菜单纪录摘要（T4.2）：填真实纪录；三行紧凑展示，无任何纪录时显示引导文案。 ——
@@ -189,6 +224,109 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
     recordsSummary.appendChild(el('div', undefined, `最高击杀 ${records.bestKills}`));
   }
 
+  // —— 局中构筑详情面板渲染 ——
+  function renderInspectPanel(s: GameSession): void {
+    inspectWeaponsBox.textContent = '';
+    const state = s.state;
+    const wsMap = state.weaponStates;
+    const ids = Object.keys(wsMap);
+    if (ids.length === 0) {
+      inspectWeaponsBox.appendChild(el('div', 'ov-sub', '暂未拥有任何武器'));
+      return;
+    }
+
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      const ws = wsMap[id];
+      const def = WEAPON_DEFS[id];
+      if (!def) {
+        continue;
+      }
+      const stats = getWeaponStats(def, state, id);
+      const isMax = ws.level >= (def.maxLevel ?? 10);
+
+      const card = el('div', 'ov-weapon-card');
+
+      // 头部：武器名称 + 等级徽章 + 累计输出
+      const head = el('div', 'ov-weapon-head');
+      const title = el('div', 'ov-weapon-title');
+      title.appendChild(el('span', undefined, def.name));
+      title.appendChild(
+        el(
+          'span',
+          isMax ? 'ov-damage-badge ov-damage-badge--max' : 'ov-damage-badge',
+          isMax ? 'MAX' : `Lv.${ws.level}`,
+        ),
+      );
+      head.appendChild(title);
+      head.appendChild(el('span', 'ov-weapon-damage', `累计输出 ${formatDamageNum(ws.damageDealt ?? 0)}`));
+      card.appendChild(head);
+
+      // 数值网格：实时解析后的伤害、攻速、间隔、穿透、弹速
+      const grid = el('div', 'ov-stats-grid');
+      const statItems = [
+        { label: '单发伤害', val: `${Math.round(stats.damage)}` },
+        { label: '攻击间隔', val: `${(stats.intervalMs / 1000).toFixed(2)}s` },
+        { label: '攻击频次', val: `${(1000 / stats.intervalMs).toFixed(1)}/s` },
+        { label: '弹体穿透', val: `${Math.round(stats.pierce)}` },
+        { label: '弹体速度', val: `${Math.round(stats.projectileSpeed)}` },
+      ];
+      for (const item of statItems) {
+        const itemEl = el('div', 'ov-stat-item');
+        itemEl.appendChild(el('span', undefined, item.label));
+        itemEl.appendChild(el('span', 'ov-stat-val', item.val));
+        grid.appendChild(itemEl);
+      }
+      card.appendChild(grid);
+
+      // 已选强化卡牌列表
+      const cardsList = el('div', 'ov-cards-list');
+      const heldCardIds = Object.keys(ws.cards || {});
+      let hasCards = false;
+      for (let cIdx = 0; cIdx < heldCardIds.length; cIdx++) {
+        const cardId = heldCardIds[cIdx];
+        const count = ws.cards[cardId];
+        if (count <= 0) {
+          continue;
+        }
+        hasCards = true;
+        const cardDef = def.cards.find((c) => c.id === cardId);
+        const entry = el('div', 'ov-card-entry');
+        entry.appendChild(el('span', 'ov-card-name', cardDef?.name ?? cardId));
+        entry.appendChild(el('span', 'ov-card-count', `×${count}`));
+        entry.appendChild(el('span', 'ov-card-desc', cardDef?.description ?? ''));
+        cardsList.appendChild(entry);
+      }
+      if (!hasCards) {
+        cardsList.appendChild(el('div', 'ov-foot', '暂未装配强化卡牌'));
+      }
+      card.appendChild(cardsList);
+
+      inspectWeaponsBox.appendChild(card);
+    }
+  }
+
+  function openInspect(): void {
+    if (session === null || gameEnded || inspectOpen) {
+      return;
+    }
+    inspectOpen = true;
+    session.paused = true;
+    renderInspectPanel(session);
+    show(inspectPanel);
+  }
+
+  function closeInspect(): void {
+    if (!inspectOpen) {
+      return;
+    }
+    inspectOpen = false;
+    hide(inspectPanel);
+    if (session !== null && !upgradeOpen && !gameEnded) {
+      session.paused = false;
+    }
+  }
+
   // —— 开局：按模式组装新局并启动视图（点模式按钮）。 ——
   function startMode(mode: GameMode): void {
     if (destroySession !== null) {
@@ -205,6 +343,7 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
     s.addEventListener((ev) => handleEvent(ev, s));
     s.paused = false; // 开局
     hide(startPanel);
+    show(pauseBtn);
   }
 
   // —— 三选一：打开一次（含选项渲染）。保持暂停，直到队列清空。 ——
@@ -217,6 +356,10 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
       levelupSub.textContent = '';
       levelupSub.className = 'ov-sub';
     }
+
+    const remainingRerolls = getRerollsRemaining(s.state);
+    rerollBtn.textContent = `重掷卡牌 (剩余 ${remainingRerolls} 次)`;
+    rerollBtn.disabled = remainingRerolls <= 0;
 
     optionsBox.textContent = '';
     for (let i = 0; i < options.length; i++) {
@@ -442,6 +585,11 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
       return;
     }
     gameEnded = true;
+    hide(pauseBtn);
+    if (inspectOpen) {
+      inspectOpen = false;
+      hide(inspectPanel);
+    }
     pendingLevels.length = 0; // 极端时序（同帧先弹升级又终局）：丢弃未处理升级
     if (upgradeOpen) {
       upgradeOpen = false;
@@ -488,6 +636,58 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
     startMode('endless');
   });
 
+  // 悬浮暂停/构筑详情按钮点击
+  pauseBtn.addEventListener('click', () => {
+    if (inspectOpen) {
+      closeInspect();
+    } else {
+      openInspect();
+    }
+  });
+
+  // 重掷按钮点击（消耗 1 次重掷机会并重掷三选一卡牌）
+  rerollBtn.addEventListener('click', () => {
+    if (session === null || !upgradeOpen) {
+      return;
+    }
+    if (getRerollsRemaining(session.state) <= 0) {
+      return;
+    }
+    const consumed = consumeReroll(session.state);
+    if (consumed) {
+      renderOptions(session, rollUpgradeOptions(session.state, WEAPON_DEFS));
+    }
+  });
+
+  // 构筑详情面板控制按钮
+  inspectResumeBtn.addEventListener('click', () => {
+    closeInspect();
+  });
+
+  inspectRestartBtn.addEventListener('click', () => {
+    if (session === null) {
+      return;
+    }
+    closeInspect();
+    resetRunState();
+    session.restart();
+    show(pauseBtn);
+  });
+
+  // 游戏途中返回主界面（用户拍板：游戏途中返回严格不更新纪录，绕过 recordResult）
+  inspectQuitBtn.addEventListener('click', () => {
+    closeInspect();
+    resetRunState();
+    hide(pauseBtn);
+    if (destroySession !== null) {
+      destroySession();
+      destroySession = null;
+    }
+    session = null;
+    renderRecordsSummary();
+    show(startPanel);
+  });
+
   // 同模式重开：restart 保持当前 mode（新种子新局）；不重建视图（场景检测 state
   // 替换后自动复位派生计数）。
   restartBtn.addEventListener('click', () => {
@@ -497,6 +697,7 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
     resetRunState();
     hide(overPanel);
     session.restart(); // 不传种子 → 新种子开新局；restart 内部 paused=false，直接进入新一局
+    show(pauseBtn);
   });
 
   // 返回菜单：销毁当前局（含 Phaser 视图），回开局菜单——可再开任意模式。
@@ -506,6 +707,7 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
     }
     resetRunState();
     hide(overPanel);
+    hide(pauseBtn);
     if (destroySession !== null) {
       destroySession();
       destroySession = null;

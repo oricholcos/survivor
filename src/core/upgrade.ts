@@ -320,3 +320,32 @@ export function applyUpgrade(state: SimState, option: UpgradeOption, defs?: Reco
   // （见 core/weapons.ts 文件头「stats 缓存契约」；绕过本函数改写 cards 的代码须同步自增）。
   ws.cardsVersion = (ws.cardsVersion ?? 0) + 1;
 }
+
+// —— 三选一重掷（Reroll）机制 ——
+
+/** 每局固定初始重掷次数。 */
+export const INITIAL_REROLLS = 2;
+
+/** state.meta 中保存剩余重掷次数的键。 */
+export const REROLLS_META_KEY = 'rerolls_remaining';
+
+/** 获取当前局剩余的重掷次数。 */
+export function getRerollsRemaining(state: SimState): number {
+  const val = state.meta[REROLLS_META_KEY];
+  return typeof val === 'number' && Number.isFinite(val) ? val : INITIAL_REROLLS;
+}
+
+/** 消耗一次重掷机会；成功返回 true，若无剩余次数返回 false。 */
+export function consumeReroll(state: SimState): boolean {
+  const current = getRerollsRemaining(state);
+  if (current <= 0) {
+    return false;
+  }
+  state.meta[REROLLS_META_KEY] = current - 1;
+  return true;
+}
+
+/** 重置重掷次数为初始值（开局/重启时调用）。 */
+export function resetRerolls(state: SimState): void {
+  state.meta[REROLLS_META_KEY] = INITIAL_REROLLS;
+}

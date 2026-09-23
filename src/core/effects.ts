@@ -63,6 +63,8 @@ export interface EffectDef {
   hpPctPerTick?: number;
   /** burn：带火死亡时的余烬尸爆半径（px）。 */
   corpseExplosionRadius?: number;
+  /** burn/poison 等 DoT 单跳最大伤害上限（防止无尽模式百分比无限膨胀）。 */
+  maxDamageCap?: number;
   /** poison：每 tick 每层武器单发伤害系数（如 0.25 = 25%）。 */
   weaponDamageFactor?: number;
   /** slow/chill：速度乘区（^stacks，多实例取 min）。 */
@@ -331,6 +333,11 @@ export function calcDoTSingleDamage(def: EffectDef, inst: EffectInstance, target
     }
   }
 
+  const maxCap = paramNum(def, inst, 'maxDamageCap');
+  if (maxCap !== undefined && maxCap > 0 && dmg > maxCap) {
+    dmg = maxCap;
+  }
+
   return dmg;
 }
 
@@ -538,7 +545,10 @@ export function applyEffect(
       }
     }
     if (def.tickMs !== undefined && def.tickMs > 0) {
-      inst.data.nextTickAt = state.timeMs + tickIntervalOf(def, inst.data); // 重复施加重排下一跳（data.tickMs 可逐实例覆盖间隔）
+      // 仅在尚未调度或已落后于当前时间时初始化；若已有合法的未来跳点，刷新持续时间不得推迟当前跳点
+      if (inst.data.nextTickAt === undefined || inst.data.nextTickAt < state.timeMs) {
+        inst.data.nextTickAt = state.timeMs + tickIntervalOf(def, inst.data);
+      }
     }
     return;
   }

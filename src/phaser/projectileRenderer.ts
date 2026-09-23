@@ -30,7 +30,7 @@ import { bezier, fillPoly, projectileStyle, type ProjectileStyle } from './fx';
 const KEY_BOLT = 'proj_bolt_charge';
 const KEY_SCATTER = 'proj_dot_scatter';
 const KEY_MISSILE = 'proj_missile';
-const KEY_MORTAR = 'proj_dot_mortar';
+const KEY_MORTAR = 'proj_mortar';
 const KEY_PRISM = 'proj_prism';
 const KEY_PRISM_TAIL = 'proj_prism_tail';
 const KEY_FALLBACK = 'proj_dot_fallback';
@@ -40,6 +40,11 @@ const KEY_FALLBACK = 'proj_dot_fallback';
 const SLOT_DEPTH_EPS = 0.00001;
 /** 弹丸池深度基线：glow 层（glowGfx=4、状态降级光环同基线；ADD 可交换）。 */
 const DEPTH_BASE = 4;
+
+/** 追猎导弹素材原始宽度 px。 */
+const MISSILE_SPRITE_WIDTH = 966;
+/** 迫击航弹素材原始宽度 px。 */
+const MORTAR_SPRITE_WIDTH = 988;
 
 /** 光点贴图基准弹体半径（各行为弹丸 core 半径均为 6；运行期 scale = 有效半径 / 6）。 */
 const REF_DOT_RADIUS = 6;
@@ -123,27 +128,6 @@ function bakeBolt(g: Phaser.GameObjects.Graphics, key: string, st: ProjectileSty
   g.clear();
 }
 
-/** 烘焙 homing_missile 导弹：+x=弹头，尾焰三节沿 -x 渐隐（flicker 改运行期整图 alpha 脉动）。 */
-function bakeMissile(g: Phaser.GameObjects.Graphics, key: string, st: ProjectileStyle): void {
-  const W = 40;
-  const H = 20;
-  const cx = W / 2;
-  const cy = H / 2;
-  const r = 3.2; // 原弹体常量（bomblet 缩放系数 0.7 换算后仍线性，见 sync）
-  for (let k = 0; k < 3; k++) {
-    g.fillStyle(st.outer, 0.4 - k * 0.12);
-    g.fillCircle(cx - (4 + k * 5.5), cy, 3.4 - k * 0.9);
-  }
-  g.fillStyle(st.outer, 0.3);
-  g.fillCircle(cx, cy, r * 2.6);
-  g.fillStyle(st.core, 1);
-  g.fillCircle(cx, cy, r);
-  g.fillStyle(st.hot, 0.9);
-  g.fillCircle(cx + r * 0.6, cy, r * 0.5);
-  g.generateTexture(key, W, H);
-  g.clear();
-}
-
 /**
  * 烘焙 prism_chain 自旋菱形：顶点从 angle0=0 起（与原 fillPoly(…, spin) 同基准，
  * 运行期 setRotation(spin) 逐顶点复现原自旋姿态）；基准半径取当前最大绘制半径
@@ -186,8 +170,6 @@ function ensureProjectileTextures(scene: Phaser.Scene): void {
 
   bakeBolt(g, KEY_BOLT, projectileStyle('charge_sniper'));
   bakeGlowDot(g, KEY_SCATTER, 34, projectileStyle('scatter_shot'), REF_DOT_RADIUS, 2.6, 0.22, 1, 0.45, 0.9);
-  bakeMissile(g, KEY_MISSILE, projectileStyle('homing_missile'));
-  bakeGlowDot(g, KEY_MORTAR, 32, projectileStyle('mortar'), REF_DOT_RADIUS, 2.4, 0.22, 1, 0.45, 0.85);
   bakePrism(g, KEY_PRISM, projectileStyle('prism_chain'));
   bakePrismTail(g, KEY_PRISM_TAIL, projectileStyle('prism_chain'));
   bakeGlowDot(g, KEY_FALLBACK, 28, projectileStyle('__unknown__'), REF_DOT_RADIUS, 2, 0.2, 1, 0, 0);
@@ -319,15 +301,14 @@ export class ProjectileRenderer {
           break;
         }
         case 'homing_missile': {
-          // 品红导弹带尾焰：+x=弹头贴图 rotation 对准速度方向；榴弹子弹（data.bomblet=1）
-          // 整体 0.7 缩放（原尾焰/弹体比例同为线性缩放，观感一致）；原尾焰 flicker
-          // （0.75+0.25sin，仅尾焰）以整图 alpha 脉动近似。
+          // 追猎导弹：预加载素材 (+x=弹头朝向)，rotation 对准速度方向；子弹（bomblet=1）0.7 缩放
+          const missileScale = (32 / MISSILE_SPRITE_WIDTH) * (p.data.bomblet === 1 ? 0.7 : 1);
           main
             .setTexture(KEY_MISSILE)
             .setPosition(p.x, p.y)
             .setRotation(headingAngle(p))
-            .setScale(p.data.bomblet === 1 ? 0.7 : 1)
-            .setAlpha(0.75 + 0.25 * Math.sin(timeMs / 30 + p.id * 1.7))
+            .setScale(missileScale)
+            .setAlpha(0.85 + 0.15 * Math.sin(timeMs / 30 + p.id * 1.7))
             .setVisible(true);
           st.aux.setVisible(false);
           break;
@@ -353,13 +334,14 @@ export class ProjectileRenderer {
           break;
         }
         case 'mortar': {
-          // 绿色光点：母弹画在贝塞尔视觉弧线上（与弧线提示/落点圈贴合），其余按模拟位置。
+          // 迫击航弹：母弹沿贝塞尔视觉弧线上飞行，子弹沿模拟坐标飞行；素材朝向沿飞行速度方向
           const vp = mortarVisualPos(p, s);
+          const mortarScale = (28 / MORTAR_SPRITE_WIDTH) * (p.radius / 6);
           main
             .setTexture(KEY_MORTAR)
             .setPosition(vp ? vp.x : p.x, vp ? vp.y : p.y)
-            .setRotation(0)
-            .setScale(Math.max(2.6, p.radius) / REF_DOT_RADIUS)
+            .setRotation(headingAngle(p))
+            .setScale(mortarScale)
             .setAlpha(1)
             .setVisible(true);
           st.aux.setVisible(false);

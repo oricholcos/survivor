@@ -502,4 +502,153 @@ export const OVERLAY_CSS = `
   .ov-btn, .ov-option { transition: none; }
   .ov-option:hover, .ov-option:active { transform: none; }
 }
+
+/* —— 局中构筑悬浮按钮与构筑面板（模块 A & D） —— */
+.ov-pause-btn {
+  position: fixed;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  right: calc(58px + env(safe-area-inset-right, 0px));
+  z-index: 50;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(24, 201, 255, 0.4);
+  background: rgba(11, 17, 32, 0.85);
+  color: #eaf4ff;
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 0 12px rgba(24, 201, 255, 0.2);
+  transition: all 0.15s ease;
+  touch-action: manipulation;
+}
+.ov-pause-btn:hover {
+  border-color: #18c9ff;
+  box-shadow: 0 0 18px rgba(24, 201, 255, 0.45);
+  transform: scale(1.03);
+}
+
+.ov-card--inspect {
+  max-width: min(94vw, 680px);
+  max-height: 88vh;
+  max-height: 88dvh;
+  padding: 24px 28px;
+  text-align: left;
+}
+.ov-inspect-weapons {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 16px 0;
+  max-height: 55vh;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+.ov-weapon-card {
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(24, 201, 255, 0.25);
+  border-radius: 10px;
+  padding: 12px 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+.ov-weapon-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.ov-weapon-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #18c9ff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ov-weapon-damage {
+  font-size: 13px;
+  color: #ffe066;
+  font-family: monospace;
+}
+.ov-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 6px 12px;
+  background: rgba(8, 12, 24, 0.6);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.ov-stat-item {
+  display: flex;
+  justify-content: space-between;
+  color: #9aa7c7;
+}
+.ov-stat-val {
+  color: #eaf4ff;
+  font-weight: 600;
+  font-family: monospace;
+}
+.ov-cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.ov-card-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #cdd9e5;
+}
+.ov-card-name {
+  font-weight: 600;
+  color: #8dffb0;
+  white-space: nowrap;
+}
+.ov-card-count {
+  color: #ffe066;
+  font-size: 11px;
+}
+.ov-card-desc {
+  color: #9aa7c7;
+  flex: 1;
+}
+
+.ov-btn--reroll {
+  margin-top: 14px;
+  background: linear-gradient(135deg, rgba(255, 143, 31, 0.22) 0%, rgba(255, 47, 176, 0.18) 100%);
+  border: 1px solid rgba(255, 143, 31, 0.6);
+  color: #ffe066;
+  font-size: 14px;
+  box-shadow: 0 0 16px rgba(255, 143, 31, 0.2);
+}
+.ov-btn--reroll:hover:not(:disabled) {
+  border-color: #ff8f1f;
+  box-shadow: 0 0 24px rgba(255, 143, 31, 0.45);
+  transform: scale(1.02);
+}
+.ov-btn--reroll:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  filter: grayscale(80%);
+}
+
+.ov-btn--danger {
+  background: rgba(255, 77, 109, 0.15);
+  border-color: rgba(255, 77, 109, 0.5);
+  color: #ff859a;
+}
+.ov-btn--danger:hover {
+  border-color: #ff4d6d;
+  box-shadow: 0 0 18px rgba(255, 77, 109, 0.4);
+}
 `;

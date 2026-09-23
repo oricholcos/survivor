@@ -92,6 +92,25 @@ describe('表尾后按规则循环：轮内连续推进、轮间回绕', () => {
     expect(clockAt(END_SEC + 1.5).timelineSec).toBe(ENDLESS.loopFromSec + 1.5); // 601.5 → 541.5
     expect(clockAt(END_SEC + 30.25).timelineSec).toBe(ENDLESS.loopFromSec + 30.25); // 630.25 → 570.25
   });
+
+  it('多轮循环小数与跨轮帧步长严格连续单调：无首秒跳空与越界', () => {
+    // 跨第 1 轮到第 2 轮（660s 前后，以 16ms 步长模拟真实 60fps 帧推进）
+    let prev = 599.9;
+    for (let t = END_SEC + UNIT - 0.1; t <= END_SEC + UNIT + 2.0; t += 0.016) {
+      const r = clockAt(t);
+      expect(r.timelineSec).toBeGreaterThanOrEqual(ENDLESS.loopFromSec);
+      expect(r.timelineSec).toBeLessThanOrEqual(END_SEC);
+      if (t > END_SEC + UNIT && prev > 599.0 && r.timelineSec < 545.0) {
+        // 发生跨轮回绕：上一帧在 600 附近，本帧平滑回绕到 540 起点，且首秒连续推进
+        expect(r.loopCount).toBe(2);
+      }
+      prev = r.timelineSec;
+    }
+    // 精确浮点断言第 2 轮与第 3 轮首秒
+    expect(clockAt(END_SEC + UNIT + 0.2).timelineSec).toBeCloseTo(ENDLESS.loopFromSec + 0.2, 5);
+    expect(clockAt(END_SEC + UNIT + 0.5).timelineSec).toBeCloseTo(ENDLESS.loopFromSec + 0.5, 5);
+    expect(clockAt(END_SEC + 2 * UNIT + 0.35).timelineSec).toBeCloseTo(ENDLESS.loopFromSec + 0.35, 5);
+  });
 });
 
 describe('loopCount 与 loopScale 逐轮膨胀', () => {

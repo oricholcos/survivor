@@ -15,7 +15,7 @@
 import Phaser from 'phaser';
 import type { EnemyTypeData } from '../core/enemies';
 import type { Enemy, SimState } from '../core/types';
-import { COLOR_TRACK, darken, STATUS_EFFECT_COLORS } from './fx';
+import { COLOR_TRACK, STATUS_EFFECT_COLORS } from './fx';
 
 // —— Boss 视觉常量（自 mainScene 迁入：Boss 光环/血条金框随本模块的池化血条一起绘制） ——
 
@@ -37,11 +37,24 @@ export const STATUS_FX_VECTOR_THRESHOLD = 80;
 export const AURA_POOL_CAP = 768;
 
 // —— 纹理键 ——
-const BODY_PREFIX = 'enemy_body_';
-const FLASH_PREFIX = 'enemy_flash_';
+export const ENEMY_TEXTURE_MAP: Record<string, string> = {
+  runner: 'enemy_runner',
+  standard: 'enemy_standard',
+  tank: 'enemy_tank',
+  boss_1: 'enemy_boss_1',
+};
+
+/** 各敌人素材的长边基准像素（用于按 logical radius 进行精准等比 setScale）。 */
+export const ENEMY_SPRITE_SIZES: Record<string, number> = {
+  runner: 1107,
+  standard: 991,
+  tank: 1204,
+  boss_1: 1015,
+};
+
 const AURA_PREFIX = 'enemy_aura_';
 const WHITE_KEY = 'fx_white1';
-/** 兜底类型：typeId 不在图鉴（坏表防御）时烘一张白色圆本体。 */
+/** 兜底类型：typeId 不在图鉴（坏表防御）时用白色块。 */
 const FALLBACK_TYPE = '__fallback';
 
 // —— 分层深度 ——
@@ -82,100 +95,12 @@ export function hpBarColor(pct: number): number {
   return (r << 16) | (g << 8) | 0x28;
 }
 
-// —— 烘焙期几何（一次性，非热路径；允许局部分配） ——
-
-interface Pt {
-  x: number;
-  y: number;
-}
-
-function polyInto(cx: number, cy: number, r: number, sides: number): Pt[] {
-  const pts: Pt[] = [];
-  for (let i = 0; i < sides; i++) {
-    const a = -Math.PI / 2 + (i * 2 * Math.PI) / sides;
-    pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
-  }
-  return pts;
-}
-
-function starInto(cx: number, cy: number, r: number): Pt[] {
-  const inner = r * 0.45;
-  const pts: Pt[] = [];
-  for (let i = 0; i < 10; i++) {
-    const a = -Math.PI / 2 + (i * Math.PI) / 5;
-    const rad = i % 2 === 0 ? r : inner;
-    pts.push({ x: cx + Math.cos(a) * rad, y: cy + Math.sin(a) * rad });
-  }
-  return pts;
-}
-
-/** 按图鉴 shape 填充（centered 版，烘焙用；与 mainScene.fillEnemyShape 同几何）。 */
-function fillShape(
-  g: Phaser.GameObjects.Graphics,
-  cx: number,
-  cy: number,
-  shape: string,
-  r: number,
-  color: number,
-  alpha: number,
-): void {
-  g.fillStyle(color, alpha);
-  switch (shape) {
-    case 'triangle':
-      g.fillPoints(polyInto(cx, cy, r, 3), true);
-      break;
-    case 'square':
-      g.fillRect(cx - r * 0.8, cy - r * 0.8, r * 1.6, r * 1.6);
-      break;
-    case 'hexagon':
-      g.fillPoints(polyInto(cx, cy, r, 6), true);
-      break;
-    case 'star':
-      g.fillPoints(starInto(cx, cy, r), true);
-      break;
-    default:
-      g.fillCircle(cx, cy, r);
-      break;
-  }
-}
-
-/** 按图鉴 shape 描边（centered 版，烘焙用；与 mainScene.strokeEnemyShape 同几何）。 */
-function strokeShape(
-  g: Phaser.GameObjects.Graphics,
-  cx: number,
-  cy: number,
-  shape: string,
-  r: number,
-  width: number,
-  color: number,
-  alpha: number,
-): void {
-  g.lineStyle(width, color, alpha);
-  switch (shape) {
-    case 'triangle':
-      g.strokePoints(polyInto(cx, cy, r, 3), true);
-      break;
-    case 'square':
-      g.strokeRect(cx - r * 0.8, cy - r * 0.8, r * 1.6, r * 1.6);
-      break;
-    case 'hexagon':
-      g.strokePoints(polyInto(cx, cy, r, 6), true);
-      break;
-    case 'star':
-      g.strokePoints(starInto(cx, cy, r), true);
-      break;
-    default:
-      g.strokeCircle(cx, cy, r);
-      break;
-  }
-}
 
 /**
- * 启动期烘焙全部敌人纹理（create 时一次；已存在的键跳过，防重复 generateTexture）。
- * 尺寸 = (绘制半径 + 描边外缘余量 5) × 2 + 2（抗锯齿边距），形状居中于纹理中心，
- * 运行时 Image setOrigin(0.5,0.5) 即与敌人坐标对齐。
+ * 启动期烘焙辅助纹理（1x1 白纹理用于血条拉伸，4 种降级状态光环）。
+ * 敌人本体已切换为预加载的高品质素材。
  */
-function ensureEnemyTextures(scene: Phaser.Scene, types: Record<string, EnemyTypeData>): void {
+function ensureEnemyTextures(scene: Phaser.Scene): void {
   const tex = scene.textures;
   const g = scene.make.graphics({ x: 0, y: 0 });
 
@@ -184,41 +109,6 @@ function ensureEnemyTextures(scene: Phaser.Scene, types: Record<string, EnemyTyp
     g.fillStyle(0xffffff, 1);
     g.fillRect(0, 0, 1, 1);
     g.generateTexture(WHITE_KEY, 1, 1);
-    g.clear();
-  }
-
-  // 各类型本体 + 白闪剪影（r 与 mainScene 原 drawEnemy 一致：Boss ×1.15）。
-  for (const id in types) {
-    const t = types[id];
-    if (!t || tex.exists(BODY_PREFIX + id)) {
-      continue;
-    }
-    const r = t.isBoss ? t.radius * bossScale() : t.radius;
-    const size = Math.ceil((r + 5) * 2) + 2;
-    const c = size / 2;
-    // 微光外圈（宽幅低 alpha）→ 高饱和描边 → 暗色填充（图鉴色向暗底收缩）。
-    strokeShape(g, c, c, t.shape, r + 2.5, 5, t.color, 0.16);
-    strokeShape(g, c, c, t.shape, r, 2.5, t.color, 1);
-    fillShape(g, c, c, t.shape, r - 1.2, darken(t.color, 0.3), 1);
-    g.generateTexture(BODY_PREFIX + id, size, size);
-    g.clear();
-    // 白色剪影：只含填充形状（受击时叠回本体上，「只闪填充」视觉与原实现一致）。
-    fillShape(g, c, c, t.shape, r - 1.2, 0xffffff, 1);
-    g.generateTexture(FLASH_PREFIX + id, size, size);
-    g.clear();
-  }
-
-  // 兜底类型（图鉴缺 typeId 时的白色圆）。
-  if (!tex.exists(BODY_PREFIX + FALLBACK_TYPE)) {
-    const size = Math.ceil((14 + 5) * 2) + 2;
-    const c = size / 2;
-    strokeShape(g, c, c, 'dot', 16.5, 5, 0xffffff, 0.16);
-    strokeShape(g, c, c, 'dot', 14, 2.5, 0xffffff, 1);
-    fillShape(g, c, c, 'dot', 12.8, 0x3a3f4e, 1);
-    g.generateTexture(BODY_PREFIX + FALLBACK_TYPE, size, size);
-    g.clear();
-    fillShape(g, c, c, 'dot', 12.8, 0xffffff, 1);
-    g.generateTexture(FLASH_PREFIX + FALLBACK_TYPE, size, size);
     g.clear();
   }
 
@@ -325,7 +215,6 @@ export class EnemyRenderer {
   private readonly auras: Phaser.GameObjects.Image[] = [];
   /** typeId → 纹理键（含兜底；Map.get 返回引用，每帧零字符串拼接分配）。 */
   private readonly bodyKeys = new Map<string, string>();
-  private readonly flashKeys = new Map<string, string>();
 
   constructor(
     scene: Phaser.Scene,
@@ -333,13 +222,11 @@ export class EnemyRenderer {
     capacity: number,
     auraCapacity: number,
   ) {
-    ensureEnemyTextures(scene, types);
+    ensureEnemyTextures(scene);
 
-    this.bodyKeys.set(FALLBACK_TYPE, BODY_PREFIX + FALLBACK_TYPE);
-    this.flashKeys.set(FALLBACK_TYPE, FLASH_PREFIX + FALLBACK_TYPE);
+    this.bodyKeys.set(FALLBACK_TYPE, WHITE_KEY);
     for (const id in types) {
-      this.bodyKeys.set(id, BODY_PREFIX + id);
-      this.flashKeys.set(id, FLASH_PREFIX + id);
+      this.bodyKeys.set(id, ENEMY_TEXTURE_MAP[id] ?? WHITE_KEY);
     }
 
     // 敌人池：深度一次设好、此后不再改动（不触发显示列表重排）。
@@ -435,27 +322,27 @@ export class EnemyRenderer {
       }
       const st = slots[slot];
 
-      // 本体：贴图随 typeId 切换（Boss 与普通怪同池，仅贴图不同）。
+      // 本体：贴图随 typeId 切换，根据敌人 logic radius 缩放。
+      const r = e.isBoss ? e.radius * bossScale() : e.radius;
+      const baseSize = ENEMY_SPRITE_SIZES[e.typeId] ?? 1000;
+      const scale = (r * 2.2) / baseSize;
+
       st.body
         .setTexture(this.bodyKeys.get(e.typeId) ?? this.bodyKeys.get(FALLBACK_TYPE) ?? WHITE_KEY)
         .setPosition(e.x, e.y)
+        .setScale(scale)
         .setVisible(true);
 
-      // 受击白闪：白色剪影按 flash 进度渐隐（alpha 0.85 封顶，与原 fill 白闪一致）。
+      // 受击白闪：直接使用 Phaser WebGL 原生 setTintFill(0xffffff) 实现瞬间白闪
       const until = flashUntil.get(e.id) ?? 0;
       if (until > timeMs) {
-        const t = Math.min(1, (until - timeMs) / ENEMY_FLASH_MS);
-        st.flash
-          .setTexture(this.flashKeys.get(e.typeId) ?? this.flashKeys.get(FALLBACK_TYPE) ?? WHITE_KEY)
-          .setPosition(e.x, e.y)
-          .setAlpha(0.85 * t)
-          .setVisible(true);
+        st.body.setTintFill(0xffffff);
       } else {
-        st.flash.setVisible(false);
+        st.body.clearTint();
       }
+      st.flash.setVisible(false);
 
       // 头顶血条：槽（深色 tint）+ 填充（左中 origin、scaleX=pct、tint 随 pct 渐变）。
-      const r = e.isBoss ? e.radius * bossScale() : e.radius;
       const barW = e.isBoss ? e.radius * 2.8 : e.radius * 2;
       const barH = e.isBoss ? HP_BAR_HEIGHT_BOSS : HP_BAR_HEIGHT;
       const barY = e.y - r - (e.isBoss ? HP_BAR_GAP_BOSS : HP_BAR_GAP);
@@ -497,6 +384,7 @@ export class EnemyRenderer {
     // 隐藏本帧未占用的槽位（可见性标记，渲染器直接跳过）。
     for (let i = slot; i < slots.length; i++) {
       const st = slots[i];
+      st.body.clearTint();
       st.body.setVisible(false);
       st.flash.setVisible(false);
       st.barTrack.setVisible(false);

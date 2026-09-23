@@ -327,6 +327,43 @@ describe('弹丸扫掠碰撞（F2 隧穿修复）', () => {
     expect(e.hp).toBe(1e6 - 10); // 恰好一次
     expect(p.pierceLeft).toBe(4);
   });
+
+  it('命中钩子改变速度（如弹跳转向）时立即打断扫掠：后续原轨迹敌人不受波及', () => {
+    const state = createSimState(1);
+    const e1 = makeEnemy(state, 420, 600, 100);
+    const e2 = makeEnemy(state, 460, 600, 100);
+    registerBehavior({
+      name: 'turn_on_hit_test',
+      fire: () => {},
+      onProjectileHit: (_s, p) => {
+        // 击中后转向 90 度向上
+        p.vx = 0;
+        p.vy = -1000;
+      },
+    });
+
+    spawnProjectile(state, {
+      behavior: 'turn_on_hit_test',
+      x: 400,
+      y: 600,
+      vx: 1600,
+      vy: 0,
+      damage: 10,
+      pierceLeft: 5,
+      ttlMs: 5000,
+    });
+
+    // 这一帧位移线段从 400 到 480，原本包含 e1(420) 和 e2(460)
+    updateProjectiles(state, 50, makeGrid());
+
+    // e1 应该受击并触发转向
+    expect(e1.hp).toBe(90);
+    // e2 在原轨迹后续，但不应受击（转向打断了扫掠）
+    expect(e2.hp).toBe(100);
+    expect(state.projectiles).toHaveLength(1);
+    expect(state.projectiles[0]!.vx).toBe(0);
+    expect(state.projectiles[0]!.vy).toBe(-1000);
+  });
 });
 
 describe('全局弹丸数量护栏（T3 性能封顶）', () => {

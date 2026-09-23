@@ -124,6 +124,8 @@ function dotMult(stats: WeaponStats): number {
 const queryGrid = new SpatialHash<Enemy>(64);
 let queryGridState: SimState | null = null;
 let queryGridTimeMs = NaN; // NaN !== 任何值：强制首帧重建
+const scratchNear: Enemy[] = [];
+const scratchHits: Enemy[] = [];
 
 function ensureQueryGrid(state: SimState): SpatialHash<Enemy> {
   if (queryGridState !== state || queryGridTimeMs !== state.timeMs) {
@@ -155,7 +157,7 @@ function densestEnemy(state: SimState, densityRadius: number): Enemy | null {
     if (e.dead) {
       continue;
     }
-    const near = grid.queryCircle(e.x, e.y, densityRadius);
+    const near = grid.queryCircle(e.x, e.y, densityRadius, scratchNear);
     let count = 0;
     for (let n = 0; n < near.length; n++) {
       if (!near[n].dead) {
@@ -323,7 +325,7 @@ export const behavior: WeaponBehavior = {
     recordBlastVfx(state, tx, ty, aoe);
 
     // ① 爆炸伤害：落点 aoeRadius 内所有存活敌人（圆相交语义，与弹丸命中判定同款）。
-    const hits = ensureQueryGrid(state).queryCircle(tx, ty, aoe);
+    const hits = ensureQueryGrid(state).queryCircle(tx, ty, aoe, scratchHits);
     for (let i = 0; i < hits.length; i++) {
       const e = hits[i];
       if (e.dead) {

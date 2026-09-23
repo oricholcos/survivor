@@ -8,7 +8,11 @@ import { describe, expect, it } from 'vitest';
 import {
   applyUpgrade,
   buildCardDescription,
+  consumeReroll,
   formatCardDescriptionWithLimit,
+  getRerollsRemaining,
+  INITIAL_REROLLS,
+  resetRerolls,
   rollUpgradeOptions,
   sanitizeUnlimitedCardDescription,
 } from './upgrade';
@@ -993,5 +997,43 @@ describe('唯一牌（once）文案不显示计数（0/1）契约', () => {
         }
       }
     }
+  });
+
+  describe('三选一重掷（Reroll）机制契约', () => {
+    it('默认初始重掷次数为 2；消耗扣减正确；为 0 时无法继续消耗', () => {
+      const state = createSimState(1);
+      expect(getRerollsRemaining(state)).toBe(INITIAL_REROLLS);
+      expect(INITIAL_REROLLS).toBe(2);
+
+      // 第 1 次消耗
+      expect(consumeReroll(state)).toBe(true);
+      expect(getRerollsRemaining(state)).toBe(1);
+
+      // 第 2 次消耗
+      expect(consumeReroll(state)).toBe(true);
+      expect(getRerollsRemaining(state)).toBe(0);
+
+      // 第 3 次消耗：已无次数，返回 false，保持 0
+      expect(consumeReroll(state)).toBe(false);
+      expect(getRerollsRemaining(state)).toBe(0);
+
+      // 重置恢复
+      resetRerolls(state);
+      expect(getRerollsRemaining(state)).toBe(2);
+    });
+
+    it('重掷后重新调用 rollUpgradeOptions 产出合法的升级选项', () => {
+      const state = createSimState(42);
+      ownWeapon(state, 'rail_piercer', 0);
+      const opts1 = rollUpgradeOptions(state, REAL_DEFS, 3);
+      expect(opts1).toHaveLength(3);
+
+      expect(consumeReroll(state)).toBe(true);
+      const opts2 = rollUpgradeOptions(state, REAL_DEFS, 3);
+      expect(opts2).toHaveLength(3);
+      for (const opt of opts2) {
+        expect(['new_weapon', 'card']).toContain(opt.kind);
+      }
+    });
   });
 });

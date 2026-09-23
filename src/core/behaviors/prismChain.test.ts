@@ -383,8 +383,8 @@ describe('连锁闪电（chain_lightning 牌）', () => {
   it('连锁闪电方案 A 增强：动态伤害随面板成长、受范围强化放大、连携传导冰毒', () => {
     const state = createSimState(1);
     const e1 = makeEnemy(state, 360, 1120, 1000); // 首跳目标
-    const e2 = makeEnemy(state, 400, 1120, 1000); // 距 e1 40px：hop2 直击
-    const e3 = makeEnemy(state, 440, 1120, 1000); // 距 e2 40px：hop3 直击
+    const e2 = makeEnemy(state, 400, 1120, 1000); // 距 e1 40px：在 e1 zap 范围内(挨 6.5)，随后吃 hop2 直击(10.4)
+    const e3 = makeEnemy(state, 440, 1120, 1000); // 距 e2 40px：hop3 直击(8.32)
     // z1 距 e1 95px（基础 90px 不及，但拿了 1 张 range_up 后 zapRadius=108px，可波及；距 e1 远于 e2 故不吃直击）
     const z1 = makeEnemy(state, 360, 1025, 1000);
 
@@ -392,10 +392,12 @@ describe('连锁闪电（chain_lightning 牌）', () => {
     fireWithCards(state, ['dmg_up', 'range_up', 'chain_lightning', 'frost_venom']);
     simulate(state, 120);
 
-    // 1. 直击与弹跳正常推进：首跳 13、次跳 10.4、三跳 8.32
+    // 1. 直击与弹跳正常推进：首跳 13、次跳 10.4 (+ e1 的 zap 6.5)、三跳 8.32 (+ e1、e2 的 zap 各 6.5)
     expect(e1.hp).toBeCloseTo(1000 - 13, 6);
-    expect(e2.hp).toBeCloseTo(1000 - 10.4, 6);
-    expect(e3.hp).toBeCloseTo(1000 - 8.32, 6);
+    expect(e2.hp).toBeCloseTo(1000 - 10.4 - 6.5, 6);
+    expect(e3.hp).toBeCloseTo(1000 - 8.32 - 13, 6);
+
+
 
     // 2. 动态伤害：基伤 13，zap 伤害为 13 × 0.5 = 6.5（仅受 zap，未受直击）
     expect(z1.hp).toBeCloseTo(1000 - 6.5, 6);

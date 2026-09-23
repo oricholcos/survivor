@@ -88,9 +88,11 @@ export function spawnZone(state: SimState, spec: ZoneSpec): void {
   });
 }
 
+const scratchZoneHits: Enemy[] = [];
+
 /** 单次 tick 结算：对区域内（圆相交，同弹丸命中语义）敌人逐个结算；数组序固定（确定性）。 */
 function settleTick(state: SimState, zone: ZoneRuntime, grid: SpatialHash<Enemy>): void {
-  const hits = grid.queryCircle(zone.x, zone.y, zone.radius);
+  const hits = grid.queryCircle(zone.x, zone.y, zone.radius, scratchZoneHits);
   for (let h = 0; h < hits.length; h++) {
     const enemy = hits[h];
     if (enemy.dead) {

@@ -8,7 +8,8 @@
     "refresh": "reset",
     "damagePerTick": 3,
     "hpPctPerTick": 0.02,
-    "corpseExplosionRadius": 60
+    "corpseExplosionRadius": 60,
+    "maxDamageCap": 50
   },
   "poison": {
     "id": "poison",

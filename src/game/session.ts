@@ -28,6 +28,7 @@ import { updateWallCombat } from '../core/wall';
 import { updateWaves } from '../core/waves';
 import { resolveWaveClock } from '../core/waveClock';
 import { checkVictory, type GameMode } from '../core/victory';
+import { resetRerolls } from '../core/upgrade';
 import { onBossDefeated, readBossHealPct } from '../core/bossRewards';
 import { addWeapon, updateWeapons, type WeaponDef } from '../core/weapons';
 import { killHooks, updateProjectiles } from '../core/projectiles';
@@ -187,6 +188,9 @@ function buildState(seed: number, mode: GameMode): SimState {
   // 开局初始武器：从候选远程武器池中确定性抽取 1 把（同种子同序列）。
   const initialWeaponId = state.rng.pick(INITIAL_WEAPON_CANDIDATES);
   addWeapon(state, initialWeaponId);
+
+  // 初始化本局重掷次数（固定 2 次）
+  resetRerolls(state);
 
   return state;
 }

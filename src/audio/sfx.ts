@@ -32,6 +32,8 @@ const THROTTLE_MIN_INTERVAL_MS: Record<string, number> = {
   // 协同开火触发音（G6）：同 crit/execute 约定（core 一次性推送不节流），音频侧 300ms
   // 保守间隔——协同触发间隔 ≥ 数秒，仅防极端叠音。
   coordinated: 300,
+  // 首领降临警报音（模块 C）
+  bossWarning: 1000,
 };
 const THROTTLE_DEFAULT_MIN_INTERVAL_MS = 40;
 const THROTTLE_WINDOW_MS = 20; // ≈一帧（60fps）
@@ -307,6 +309,14 @@ const VOICES: Record<string, (c: AudioContext, t: number, vol: number) => void> 
     tone(c, t, { type: 'square', freq: 587.33, freqEnd: 1174.66, dur: 0.08, peak: 0.08 * vol });
     tone(c, t, { type: 'triangle', freq: 1174.66, delay: 0.085, dur: 0.18, peak: 0.12 * vol });
     tone(c, t, { type: 'triangle', freq: 1760, delay: 0.085, dur: 0.14, peak: 0.07 * vol });
+  },
+
+  bossWarning(c, t, vol) {
+    // 警报鸣响（模块 C）：锯齿波下行扫频 + 紧急双蜂鸣（重度警告感）
+    tone(c, t, { type: 'sawtooth', freq: 720, freqEnd: 240, dur: 0.35, peak: 0.28 * vol, attack: 0.005 });
+    noiseHit(c, t, { filter: 'bandpass', freq: 1200, q: 3.0, dur: 0.25, peak: 0.12 * vol });
+    tone(c, t, { type: 'square', freq: 880, delay: 0.38, dur: 0.12, peak: 0.18 * vol });
+    tone(c, t, { type: 'square', freq: 880, delay: 0.54, dur: 0.15, peak: 0.22 * vol });
   },
 };
 

@@ -262,9 +262,19 @@ function settleSweptHits(
     // 行为命中钩子：伤害与附着结算完、穿透消耗之前调用。钩子可把弹标记 dead
     // （如命中即爆）：标记后立即跳出，本帧剩余命中候选不再结算、穿透不再消耗，
     // 弹走下方死亡路径（onProjectileDeath 恰好一次 → 回池）。
+    const oldVx = p.vx;
+    const oldVy = p.vy;
     if (behavior?.onProjectileHit) {
       behavior.onProjectileHit(state, p, enemy);
       if (p.dead) {
+        break;
+      }
+      // 若命中钩子改变了航向（如棱镜弹跳转向），当前扫掠轨迹已失效，扣减穿透并立即打断本轮旧线段判交
+      if (p.vx !== oldVx || p.vy !== oldVy) {
+        p.pierceLeft -= 1;
+        if (p.pierceLeft <= 0) {
+          p.dead = true;
+        }
         break;
       }
     }
@@ -354,10 +364,9 @@ export function updateProjectiles(state: SimState, dtMs: number, grid: SpatialHa
     }
   }
 
-  // 2) 逐弹推进与命中；i 不自增即交换删除后原地重查（换入者未处理过）。
+  // 2) 逐弹推进与命中；i 不自增即交换删除后原地重查（换入者当帧继续处理，对齐续接弹契约）。
   for (let i = 0; i < projectiles.length; ) {
     const p = projectiles[i];
-    // 行为钩子查找：空串（池默认）→ 无钩子；非空未注册名 → 抛错（尽早暴露）。
     const behavior = p.behavior === '' ? undefined : getBehavior(p.behavior);
 
     // 位移 + 寿命（记录位移前位置供扫掠判交）。
@@ -370,13 +379,11 @@ export function updateProjectiles(state: SimState, dtMs: number, grid: SpatialHa
       p.dead = true;
     } else if (p.data.noCollide !== 1) {
       // noCollide 弹（data.noCollide === 1）跳过整段命中结算，直线飞到 ttl。
-      // F2 扫掠碰撞：本步位移线段对敌圆判交（见 settleSweptHits 与函数头注释 3)）。
       settleSweptHits(state, p, behavior, fromX, fromY, grid);
     }
 
     if (p.dead) {
-      // 行为死亡钩子：ttl 耗尽与穿透用尽两条死亡路径都在回池之前恰好触发一次
-      // （此刻弹字段仍为死亡时刻值，release 的 reset 尚未清洗）。
+      // 行为死亡钩子：ttl 耗尽与穿透用尽两条死亡路径都在回池之前恰好触发一次。
       if (behavior?.onProjectileDeath) {
         behavior.onProjectileDeath(state, p);
       }

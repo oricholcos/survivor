@@ -65,7 +65,7 @@ export class SpatialHash<T> {
       }
       inner.clear();
     }
-    this.columns.clear();
+    // 保留 this.columns 中的 inner Map 实例供后续 insert 复用，消除每帧重新分配 Map 的 GC 压力
     this.items.length = 0;
     this.px.length = 0;
     this.py.length = 0;
