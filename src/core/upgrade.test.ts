@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyUpgrade,
   buildCardDescription,
+  formatCardDescriptionWithLimit,
   rollUpgradeOptions,
   sanitizeUnlimitedCardDescription,
 } from './upgrade';
@@ -351,7 +352,7 @@ describe('applyUpgrade 两类 option 各自生效', () => {
   it('new_weapon → addWeapon：0 级 / 空牌表 / 冷却 0，且幂等不覆盖', () => {
     const state = createSimState(1);
     applyUpgrade(state, { kind: 'new_weapon', weaponId: 'w5', name: '武器w5', description: '新武器' });
-    expect(state.weaponStates.w5).toEqual({ level: 0, cooldownMs: 0, cards: {}, cardsVersion: 0 });
+    expect(state.weaponStates.w5).toEqual({ level: 0, cooldownMs: 0, cards: {}, cardsVersion: 0, damageDealt: 0 });
 
     // 幂等（addWeapon 契约）：已拥有时不重置
     state.weaponStates.w5.level = 4;
@@ -821,7 +822,7 @@ describe('通用牌逐武器文案生成器（任务四：映射表驱动、无�
       '该武器爆炸半径 ×1.2（可叠 5 次，突破后上限 8 次）',
     );
     expect(buildCardDescription(REAL_DEFS.prism, genericOf('prism', 'range_up'))).toBe(
-      '该武器弹跳范围 ×1.2（可叠 5 次，突破后上限 8 次）',
+      '该武器弹跳范围、闪电半径 ×1.2（可叠 5 次，突破后上限 8 次）',
     );
     expect(buildCardDescription(REAL_DEFS.heat_beam, genericOf('heat_beam', 'range_up'))).toBe(
       '该武器索敌半径 ×1.2（可叠 5 次，突破后上限 8 次）',
@@ -931,5 +932,66 @@ describe('通用牌逐武器文案生成器（任务四：映射表驱动、无�
     expect(dot!.description).toBe('燃烧弹的燃烧每跳间隔 ÷1.3（0/3）');
     expect(dot!.currentCount).toBe(0);
     expect(dot!.maxCount).toBe(3);
+  });
+});
+
+describe('唯一牌（once）文案不显示计数（0/1）契约', () => {
+  const REAL_DEFS = loadWeaponDefs();
+
+  it('formatCardDescriptionWithLimit：无上限或唯一牌（maxLimit <= 1）不追加计数，且剥除（一次性）', () => {
+    // 1. 无上限牌：保持原样，不追加计数
+    expect(formatCardDescriptionWithLimit('该武器伤害 ×1.3', 0, undefined)).toBe('该武器伤害 ×1.3');
+    // 2. 唯一牌（maxLimit <= 1 或 1）：不追加（0/1），且剥除旧式（一次性）
+    expect(formatCardDescriptionWithLimit('开火时优先锁定最近的 Boss', 0, 1)).toBe('开火时优先锁定最近的 Boss');
+    expect(formatCardDescriptionWithLimit('锁定最近敌人（一次性）', 0, 1)).toBe('锁定最近敌人');
+    expect(formatCardDescriptionWithLimit('锁定最近敌人（一次性）', 0, undefined)).toBe('锁定最近敌人');
+    // 3. 正常可叠加牌（maxLimit > 1）：按契约格式化（已选/最大）
+    expect(formatCardDescriptionWithLimit('同时多发射 1 颗弹体', 0, 4)).toBe('同时多发射 1 颗弹体（0/4）');
+    expect(formatCardDescriptionWithLimit('每道射线的穿透 +1（可叠 4 次，突破后上限 8 次）', 2, 4)).toBe(
+      '每道射线的穿透 +1（2/4）',
+    );
+  });
+
+  it('rollUpgradeOptions：夹具唯一牌 roll 出时 description 无（0/1），maxCount 为 undefined', () => {
+    const state = createSimState(1);
+    state.rng = zeroRng();
+    ownWeapon(state, 'w1', 0, {});
+    const options = rollUpgradeOptions(state, DEFS, 99);
+    const boolOption = options.find((o) => o.kind === 'card' && (o as { cardId: string }).cardId === 'w1_bool') as
+      | Extract<UpgradeOption, { kind: 'card' }>
+      | undefined;
+    expect(boolOption).toBeDefined();
+    expect(boolOption!.name).toBe('武器w1·布尔牌w1_bool');
+    expect(boolOption!.description).toBe('w1_bool 效果');
+    expect(boolOption!.description).not.toContain('0/1');
+    expect(boolOption!.maxCount).toBeUndefined();
+  });
+
+  it('全量 8 把真实武器牌池：所有 once 唯一牌无论在选项标题还是描述中均绝不含（0/1），maxCount 为 undefined', () => {
+    for (const wid of Object.keys(REAL_DEFS)) {
+      const state = createSimState(42);
+      state.rng = zeroRng();
+      // 赋予前置卡牌以确保后续依赖 once 牌能顺利进池（如 dot 频率与狙神等）
+      const cardsSetup: Record<string, number> = {
+        headshot: 1,
+        crit_shot: 1,
+        bullet_fly: 1,
+      };
+      ownWeapon(state, wid, 0, cardsSetup);
+      const options = rollUpgradeOptions(state, REAL_DEFS, 99);
+      const def = REAL_DEFS[wid];
+
+      for (const card of def.cards) {
+        if (card.once) {
+          const opt = options.find((o) => o.kind === 'card' && o.weaponId === wid && o.cardId === card.id);
+          if (opt && opt.kind === 'card') {
+            expect(opt.description).not.toContain('0/1');
+            expect(opt.name).not.toContain('0/1');
+            expect(opt.description).not.toContain('一次性');
+            expect(opt.maxCount).toBeUndefined();
+          }
+        }
+      }
+    }
   });
 });

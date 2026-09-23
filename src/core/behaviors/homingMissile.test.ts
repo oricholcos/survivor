@@ -291,7 +291,7 @@ describe('子母弹已删除（T5.3b：分裂由 split_shot 牌驱动，cluster/
 
     const state = createSimState(1);
     makeEnemy(state, 360, 700);
-    fireWithCards(state, ['multi_shot', 'burn_cloud', 'prefer_elite']); // 全部专属+多射全开
+    fireWithCards(state, ['multi_shot', 'burn_cloud', 'cruise_boost']); // 全部专属+多射全开
     for (const p of state.projectiles) {
       expect('cluster' in p.data).toBe(false); // 死分支已删除：快照不再携带旧子母弹键
       expect('bomblet' in p.data).toBe(false);
@@ -373,37 +373,46 @@ describe('燃烧云（burn_cloud 牌）', () => {
   });
 });
 
-describe('优先精英（prefer_elite 牌）', () => {
-  it('场上有 Boss：即使 Boss 更远也选 Boss（多个取最近）', () => {
+describe('巡航加速（cruise_boost 牌）', () => {
+  it('未持牌时：飞行速度与伤害保持基础值不变', () => {
     const state = createSimState(1);
-    const near = makeEnemy(state, 380, 1150); // 距角色 ~70.7（普通怪）
-    const farBoss = makeEnemy(state, 360, 400, 100, true); // 距 820 的 Boss
-    fireWithCards(state, ['prefer_elite', 'multi_shot']); // 多射 2 枚：扇形 ±12°、均值正对 Boss
-    expect(state.projectiles.map((p) => p.data.targetId)).toEqual([farBoss.id, farBoss.id]);
-    expect(state.projectiles.map((p) => p.data.targetId)).not.toContain(near.id);
-    const angles = state.projectiles.map(angleDeg).sort((x, y) => x - y);
-    expect(angles[0]).toBeCloseTo(-90, 6);
-    expect(angles[1]).toBeCloseTo(-78, 6);
+    makeEnemy(state, 360, 0); // 远距离敌人
+    fireWithCards(state);
+    const p = state.projectiles[0];
+    const baseSpeed = Math.hypot(p.vx, p.vy);
+    const baseDamage = p.damage;
 
-    // 两个 Boss 取最近。
-    const state2 = createSimState(1);
-    const bossA = makeEnemy(state2, 360, 800, 100, true); // 距 420：更近
-    makeEnemy(state2, 360, 500, 100, true); // 距 720
-    fireWithCards(state2, ['prefer_elite']);
-    expect(state2.projectiles[0].data.targetId).toBe(bossA.id);
+    simulate(state, 30, 20); // 30 帧 × 20ms = 600ms
+    expect(Math.hypot(p.vx, p.vy)).toBeCloseTo(baseSpeed, 3);
+    expect(p.damage).toBeCloseTo(baseDamage, 3);
   });
 
-  it('无牌选最近普通敌人；prefer_elite 且无 Boss 回落最近敌人', () => {
-    const plain = createSimState(1);
-    const near = makeEnemy(plain, 380, 1150);
-    makeEnemy(plain, 360, 400, 100, true); // Boss 在场但无优先锁定牌
-    fireWithCards(plain);
-    expect(plain.projectiles[0].data.targetId).toBe(near.id);
+  it('持有 cruise_boost：每飞行 300ms 速度与最终爆炸伤害提升 25%，上限 +100%', () => {
+    const state = createSimState(1);
+    makeEnemy(state, 360, 0); // 远距离敌人
+    fireWithCards(state, ['cruise_boost']);
+    const p = state.projectiles[0];
+    const baseSpeed = Math.hypot(p.vx, p.vy);
+    const baseDamage = p.damage; // 12
 
-    const noBoss = createSimState(1);
-    const fallback = makeEnemy(noBoss, 380, 1150);
-    fireWithCards(noBoss, ['prefer_elite']);
-    expect(noBoss.projectiles[0].data.targetId).toBe(fallback.id);
+    // 飞行 300ms (15 帧 × 20ms) -> stage 1: +25%
+    simulate(state, 15, 20);
+    expect(Math.hypot(p.vx, p.vy)).toBeCloseTo(baseSpeed * 1.25, 3);
+    expect(p.damage).toBeCloseTo(baseDamage * 1.25, 3);
+
+    // 飞行再加 300ms (累计 600ms) -> stage 2: +50%
+    simulate(state, 15, 20);
+    expect(Math.hypot(p.vx, p.vy)).toBeCloseTo(baseSpeed * 1.5, 3);
+    expect(p.damage).toBeCloseTo(baseDamage * 1.5, 3);
+
+    // 飞行再加 600ms (累计 1200ms) -> stage 4: +100% 封顶
+    simulate(state, 30, 20);
+    expect(Math.hypot(p.vx, p.vy)).toBeCloseTo(baseSpeed * 2.0, 3);
+    expect(p.damage).toBeCloseTo(baseDamage * 2.0, 3);
+
+    // 进一步飞行 (累计 1500ms) -> 不再超过 2.0 倍
+    simulate(state, 15, 20);
+    expect(p.damage).toBeCloseTo(baseDamage * 2.0, 3);
   });
 });
 
@@ -418,8 +427,8 @@ describe('数值全部来自 weapons/homing_missile.json（真实表驱动，T5.
     expect(getBehavior('homing_missile')).toBe(behavior); // import.meta.glob 自动注册
   });
 
-  it('牌目录：专属牌在前（burn_cloud/prefer_elite），弹道五武器通用牌合并追加；rangeKeys=AoE 半径', () => {
-    expect(def.cards.slice(0, 2).map((c) => c.id)).toEqual(['burn_cloud', 'prefer_elite']);
+  it('牌目录：专属牌在前（burn_cloud/cruise_boost），弹道五武器通用牌合并追加；rangeKeys=AoE 半径', () => {
+    expect(def.cards.slice(0, 2).map((c) => c.id)).toEqual(['burn_cloud', 'cruise_boost']);
     const ids = def.cards.map((c) => c.id);
     for (const genericId of ['dmg_up', 'spd_up', 'multi_shot', 'burst_shot', 'split_shot', 'range_up', 'dot_freq']) {
       expect(ids).toContain(genericId);

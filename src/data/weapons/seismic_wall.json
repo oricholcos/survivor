@@ -34,11 +34,10 @@
     },
     {
       "id": "earth_split",
-      "name": "地裂",
-      "description": "震波判定厚度 +20px，更容易命中敌人",
-      "maxCount": 2,
-      "hardMax": 2,
-      "params": [{ "key": "bandDepth", "value": 20, "op": "add" }]
+      "name": "熔岩裂隙",
+      "description": "震波扫过地面后留下持续 2.5s 的地裂带，使踏入其中的敌人减速 50% 并每 0.5s 受到 8 点撕裂伤害",
+      "once": true,
+      "params": [{ "key": "earthSplit", "value": 1, "op": "set" }]
     },
     {
       "id": "overload_resonance",

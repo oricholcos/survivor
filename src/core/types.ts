@@ -70,6 +70,8 @@ export interface EffectInstance {
   stacks: number;
   /** 效果自定义数值参数（如减速比率、每跳伤害）。 */
   data: Record<string, number>;
+  /** 施加此效果的源武器 ID（伤害统计全口径归因溯源）。 */
+  sourceWeaponId?: string;
 }
 
 /** 敌人。 */
@@ -118,6 +120,8 @@ export interface Projectile {
   id: number;
   /** 所属武器行为分支名（step 子系统按此分发更新逻辑）。 */
   behavior: string;
+  /** 归属武器 ID（伤害统计全口径归因溯源）。 */
+  weaponId?: string;
   x: number;
   y: number;
   /** 速度分量 px/s。 */
@@ -155,6 +159,8 @@ export interface WeaponState {
    *  每次改写 cards 后 +1；缺省（undefined）按 0 处理。缓存契约见 core/weapons.ts——
    *  绕过 applyUpgrade 直接改写 cards 的代码必须同步自增本字段，否则 stats 缓存不失效。 */
   cardsVersion?: number;
+  /** 本局累计造成的总伤害（包含直击、穿透、弹跳、分裂、Zone、DoT、尸爆等全口径）。 */
+  damageDealt?: number;
 }
 
 /** 经验宝石：飞向角色被吸收。 */

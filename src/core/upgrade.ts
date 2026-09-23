@@ -47,21 +47,20 @@ function pickWithoutReplacement<T>(pool: readonly T[], count: number, rng: Rng):
 
 /**
  * 选牌时卡牌描述处理：
- * 为有上限的卡牌呈现当前已选数量与上限（格式：（已选/最大））。
- * 若已有旧上限说明（如（可叠...）、（上限...）、（一次性）），统一替换为（已选/最大）；
- * 若无，则追加在末尾。
- * 无上限卡牌不追加。
+ * 为有上限且可多次叠加的卡牌呈现当前已选数量与上限（格式：（已选/最大））。
+ * 唯一牌（once / maxLimit <= 1）与无上限卡牌不追加计数。
+ * 若已有旧上限说明（如（可叠...）、（上限...）、（一次性）），统一替换为（已选/最大）或清洗剥除。
  */
 export function formatCardDescriptionWithLimit(
   desc: string,
   currentCount: number,
   maxLimit: number | undefined,
 ): string {
-  if (maxLimit === undefined) {
-    return desc;
+  const capRegex = /[（(]\s*(?:(?:可叠加[，,]\s*)?(?:可叠\s*\d+\s*次(?:[，,]\s*突破后上限\s*\d+\s*次)?|上限\s*\d+\s*次?)|一次性)\s*[）)]/g;
+  if (maxLimit === undefined || maxLimit <= 1) {
+    return desc.replace(capRegex, '').trim();
   }
   const countTag = `（${currentCount}/${maxLimit}）`;
-  const capRegex = /[（(]\s*(?:(?:可叠加[，,]\s*)?(?:可叠\s*\d+\s*次(?:[，,]\s*突破后上限\s*\d+\s*次)?|上限\s*\d+\s*次?)|一次性)\s*[）)]/g;
   if (capRegex.test(desc)) {
     return desc.replace(capRegex, countTag);
   }
@@ -92,6 +91,7 @@ const RANGE_KEY_ZH: Record<string, string> = {
   waveDistance: '行进距离',
   bandDepth: '冲击带深度',
   chainRange: '弹跳范围',
+  zapRadius: '闪电半径',
   aoeRadius: '爆炸半径',
   fanAngleDeg: '扇角',
   beamWidth: '光束宽度',
@@ -263,17 +263,15 @@ export function rollUpgradeOptions(state: SimState, defs: Record<string, WeaponD
           maxLimit = card.maxCount;
         } else if (card.hardMax !== undefined) {
           maxLimit = card.hardMax;
-        } else if (card.once) {
-          maxLimit = 1;
         }
       }
 
       // 文案两步：① 通用牌按武器动态生成（buildCardDescription；专属牌原样）；
       // ② 清洗只对没有 hardMax 的牌执行：hardMax 牌的上限在突破后依然真实存在；
-      // ③ 有上限的卡牌在选牌时呈现当前已选数量（已选/最大）。
+      // ③ 有上限且可多次叠加的卡牌在选牌时呈现当前已选数量（已选/最大），唯一牌（once）不追加计数。
       const baseDesc = buildCardDescription(def, card);
       const cleanedDesc = unlocked && card.hardMax === undefined ? sanitizeUnlimitedCardDescription(baseDesc) : baseDesc;
-      const desc = formatCardDescriptionWithLimit(cleanedDesc, currentCount, maxLimit);
+      const desc = formatCardDescriptionWithLimit(cleanedDesc, currentCount, card.once ? undefined : maxLimit);
       candidates.push({
         kind: 'card',
         weaponId,
@@ -281,7 +279,7 @@ export function rollUpgradeOptions(state: SimState, defs: Record<string, WeaponD
         name: `${def.name}·${card.name}`,
         description: desc,
         currentCount,
-        maxCount: maxLimit,
+        maxCount: card.once ? undefined : maxLimit,
       });
     }
   }

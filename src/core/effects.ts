@@ -341,6 +341,7 @@ interface PendingBurnExplosion {
   radius: number;
   damage: number;
   canSpread: boolean;
+  sourceWeaponId?: string;
 }
 
 const burnExplosionQueue: PendingBurnExplosion[] = [];
@@ -364,6 +365,7 @@ function triggerBurnExplosion(state: SimState, deadEnemy: Enemy): void {
     return;
   }
   const burnInst = effects[burnIdx];
+  const sourceWeaponId = burnInst.sourceWeaponId;
   // 移除 burn 实例，防止同一尸体被重复引爆
   effects.splice(burnIdx, 1);
 
@@ -392,6 +394,7 @@ function triggerBurnExplosion(state: SimState, deadEnemy: Enemy): void {
     radius,
     damage: explosionDmg,
     canSpread,
+    sourceWeaponId,
   });
 
   if (isProcessingBurnExplosions) {
@@ -420,9 +423,9 @@ function triggerBurnExplosion(state: SimState, deadEnemy: Enemy): void {
           continue;
         }
         if (dx * dx + dy * dy <= rSq) {
-          dealDamage(state, victim, exp.damage);
+          dealDamage(state, victim, exp.damage, exp.sourceWeaponId);
           if (!victim.dead && exp.canSpread) {
-            applyEffect(state, victim, 'burn', { spread: 0 });
+            applyEffect(state, victim, 'burn', { spread: 0 }, exp.sourceWeaponId);
           }
         }
       }
@@ -436,15 +439,23 @@ function triggerBurnExplosion(state: SimState, deadEnemy: Enemy): void {
 /**
  * 统一伤害入口（弹丸命中、DoT tick、未来的近战/AoE 一律走这里）：
  * amount × damageTakenFactor（mark/corrode，每实例 ^stacks、多实例叠乘）→ enemy.hp -=；
+ * 命中伤害实际扣除值累加到 sourceWeaponId 对应武器的 damageDealt。
  * hp <= 0 且未 dead → dead = true、pushEvent enemyKilled{enemyId,typeId,x,y,isBoss}、
  * 依次调用 projectiles.ts 的 killHooks（击杀掉落等）。
  * amount 非有限或 <= 0、敌人已死亡 → 无操作（防脏数据与重复结算）。
  */
-export function dealDamage(state: SimState, enemy: Enemy, amount: number): void {
+export function dealDamage(state: SimState, enemy: Enemy, amount: number, sourceWeaponId?: string): void {
   if (enemy.dead || !Number.isFinite(amount) || amount <= 0) {
     return;
   }
-  enemy.hp -= amount * damageTakenFactor(enemy);
+  const actualDamage = amount * damageTakenFactor(enemy);
+  enemy.hp -= actualDamage;
+  if (sourceWeaponId) {
+    const ws = state.weaponStates[sourceWeaponId];
+    if (ws) {
+      ws.damageDealt = (ws.damageDealt ?? 0) + actualDamage;
+    }
+  }
   if (enemy.hp <= 0 && !enemy.dead) {
     enemy.dead = true;
     pushEvent(state, {
@@ -478,6 +489,7 @@ export function applyEffect(
   bearer: EffectBearer,
   defId: string,
   data?: Record<string, number>,
+  sourceWeaponId?: string,
 ): void {
   const def = effectDefs[defId];
   if (!def) {
@@ -508,6 +520,9 @@ export function applyEffect(
     const inst = list[i];
     if (inst.kind !== defId) {
       continue;
+    }
+    if (sourceWeaponId) {
+      inst.sourceWeaponId = sourceWeaponId;
     }
     if (def.refresh === 'add') {
       if (inst.stacks < def.maxStacks) {
@@ -549,6 +564,7 @@ export function applyEffect(
     untilMs: state.timeMs + durationMs,
     stacks: 1,
     data: {},
+    sourceWeaponId,
   };
   if (data) {
     for (const k in data) {
@@ -570,10 +586,11 @@ export function applyEffectsOnHit(
   state: SimState,
   enemy: Enemy,
   templates: EffectInstance[],
+  sourceWeaponId?: string,
 ): void {
   for (let i = 0; i < templates.length; i++) {
     const t = templates[i];
-    applyEffect(state, enemy, t.kind, t.data);
+    applyEffect(state, enemy, t.kind, t.data, sourceWeaponId ?? t.sourceWeaponId);
   }
 }
 
@@ -625,7 +642,7 @@ function tickEffectList(
         if (isEnemyTarget && !isDeadEnemy(bearer)) {
           const dmg = calcDoTSingleDamage(def, inst, target);
           if (dmg > 0) {
-            dealDamage(state, target, dmg * inst.stacks); // 每层各结算一次伤害
+            dealDamage(state, target, dmg * inst.stacks, inst.sourceWeaponId); // 每层各结算一次伤害
           }
         }
         next += tickMs;
@@ -645,7 +662,7 @@ function tickEffectList(
             const singleDmg = calcDoTSingleDamage(def, inst, target);
             const expectedTotalDmg = singleDmg * inst.stacks * remainingTicks;
             if (expectedTotalDmg > 0 && target.hp <= expectedTotalDmg) {
-              dealDamage(state, target, target.hp);
+              dealDamage(state, target, target.hp, inst.sourceWeaponId);
               if (isDeadEnemy(bearer)) {
                 list.length = 0;
                 return;

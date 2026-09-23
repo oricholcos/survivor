@@ -91,7 +91,7 @@ export const behavior: WeaponBehavior = {
       if (enemy.dead) {
         return;
       }
-      dealDamage(state, enemy, amount);
+      dealDamage(state, enemy, amount, weaponId);
       if (damagedIds.indexOf(enemy.id) === -1) {
         damagedIds.push(enemy.id);
       }

@@ -19,6 +19,7 @@ import { createSimState } from '../simState';
 import type { Enemy, SimState } from '../types';
 import { addWeapon, getWeaponStats, updateWeapons } from '../weapons';
 import type { WeaponStats } from '../weapons';
+import { listZones } from '../zones';
 import {
   behavior,
   AFTERSHOCK_QUEUE_META_KEY,
@@ -109,23 +110,28 @@ describe('数据表契约（weapons/seismic_wall.json）', () => {
     expect(loadWeaponDefs().seismic_wall.rangeKeys).toEqual(['waveDistance']);
   });
 
-  it('地裂 +20/层叠加 bandDepth（波前厚度）且不影响 waveDistance；范围强化 ×1.2 只乘 waveDistance', () => {
+  it('范围强化 ×1.2 只乘 waveDistance，bandDepth 保持固定几何厚度 40', () => {
     const state = createSimState(1);
     atDepth(state, 360, 0);
-    expect(fireSeismic(state, ['earth_split'])).toMatchObject({ bandDepth: 60, waveDistance: 220 });
-    expect(fireSeismic(state, ['earth_split', 'earth_split'])).toMatchObject({
-      bandDepth: 80,
-      waveDistance: 220,
-    });
     expect(fireSeismic(state, ['range_up'])).toMatchObject({ waveDistance: 264, bandDepth: 40 }); // 220 × 1.2
     expect(fireSeismic(state, ['range_up', 'range_up'])).toMatchObject({
       bandDepth: 40,
     });
     expect(fireSeismic(state, ['range_up', 'range_up']).waveDistance).toBeCloseTo(316.8, 6); // 220 × 1.2²
-    expect(fireSeismic(state, ['earth_split', 'range_up'])).toMatchObject({
-      waveDistance: 264, // 范围强化只作用行进距离
-      bandDepth: 60, // 地裂只加厚波前
-    });
+  });
+
+  it('熔岩裂隙（earth_split 牌）：震波扫掠结束后在地面生成 4 个横向并排的裂隙 Zone，提供减速与 DoT 伤害', () => {
+    const state = createSimState(1);
+    atDepth(state, 360, 10, 1000);
+    fireSeismic(state, ['earth_split']);
+    expect(listZones(state)).toHaveLength(0); // 刚开火尚未 sweep 结束，无 zone
+
+    tickAt(state, 400); // sweep 结束
+    const zones = listZones(state);
+    expect(zones).toHaveLength(4); // 4 个横向全屏覆盖圆
+    expect(zones[0].radius).toBe(110);
+    expect(zones[0].effectKind).toBe('slow');
+    expect(zones[0].damagePerTick).toBe(8);
   });
 
   it('扫掠总时长为导出几何常量 400ms（SEISMIC_SWEEP_MS，硬编码不随距离变化）', () => {
@@ -567,8 +573,8 @@ describe('VFX / sweep 共享单键', () => {
 
     const state2 = createSimState(1);
     atDepth(state2, 360, 10, 1000);
-    fireSeismic(state2, ['earth_split', 'earth_split', 'range_up']);
-    expect(state2.meta[SWEEP_VFX_KEY]).toMatchObject({ waveDistance: 264, thickness: 80 });
+    fireSeismic(state2, ['range_up']);
+    expect(state2.meta[SWEEP_VFX_KEY]).toMatchObject({ waveDistance: 264, thickness: 40 });
 
     const idle = createSimState(1);
     fireSeismic(idle);

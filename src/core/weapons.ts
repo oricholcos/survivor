@@ -102,7 +102,7 @@ export function addWeapon(state: SimState, weaponId: string): void {
   if (state.weaponStates[weaponId]) {
     return;
   }
-  const ws: WeaponState = { level: 0, cooldownMs: 0, cards: {}, cardsVersion: 0 };
+  const ws: WeaponState = { level: 0, cooldownMs: 0, cards: {}, cardsVersion: 0, damageDealt: 0 };
   state.weaponStates[weaponId] = ws;
 }
 

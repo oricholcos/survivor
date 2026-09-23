@@ -30,16 +30,16 @@ function makeDef(overrides?: Partial<WeaponDef>): WeaponDef {
 }
 
 describe('addWeapon：0 级起步 + 空牌表', () => {
-  it('新增武器 = { level: 0, cooldownMs: 0, cards: {} }（T5.3a：武器 0 级起步，成长全靠牌）', () => {
+  it('新增武器 = { level: 0, cooldownMs: 0, cards: {}, damageDealt: 0 }（T5.3a：武器 0 级起步，成长全靠牌）', () => {
     const state = createSimState(1);
     addWeapon(state, 'w');
-    expect(state.weaponStates.w).toEqual({ level: 0, cooldownMs: 0, cards: {}, cardsVersion: 0 });
+    expect(state.weaponStates.w).toEqual({ level: 0, cooldownMs: 0, cards: {}, cardsVersion: 0, damageDealt: 0 });
   });
 
   it('重复添加不覆盖已有等级/冷却/牌表（幂等）', () => {
     const state = createSimState(1);
     addWeapon(state, 'w');
-    expect(state.weaponStates.w).toEqual({ level: 0, cooldownMs: 0, cards: {}, cardsVersion: 0 });
+    expect(state.weaponStates.w).toEqual({ level: 0, cooldownMs: 0, cards: {}, cardsVersion: 0, damageDealt: 0 });
 
     // 模拟吃牌与战斗中的冷却推进
     state.weaponStates.w.level = 3;

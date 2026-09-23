@@ -58,6 +58,7 @@
 
 import { applyEffect, dealDamage, getEffectDef, hasEffect } from '../effects';
 import { healWall } from '../wall';
+import { spawnZone } from '../zones';
 import type { Enemy, SimState } from '../types';
 import type { WeaponBehavior } from './registry';
 
@@ -104,6 +105,7 @@ export interface SeismicPulseVfx {
 
 /** sweep 状态本体（模拟层全部字段；单键即「同武器至多一个活跃 sweep」的防御）。 */
 interface SeismicSweepState extends SeismicPulseVfx {
+  weaponId: string;
   /** 城垣共鸣是否已随 sweep 结束结算（恰好一次）。 */
   finished: 0 | 1;
   /** 上一帧波前 y（走廊结算下沿来源；fire 时 = wallLineY）。 */
@@ -121,6 +123,8 @@ interface SeismicSweepState extends SeismicPulseVfx {
   /** 发射时快照：城垣共鸣回复量 / 阈值（0 = 未持有）。 */
   resonanceHeal: number;
   resonanceThreshold: number;
+  /** 发射时快照：地裂/熔岩裂隙开关（1 = 持有）。 */
+  earthSplit: number;
 }
 
 // —— 余震延时队列（meta 单键 FIFO，风格对齐 core/cards 的连射波队列） ——
@@ -179,7 +183,7 @@ function settleAftershock(state: SimState, entry: AftershockEntry): void {
     }
     const dmg =
       entry.overload === 1 && hasEffect(e, 'stun') ? entry.damage * 2 : entry.damage;
-    dealDamage(state, e, dmg);
+    dealDamage(state, e, dmg, entry.weaponId);
   }
 }
 
@@ -210,13 +214,13 @@ function consumeDueAftershocks(state: SimState): void {
 
 /** 波前经过附着的眩晕：持震荡加深（stunBonusMs > 0）→ 覆盖值 = 效果表定义值 + 加层；
  *  否则走效果表默认（800ms；Boss 400ms 减半为效果引擎既有规则）。 */
-function applySweepStun(state: SimState, e: Enemy, stunBonusMs: number): void {
+function applySweepStun(state: SimState, e: Enemy, stunBonusMs: number, sourceWeaponId?: string): void {
   if (stunBonusMs > 0) {
     applyEffect(state, e, 'stun', {
       durationMs: getEffectDef('stun').durationMs + stunBonusMs,
-    });
+    }, sourceWeaponId);
   } else {
-    applyEffect(state, e, 'stun');
+    applyEffect(state, e, 'stun', undefined, sourceWeaponId);
   }
 }
 
@@ -242,14 +246,19 @@ function settleSweepCorridor(
     sweep.hitIds.add(e.id);
     // ① 伤害：过载共振 ×2 判定时刻 = 波前经过该敌人的那一刻（本波自己的眩晕不影响本波
     // 对它的判定——每敌每 sweep 只结算一次）。
-    dealDamage(state, e, sweep.overload === 1 && hasEffect(e, 'stun') ? sweep.damage * 2 : sweep.damage);
+    dealDamage(
+      state,
+      e,
+      sweep.overload === 1 && hasEffect(e, 'stun') ? sweep.damage * 2 : sweep.damage,
+      sweep.weaponId,
+    );
     if (e.dead) {
       continue; // 致死一击不附着 CC（尸体无意义，与 mortar 眩晕同款幸存者判定）
     }
     // ② 击退：效果引擎强制竖直向上（推离墙线）+ maxHp 抗性。
-    applyEffect(state, e, 'knockback', { force: sweep.knockbackForce });
+    applyEffect(state, e, 'knockback', { force: sweep.knockbackForce }, sweep.weaponId);
     // ③ 眩晕：效果表默认 / 震荡加深覆盖（Boss 减半作用于覆盖后时长，引擎内生效）。
-    applySweepStun(state, e, sweep.stunBonusMs);
+    applySweepStun(state, e, sweep.stunBonusMs, sweep.weaponId);
   }
 }
 
@@ -262,6 +271,26 @@ function finishSweep(state: SimState, sweep: SeismicSweepState): void {
   sweep.finished = 1;
   if (sweep.resonanceHeal > 0 && sweep.resonanceThreshold > 0 && sweep.hitIds.size >= sweep.resonanceThreshold) {
     healWall(state, sweep.resonanceHeal);
+  }
+
+  // 熔岩裂隙（earthSplit === 1）：波前扫过后在地面留下持续 2.5s 的地裂带
+  if (sweep.earthSplit === 1) {
+    const centerY = state.layout.wallLineY - sweep.waveDistance / 2;
+    // 屏幕宽度 720px，横向并排铺设 4 个覆盖圆（x = 90, 270, 450, 630），半径 110px，无缝覆盖全宽
+    const xs = [90, 270, 450, 630];
+    for (let i = 0; i < xs.length; i++) {
+      spawnZone(state, {
+        x: xs[i],
+        y: centerY,
+        radius: 110,
+        durationMs: 2500,
+        tickMs: 500,
+        damagePerTick: 8,
+        effectKind: 'slow',
+        color: 0xff5511,
+        sourceWeaponId: sweep.weaponId,
+      });
+    }
   }
 }
 
@@ -329,6 +358,7 @@ export const behavior: WeaponBehavior = {
     // sweep 状态（= VFX 条目本体）：单键覆盖写。间隔 3.6s > 400ms sweep 正常不重叠；
     // 万一重叠，旧 sweep 被放弃（其城垣共鸣不再结算）——确定性、至多一个活跃 sweep。
     const sweep: SeismicSweepState = {
+      weaponId,
       startMs: state.timeMs,
       waveDistance,
       thickness,
@@ -342,6 +372,7 @@ export const behavior: WeaponBehavior = {
       overload: overload ? 1 : 0,
       resonanceHeal: numOr0(stats.wallResonanceHeal),
       resonanceThreshold: numOr0(stats.wallResonanceHits),
+      earthSplit: stats.earthSplit === 1 ? 1 : 0,
     };
     state.meta[SEISMIC_PULSE_VFX_KEY] = sweep;
 

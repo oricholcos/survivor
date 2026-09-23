@@ -16,7 +16,7 @@
     {
       "id": "headshot",
       "name": "斩首",
-      "description": "开火瞬间若锁定目标当前生命 ≥ 60% 最大生命，本波伤害 ×1.5（残血目标不增伤；与处决强化乘区叠加；一次性）",
+      "description": "开火瞬间若锁定目标当前生命 ≥ 60% 最大生命，本波伤害 ×1.5",
       "once": true,
       "params": [
         { "key": "headshot", "value": 1, "op": "set" },
@@ -25,30 +25,9 @@
       ]
     },
     {
-      "id": "execute_up",
-      "name": "处决强化",
-      "description": "斩首倍率 +0.25/张（×1.5 → ×1.75 → ×2.0…；需先持有斩首；可叠 2 次，突破后上限 4 次）",
-      "requiresCard": "headshot",
-      "maxCount": 2,
-      "hardMax": 4,
-      "params": [{ "key": "headshotMultiplier", "value": 0.25, "op": "add" }]
-    },
-    {
-      "id": "crit_shot",
-      "name": "爆头",
-      "description": "每次命中时有概率造成 550% 伤害（每层 +20% 概率，可叠 5 次；独立战斗随机流；与斩首乘区叠乘）",
-      "maxCount": 5,
-      "hardMax": 5,
-      "params": [
-        { "key": "critShot", "value": 1, "op": "set" },
-        { "key": "critChance", "value": 0.2, "op": "add" },
-        { "key": "critMultiplier", "value": 5.5, "op": "set" }
-      ]
-    },
-    {
       "id": "execution_order",
       "name": "死刑宣告",
-      "description": "本武器任何一次击杀（直接击杀、爆头击杀、穿透多次命中击杀、处决击杀）该次击杀经验 ×1.25；并保留处决：伤害结算后目标存活且生命低于 20% 最大生命（Boss 为 7%）→ 立即击杀（每次命中独立判定；一次死亡只放大一次；一次性）",
+      "description": "本武器击杀经验 ×1.25，伤害结算后若目标生命低于 20% 最大生命（Boss 为 7%）立即将其击杀",
       "once": true,
       "params": [
         { "key": "executionOrder", "value": 1, "op": "set" },
@@ -58,9 +37,33 @@
       ]
     },
     {
+      "id": "execute_up",
+      "name": "处决强化",
+      "description": "死刑宣告斩杀线 +5%（Boss 为 +2%）/张（可叠 2 次，突破后上限 4 次）",
+      "requiresCard": "execution_order",
+      "maxCount": 2,
+      "hardMax": 4,
+      "params": [
+        { "key": "executionHpFactor", "value": 0.05, "op": "add" },
+        { "key": "executionBossHpFactor", "value": 0.02, "op": "add" }
+      ]
+    },
+    {
+      "id": "crit_shot",
+      "name": "爆头",
+      "description": "每次命中时有概率造成 550% 伤害（每层 +20% 概率，可叠 5 次）",
+      "maxCount": 5,
+      "hardMax": 5,
+      "params": [
+        { "key": "critShot", "value": 1, "op": "set" },
+        { "key": "critChance", "value": 0.2, "op": "add" },
+        { "key": "critMultiplier", "value": 5.5, "op": "set" }
+      ]
+    },
+    {
       "id": "bullet_fly",
       "name": "让子弹飞",
-      "description": "命中敌人时若触发爆头或成功击杀，子弹不销毁并继续直线穿透；未暴击且未击杀时击中销毁（需先持有爆头；一次性）",
+      "description": "命中敌人时若触发爆头或成功击杀，子弹穿透目标",
       "requiresCard": "crit_shot",
       "once": true,
       "params": [{ "key": "bulletFly", "value": 1, "op": "set" }]
@@ -68,7 +71,7 @@
     {
       "id": "sniper_god",
       "name": "狙神",
-      "description": "子弹每穿透 1 个敌人，对后续敌人的伤害提升 20%（需先持有让子弹飞；一次性）",
+      "description": "子弹每穿透 1 个敌人，对后续敌人的伤害提升 20%",
       "requiresCard": "bullet_fly",
       "once": true,
       "params": [

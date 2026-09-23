@@ -64,7 +64,7 @@ function dotMult(stats: WeaponStats): number {
  * 奇数枚时正中一枚恰朝正上；ttl 用 stats.ttlMs（短程：飞行距离上限 = projectileSpeed × ttlMs / 1000 px）；
  * 每枚弹的 data 快照本波开关数值（命中/死亡钩子拿不到 stats，从弹上读回）。
  */
-function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats): void {
+function fireVolley(state: SimState, weaponId: string, stats: WeaponStats): void {
   const count = Math.max(0, Math.round(stats.projectileCount));
   const halfRad = (stats.fanAngleDeg * Math.PI) / 180 / 2;
 
@@ -106,6 +106,7 @@ function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats): voi
     const t = count === 1 ? 0 : (2 * i) / (count - 1) - 1; // [-1, 1] 均匀
     const offsetRad = halfRad * t * Math.abs(t); // 平方映射：中心密、边缘疏、确定性零随机
     spawnProjectile(state, {
+      weaponId,
       behavior: 'scatter_shot',
       x: state.character.x,
       y: state.character.y,
@@ -178,7 +179,7 @@ export const behavior: WeaponBehavior = {
   onProjectileHit(state, proj, enemy) {
     if (proj.data.knockback === 1 && !enemy.dead) {
       const dir = normalize({ x: enemy.x - state.character.x, y: enemy.y - state.character.y });
-      applyEffect(state, enemy, 'knockback', { dirX: dir.x, dirY: dir.y, force: proj.data.knockbackForce });
+      applyEffect(state, enemy, 'knockback', { dirX: dir.x, dirY: dir.y, force: proj.data.knockbackForce }, proj.weaponId);
     }
     splitOnHit(state, proj, enemy);
   },
@@ -219,6 +220,7 @@ export const behavior: WeaponBehavior = {
     }
     const dir = normalize({ x: target.x - proj.x, y: target.y - proj.y });
     spawnProjectile(state, {
+      weaponId: proj.weaponId,
       behavior: 'scatter_shot',
       x: proj.x,
       y: proj.y,
@@ -259,6 +261,7 @@ function splitOnHit(state: SimState, proj: Projectile, hitEnemy: Enemy): void {
     const aim = leadAim(proj, t, speed, state.layout.wallLineY);
     const dir = normalize({ x: aim.x - proj.x, y: aim.y - proj.y });
     spawnProjectile(state, {
+      weaponId: proj.weaponId,
       behavior: 'scatter_shot',
       x: proj.x,
       y: proj.y,

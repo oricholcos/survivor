@@ -390,7 +390,7 @@ export const behavior: WeaponBehavior = {
       counters.mainTargetId = main.id;
       counters.mainLoad = 0; // 换目标：只清主束自己的加载计数
     }
-    dealDamage(state, main, baseDamage * (1 + loadFactor * counters.mainLoad));
+    dealDamage(state, main, baseDamage * (1 + loadFactor * counters.mainLoad), weaponId);
     if (scorch && !main.dead) {
       applyEffect(
         state,
@@ -399,6 +399,7 @@ export const behavior: WeaponBehavior = {
         scorchTickMs > 0
           ? { damagePerTick: SCORCH_BURN_DPT, tickMs: scorchTickMs }
           : { damagePerTick: SCORCH_BURN_DPT },
+        weaponId,
       );
     }
     counters.mainLoad += 1;
@@ -411,7 +412,7 @@ export const behavior: WeaponBehavior = {
         counters.secTargetId = secTarget.id;
         counters.secLoad = 0; // 换目标：只清次级束自己的加载计数
       }
-      dealDamage(state, secTarget, baseDamage * (1 + loadFactor * counters.secLoad) * secFactor);
+      dealDamage(state, secTarget, baseDamage * (1 + loadFactor * counters.secLoad) * secFactor, weaponId);
       if (scorch && !secTarget.dead) {
         applyEffect(
           state,
@@ -420,6 +421,7 @@ export const behavior: WeaponBehavior = {
           scorchTickMs > 0
             ? { damagePerTick: SCORCH_BURN_DPT, tickMs: scorchTickMs }
             : { damagePerTick: SCORCH_BURN_DPT },
+          weaponId,
         );
       }
       counters.secLoad += 1;

@@ -20,6 +20,7 @@ export const projectilePool: Pool<Projectile> = new Pool<Projectile>({
   factory: () => ({
     id: 0,
     behavior: '',
+    weaponId: '',
     x: 0,
     y: 0,
     vx: 0,
@@ -37,6 +38,7 @@ export const projectilePool: Pool<Projectile> = new Pool<Projectile>({
   reset: (p) => {
     p.id = 0;
     p.behavior = '';
+    p.weaponId = '';
     p.x = 0;
     p.y = 0;
     p.vx = 0;
@@ -71,6 +73,7 @@ export function spawnProjectile(
 
   p.id = state.nextId++;
   p.behavior = opts.behavior ?? '';
+  p.weaponId = opts.weaponId ?? '';
   p.x = opts.x;
   p.y = opts.y;
   p.vx = opts.vx;
@@ -234,24 +237,18 @@ function settleSweptHits(
     if (enemy.dead) {
       continue; // 本帧已被其他弹击杀：跳过
     }
-    if (p.data.prismRecurse === 1 && p.data.returning !== 1) {
-      if (p.hitIds.length > 0 && p.hitIds[p.hitIds.length - 1] === enemy.id) {
-        continue;
-      }
-    } else {
-      if (p.hitIds.indexOf(enemy.id) !== -1) {
-        continue; // hitIds 去重：同一弹不重复伤害同一敌人
-      }
+    if (p.hitIds.indexOf(enemy.id) !== -1) {
+      continue; // hitIds 去重：同一弹不重复伤害同一敌人
     }
 
     p.hitIds.push(enemy.id);
     // 统一伤害入口（效果引擎）：受伤乘区（mark/corrode）+ 击杀结算
     // （hp<=0 → dead、pushEvent enemyKilled、依次调用 killHooks，行为与原内联实现等价）。
-    dealDamage(state, enemy, p.damage);
+    dealDamage(state, enemy, p.damage, p.weaponId || undefined);
     // 命中附着：把 effectsOnHit 模板实例化到敌人（untilMs 按当前时刻重算、data 深拷贝、
     // 走叠层/互斥规则）；击杀弹的致死一击不再附着（尸体无意义）。
     if (!enemy.dead) {
-      applyEffectsOnHit(state, enemy, p.effectsOnHit);
+      applyEffectsOnHit(state, enemy, p.effectsOnHit, p.weaponId || undefined);
     }
 
     // 音效事件（T4.1）：每次去重后的命中 push 一次 hit。门控：仅带 behavior 的

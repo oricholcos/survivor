@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import { loadEffectDefs } from '../../data/effects';
 import { loadWeaponDefs } from '../../data/weapons';
-import { dealDamage, updateEffects } from '../effects';
+import { dealDamage, hasEffect, updateEffects } from '../effects';
 import { normalize, scale } from '../math';
 import { spawnProjectile, updateProjectiles } from '../projectiles';
 import { createSimState } from '../simState';
@@ -305,10 +305,10 @@ describe('连锁闪电（chain_lightning 牌）', () => {
     expect(state.projectiles).toHaveLength(0); // 3 跳用尽
     // e1：直击 10，从不吃 zap（hitIds 排除）。
     expect(e1.hp).toBeCloseTo(990, 6);
-    // a2：hop1 zap 4 + 直击 8（第 2 跳）。hop2 的 zap 以 a2 为圆心：a1 距其 ~120 > 90+10 不及。
-    expect(a2.hp).toBeCloseTo(1000 - 4 - 8, 6);
-    // a1：hop1 zap 4 + 直击 6.4（第 3 跳）。hop3 的 zap：e1/a2 均已在 hitIds。
-    expect(a1.hp).toBeCloseTo(1000 - 4 - 6.4, 6);
+    // a2：hop1 zap 5 (50% of 10) + 直击 8（第 2 跳）。hop2 的 zap 以 a2 为圆心：a1 距其 ~120 > 90+10 不及。
+    expect(a2.hp).toBeCloseTo(1000 - 5 - 8, 6);
+    // a1：hop1 zap 5 + 直击 6.4（第 3 跳）。hop3 的 zap：e1/a2 均已在 hitIds。
+    expect(a1.hp).toBeCloseTo(1000 - 5 - 6.4, 6);
   });
 
   it('连锁闪电反馈闭环：伤害结算、meta[PRISM_ZAP_VFX_KEY] 坐标记录、sfx: hit 事件触发及过期清理', () => {
@@ -378,6 +378,31 @@ describe('连锁闪电（chain_lightning 牌）', () => {
     expect(afterList.every((s) => s.untilMs > 300)).toBe(true);
     expect(afterList.some((s) => s.x2 === z2.x && s.y2 === z2.y)).toBe(true);
     expect(afterList.some((s) => s.untilMs === 200)).toBe(false);
+  });
+
+  it('连锁闪电方案 A 增强：动态伤害随面板成长、受范围强化放大、连携传导冰毒', () => {
+    const state = createSimState(1);
+    const e1 = makeEnemy(state, 360, 1120, 1000); // 首跳目标
+    const e2 = makeEnemy(state, 400, 1120, 1000); // 距 e1 40px：hop2 直击
+    const e3 = makeEnemy(state, 440, 1120, 1000); // 距 e2 40px：hop3 直击
+    // z1 距 e1 95px（基础 90px 不及，但拿了 1 张 range_up 后 zapRadius=108px，可波及；距 e1 远于 e2 故不吃直击）
+    const z1 = makeEnemy(state, 360, 1025, 1000);
+
+    // 拿伤害强化 (damage 10*1.3=13) + 范围强化 (zapRadius 90*1.2=108) + 连锁闪电 + 冰毒附着
+    fireWithCards(state, ['dmg_up', 'range_up', 'chain_lightning', 'frost_venom']);
+    simulate(state, 120);
+
+    // 1. 直击与弹跳正常推进：首跳 13、次跳 10.4、三跳 8.32
+    expect(e1.hp).toBeCloseTo(1000 - 13, 6);
+    expect(e2.hp).toBeCloseTo(1000 - 10.4, 6);
+    expect(e3.hp).toBeCloseTo(1000 - 8.32, 6);
+
+    // 2. 动态伤害：基伤 13，zap 伤害为 13 × 0.5 = 6.5（仅受 zap，未受直击）
+    expect(z1.hp).toBeCloseTo(1000 - 6.5, 6);
+
+    // 3. 冰毒传导：z1 作为闪电受击者，同步挂上 chill 与 poison
+    expect(hasEffect(z1, 'chill')).toBe(true);
+    expect(hasEffect(z1, 'poison')).toBe(true);
   });
 });
 
@@ -576,80 +601,49 @@ describe('聚能折返（focus_return 牌）', () => {
   });
 });
 
-describe('棱镜往复（prism_recurse 牌）', () => {
-  it('场上只有 2 个敌人时，棱镜在两怪之间往返弹跳，弹满预定跳数（例如 3 跳与 5 跳）', () => {
-    // 3 跳测试（默认无额外弹跳牌）
-    const state3 = createSimState(1);
-    const a3 = makeEnemy(state3, 360, 1120, 10000);
-    const b3 = makeEnemy(state3, 360, 1020, 10000); // 间距 100 < chainRange 150
-    fireWithCards(state3, ['prism_recurse']);
-    simulate(state3, 200);
-
-    expect(state3.projectiles).toHaveLength(0);
-    // 3 跳：a3(10) -> b3(8) -> a3(6.4)
-    expect(a3.hp).toBeCloseTo(10000 - 10 - 6.4, 6);
-    expect(b3.hp).toBeCloseTo(10000 - 8, 6);
-
-    // 5 跳测试（2 张 bounce_up，chainCount=5）
-    const state5 = createSimState(1);
-    const a5 = makeEnemy(state5, 360, 1120, 10000);
-    const b5 = makeEnemy(state5, 360, 1020, 10000);
-    fireWithCards(state5, ['prism_recurse', 'bounce_up', 'bounce_up']);
-    simulate(state5, 300);
-
-    expect(state5.projectiles).toHaveLength(0);
-    // 5 跳：
-    // 第 1 跳 a5: 10
-    // 第 2 跳 b5: 10 * 0.8 = 8
-    // 第 3 跳 a5: 10 * 0.8^2 = 6.4
-    // 第 4 跳 b5: 10 * 0.8^3 = 5.12
-    // 第 5 跳 a5: 10 * 0.8^4 = 4.096
-    expect(a5.hp).toBeCloseTo(10000 - (10 + 6.4 + 4.096), 6);
-    expect(b5.hp).toBeCloseTo(10000 - (8 + 5.12), 6);
-  });
-
-  it('优先弹射未命中过的敌人，只有无新敌人时才往复折返', () => {
-    // 场上有 3 个敌人排成一列：e1(360, 1120), e2(360, 1040), e3(360, 960)
-    // 间距 80 < chainRange 150。当从 e2 寻的时，e1(已命中) 和 e3(未命中) 距离均为 80
-    // 棱镜必须优先弹向未命中的 e3，只有当周围无新敌人时才往复折返到已命中敌人
+describe('聚能超载（focus_overload 牌）', () => {
+  it('持有 focus_return + focus_overload：弹跳终结时发射 2 道平行贯穿光梭，横向偏移 ±16px 且附带 0.6s 眩晕', () => {
     const state = createSimState(1);
-    const e1 = makeEnemy(state, 360, 1120, 10000);
-    const e2 = makeEnemy(state, 360, 1040, 10000);
-    const e3 = makeEnemy(state, 360, 960, 10000);
-    // 给 4 跳（1 张 bounce_up），验证前 3 跳必须是 e1, e2, e3，第 4 跳才折返到 e2
-    fireWithCards(state, ['prism_recurse', 'bounce_up']);
-    simulate(state, 300);
-
-    expect(state.projectiles).toHaveLength(0);
-    // 第 1 跳 e1: 10
-    // 第 2 跳 e2: 8
-    // 第 3 跳 e3: 6.4（优先选新目标 e3，而非折返 e1）
-    // 第 4 跳 e2: 5.12（无新目标，折返到非自身的最近存活怪 e2）
-    expect(e1.hp).toBeCloseTo(10000 - 10, 6);
-    expect(e2.hp).toBeCloseTo(10000 - 8 - 5.12, 6);
-    expect(e3.hp).toBeCloseTo(10000 - 6.4, 6);
-  });
-
-  it('联动：同时拥有【棱镜往复】和【聚能折返】时，两怪互弹满 K 次后，触发带蓄能 1 + 0.25 * K 倍伤害的宽体贯穿光梭飞向角色', () => {
-    // 2 怪互弹满 3 次（K=3）
-    const state = createSimState(1);
-    const e1 = makeEnemy(state, 360, 1120, 10000);
-    const e2 = makeEnemy(state, 360, 1020, 10000);
+    makeEnemy(state, 360, 1120, 10000);
+    const bystanderLeft = makeEnemy(state, 344, 1180, 10000); // 恰在 -16px 光梭路线上
+    const bystanderRight = makeEnemy(state, 376, 1180, 10000); // 恰在 +16px 光梭路线上
     const nextIdAfterSetup = state.nextId;
 
-    fireWithCards(state, ['prism_recurse', 'focus_return']);
-    simulate(state, 300);
+    fireWithCards(state, ['focus_return', 'focus_overload']);
+    // 主弹直击 target (360, 1120) 后周围无新敌人，弹跳终止触发聚能折返
+    simulate(state, 200);
 
     expect(state.projectiles).toHaveLength(0);
-    expect(state.nextId - nextIdAfterSetup).toBe(2); // 主弹 1 枚 + 折返光梭 1 枚
-    // K = 3 跳：
-    // 主弹结算：e1 挨第 1 跳(10)、第 3 跳(6.4)；e2 挨第 2 跳(8)
-    // 弹跳结束生成折返光梭，damage = 10 * (1 + 0.25 * 3) = 17.5
-    // 从 e1 (360, 1120) 折返飞向角色 (360, 1220)：
-    // e1 在出生点被折返光梭贯穿再中一次 17.5 伤
-    // e2 在 (360, 1020)，折返光梭向角色 (360, 1220) 飞，不会向上打 e2
-    expect(e1.hp).toBeCloseTo(10000 - 10 - 6.4 - 17.5, 6);
-    expect(e2.hp).toBeCloseTo(10000 - 8, 6);
+    // 产弹：主弹 1 枚 + 终结双光梭 2 枚 = 3
+    expect(state.nextId - nextIdAfterSetup).toBe(3);
+
+    // 检查旁观者是否受到光梭附带的眩晕效果
+    expect(bystanderLeft.effects.some((eff) => eff.kind === 'stun')).toBe(true);
+    expect(bystanderRight.effects.some((eff) => eff.kind === 'stun')).toBe(true);
+  });
+
+  it('未持有 focus_overload（仅持有 focus_return）：仅发射 1 道中心光梭且无眩晕', () => {
+    const state = createSimState(1);
+    makeEnemy(state, 360, 1120, 10000);
+    const nextIdAfterSetup = state.nextId;
+
+    fireWithCards(state, ['focus_return']);
+    simulate(state, 200);
+
+    expect(state.projectiles).toHaveLength(0);
+    expect(state.nextId - nextIdAfterSetup).toBe(2); // 主弹 1 + 单光梭 1
+  });
+
+  it('未持有 focus_return 时（即使单独持有 focus_overload）：不发射任何折返光梭', () => {
+    const state = createSimState(1);
+    makeEnemy(state, 360, 1120, 10000);
+    const nextIdAfterSetup = state.nextId;
+
+    fireWithCards(state, ['focus_overload']);
+    simulate(state, 200);
+
+    expect(state.projectiles).toHaveLength(0);
+    expect(state.nextId - nextIdAfterSetup).toBe(1); // 仅主弹 1 枚，无折返光梭
   });
 });
 
@@ -664,9 +658,9 @@ describe('数值全部来自 weapons/prism.json（真实表驱动，T5.3a 牌池
     expect(getBehavior('prism_chain')).toBe(behavior); // import.meta.glob 自动注册
   });
 
-  it('牌目录：专属牌在前（bounce_up/chain_lightning/frost_venom/focus_return/prism_recurse/link_stable），通用牌合并追加', () => {
+  it('牌目录：专属牌在前（bounce_up/chain_lightning/frost_venom/focus_return/focus_overload/link_stable），通用牌合并追加', () => {
     expect(def.cards.slice(0, 6).map((c) => c.id)).toEqual([
-      'bounce_up', 'chain_lightning', 'frost_venom', 'focus_return', 'prism_recurse', 'link_stable',
+      'bounce_up', 'chain_lightning', 'frost_venom', 'focus_return', 'focus_overload', 'link_stable',
     ]);
     const ids = def.cards.map((c) => c.id);
     for (const genericId of ['dmg_up', 'spd_up', 'multi_shot', 'burst_shot', 'split_shot', 'range_up', 'dot_freq']) {
@@ -674,13 +668,15 @@ describe('数值全部来自 weapons/prism.json（真实表驱动，T5.3a 牌池
     }
     const dot = def.cards.find((c) => c.id === 'dot_freq')!;
     expect(dot.requiresCard).toBe('frost_venom'); // dot频率前置：冰毒附着
-    expect(def.rangeKeys).toEqual(['chainRange']); // 范围强化乘弹跳距离
+    const overload = def.cards.find((c) => c.id === 'focus_overload')!;
+    expect(overload.requiresCard).toBe('focus_return'); // 聚能超载前置：聚能折返
+    expect(def.rangeKeys).toEqual(['chainRange', 'zapRadius']); // 范围强化乘弹跳距离与闪电半径
   });
 
   it('base 数值随表；弹跳次数/递减系数/范围随牌叠加（改 json 即变）', () => {
     expect(def.base).toMatchObject({
       damage: 10, intervalMs: 1200, projectileSpeed: 800, pierce: 999, ttlMs: 4000,
-      chainCount: 3, chainRange: 150, falloff: 0.8, zapRadius: 90, zapDamage: 4,
+      chainCount: 3, chainRange: 150, falloff: 0.8, zapRadius: 90, zapRatio: 0.5,
     });
 
     const run = (cards: string[]) => {
@@ -704,22 +700,23 @@ describe('数值全部来自 weapons/prism.json（真实表驱动，T5.3a 牌池
     expect(p1.radius).toBe(6);
     expect(p1.data).toMatchObject({
       chainsLeft: 3, chainCount: 3, baseDamage: 10, falloff: 0.8, chainRange: 150,
-      chainLightning: 0, zapRadius: 90, zapDamage: 4, focusReturn: 0, prismRecurse: 0, frostVenom: 0,
+      chainLightning: 0, zapRadius: 90, zapRatio: 0.5, focusReturn: 0, focusOverload: 0, frostVenom: 0,
     });
 
     expect(statsOf(['bounce_up', 'bounce_up']).chainCount).toBe(5); // 弹跳+1 ×2
     const pMax = statsOf([
       'bounce_up', 'bounce_up', 'bounce_up',
       'link_stable', 'link_stable', 'link_stable',
-      'chain_lightning', 'frost_venom', 'focus_return', 'prism_recurse', 'range_up',
+      'chain_lightning', 'frost_venom', 'focus_return', 'focus_overload', 'range_up',
     ]);
     expect(pMax.chainCount).toBe(6); // 3 + 3（弹跳+1）
     expect(pMax.falloff).toBeCloseTo(0.95, 9); // 0.8 + 0.05×3
     expect(pMax.chainLightning).toBe(1);
     expect(pMax.frostVenom).toBe(1);
     expect(pMax.focusReturn).toBe(1);
-    expect(pMax.prismRecurse).toBe(1);
+    expect(pMax.focusOverload).toBe(1);
     expect(pMax.chainRange).toBeCloseTo(180, 9); // 150 × 1.2（范围强化乘弹跳距离）
+    expect(pMax.zapRadius).toBeCloseTo(108, 9); // 90 × 1.2（范围强化乘闪电半径）
   });
 
   it('alt def（不同数值）驱动同一行为', () => {
@@ -747,7 +744,7 @@ describe('数值全部来自 weapons/prism.json（真实表驱动，T5.3a 牌池
     expect(Math.hypot(p.vx, p.vy)).toBeCloseTo(600, 9);
     expect(p.data).toMatchObject({
       chainsLeft: 2, chainCount: 2, baseDamage: 30, falloff: 0.5, chainRange: 200,
-      zapRadius: 60, zapDamage: 9, chainLightning: 0, focusReturn: 0, prismRecurse: 0, frostVenom: 0,
+      zapRadius: 60, zapDamage: 9, chainLightning: 0, focusReturn: 0, focusOverload: 0, frostVenom: 0,
     });
   });
 
@@ -783,7 +780,7 @@ describe('数值全部来自 weapons/prism.json（真实表驱动，T5.3a 牌池
 });
 
 describe('可复现（行为零随机：不读 rng，任意种子同结果）', () => {
-  /** 固定场景：弹跳×2+冰毒+折返+往复（chainCount=5）打满 300 帧的全量结果快照。 */
+  /** 固定场景：弹跳×2+冰毒+折返+超载（chainCount=5）打满 300 帧的全量结果快照。 */
   function scenario(seed: number): { hp: number[]; nextId: number; leftover: number } {
     const state = createSimState(seed);
     makeEnemy(state, 360, 1120);
@@ -792,7 +789,7 @@ describe('可复现（行为零随机：不读 rng，任意种子同结果）', 
     makeEnemy(state, 360, 760);
     makeEnemy(state, 360, 640); // 5 连跳恰用尽次数 → 触发折返
     makeEnemy(state, 700, 300); // 远处旁观者：链与折返均不及
-    fireWithCards(state, ['bounce_up', 'bounce_up', 'frost_venom', 'focus_return', 'prism_recurse']);
+    fireWithCards(state, ['bounce_up', 'bounce_up', 'frost_venom', 'focus_return', 'focus_overload']);
     simulate(state, 300);
     return { hp: state.enemies.map((e) => e.hp), nextId: state.nextId, leftover: state.projectiles.length };
   }

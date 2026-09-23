@@ -32,6 +32,7 @@ import { loadRecords, recordResult } from '../game/records';
 import { loadWeaponDefs } from '../data/weapons';
 import { allMaxedUnlocked } from '../core/cards';
 import { OVERLAY_CSS } from './styles';
+import { formatDamageNum, formatTime } from './format';
 
 // —— 数据表：只加载一次（内容共享只读；与 game/session.ts 同款约定） ——
 
@@ -75,14 +76,6 @@ function show(panel: HTMLElement): void {
 
 function hide(panel: HTMLElement): void {
   panel.classList.add('ov-hidden');
-}
-
-/** ms → mm:ss（与 HUD 同款格式：向下取整，负值按 0）。 */
-function formatTime(timeMs: number): string {
-  const totalSec = Math.floor(Math.max(0, timeMs) / 1000);
-  const mm = String(Math.floor(totalSec / 60)).padStart(2, '0');
-  const ss = String(totalSec % 60).padStart(2, '0');
-  return `${mm}:${ss}`;
 }
 
 /** 升级选项的 kind 小标签文案与配色类名。 */
@@ -151,10 +144,12 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
   const overTime = el('div', 'ov-stats');
   const overRecord = el('div', 'ov-stats ov-hidden'); // 纪录对比行（无内容时隐藏，避免空档）
   const overKills = el('div', 'ov-stats');
+  const overDamageBox = el('div', 'ov-damage-box ov-hidden');
   overCard.appendChild(overTitle);
   overCard.appendChild(overTime);
   overCard.appendChild(overRecord);
   overCard.appendChild(overKills);
+  overCard.appendChild(overDamageBox);
   const overBtnRow = el('div', 'ov-btnrow');
   const restartBtn = el('button', 'ov-btn', '同模式重开');
   const menuBtn = el('button', 'ov-btn ov-btn--ghost', '返回菜单');
@@ -240,7 +235,9 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
         const curLv = s.state.weaponStates[option.weaponId]?.level ?? 0;
         const nextLv = curLv + 1;
         const countBadge =
-          option.maxCount !== undefined && !option.description.includes(`/${option.maxCount}）`)
+          option.maxCount !== undefined &&
+          option.maxCount > 1 &&
+          !option.description.includes(`/${option.maxCount}）`)
             ? `（${option.currentCount ?? 0}/${option.maxCount}）`
             : '';
         if (curLv >= 10) {
@@ -356,7 +353,87 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
       overKills.appendChild(recordBadge('新纪录！'));
     }
 
+    // 武器伤害统计排行榜（方案 A：霓虹进度条 + 总伤 + 占比 + DPS）
+    renderDamageStats(s, overDamageBox);
+
     show(overPanel);
+  }
+
+  function renderDamageStats(s: GameSession, container: HTMLElement): void {
+    container.textContent = '';
+    const state = s.state;
+    const wsMap = state.weaponStates;
+    const ids = Object.keys(wsMap);
+    if (ids.length === 0) {
+      container.className = 'ov-damage-box ov-hidden';
+      return;
+    }
+
+    let totalTeamDamage = 0;
+    const list: Array<{ id: string; level: number; damage: number; name: string; maxLevel: number }> = [];
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      const ws = wsMap[id];
+      const dmg = ws.damageDealt ?? 0;
+      totalTeamDamage += dmg;
+      const def = WEAPON_DEFS[id];
+      list.push({
+        id,
+        level: ws.level,
+        damage: dmg,
+        name: def?.name ?? id,
+        maxLevel: def?.maxLevel ?? 10,
+      });
+    }
+
+    list.sort((a, b) => b.damage - a.damage);
+
+    const titleRow = el('div', 'ov-damage-title');
+    titleRow.appendChild(el('span', undefined, '武器伤害统计'));
+    titleRow.appendChild(el('span', 'ov-damage-total', `全队总伤 ${formatDamageNum(totalTeamDamage)}`));
+    container.appendChild(titleRow);
+
+    const listEl = el('div', 'ov-damage-list');
+    const battleSec = Math.max(1, state.timeMs / 1000);
+
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i];
+      const pct = totalTeamDamage > 0 ? (item.damage / totalTeamDamage) * 100 : 0;
+      const dps = item.damage / battleSec;
+      const maxed = item.level >= item.maxLevel;
+
+      const itemEl = el('div', 'ov-damage-item');
+      const infoEl = el('div', 'ov-damage-info');
+
+      const nameCol = el('div', 'ov-damage-name-col');
+      nameCol.appendChild(el('span', 'ov-damage-name', item.name));
+      const badge = el(
+        'span',
+        maxed ? 'ov-damage-badge ov-damage-badge--max' : 'ov-damage-badge',
+        maxed ? 'MAX' : `Lv.${item.level}`,
+      );
+      nameCol.appendChild(badge);
+      infoEl.appendChild(nameCol);
+
+      const valCol = el('div', 'ov-damage-val-col');
+      valCol.appendChild(el('span', 'ov-damage-dps', `${formatDamageNum(dps)}/s`));
+      valCol.appendChild(el('span', 'ov-damage-num', formatDamageNum(item.damage)));
+      valCol.appendChild(el('span', 'ov-damage-pct', `(${pct.toFixed(0)}%)`));
+      infoEl.appendChild(valCol);
+
+      itemEl.appendChild(infoEl);
+
+      const track = el('div', 'ov-damage-bar-track');
+      const fill = el('div', 'ov-damage-bar-fill');
+      fill.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+      track.appendChild(fill);
+      itemEl.appendChild(track);
+
+      listEl.appendChild(itemEl);
+    }
+
+    container.appendChild(listEl);
+    container.className = 'ov-damage-box';
   }
 
   // —— 局终了公共流（victory / gameOver 先到先得、均恰好一次，此处防御重复）。 ——

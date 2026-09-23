@@ -13,9 +13,9 @@
     "chainRange": 150,
     "falloff": 0.8,
     "zapRadius": 90,
-    "zapDamage": 4
+    "zapRatio": 0.5
   },
-  "rangeKeys": ["chainRange"],
+  "rangeKeys": ["chainRange", "zapRadius"],
   "cards": [
     {
       "id": "bounce_up",
@@ -28,14 +28,17 @@
     {
       "id": "chain_lightning",
       "name": "连锁闪电",
-      "description": "命中时对 90px 内至多 2 个尚未被本弹直击过的敌人各放出 4 伤闪电（不占用弹跳次数；被电过的敌人仍可被后续弹跳命中；一次性）",
+      "description": "命中时对 90px 内至多 2 个尚未被本弹直击过的敌人各放出 50% 武器伤害的闪电",
       "once": true,
-      "params": [{ "key": "chainLightning", "value": 1, "op": "set" }]
+      "params": [
+        { "key": "chainLightning", "value": 1, "op": "set" },
+        { "key": "zapRatio", "value": 0.5, "op": "set" }
+      ]
     },
     {
       "id": "frost_venom",
       "name": "冰毒附着",
-      "description": "命中的幸存敌人同时附着冰缓（移速 ×0.75、持续 2.5s）与中毒（每 1s 一跳、每跳 25% 武器伤害、持续 5s、至多 15 层，预期毒伤致死时立即毒发身亡）（dot 频率牌加快中毒跳伤；一次性）",
+      "description": "命中的幸存敌人同时附着冰缓（移速 ×0.75、持续 2.5s）与中毒（每 1s 一跳、每跳 25% 武器伤害、持续 5s、至多 15 层，预期毒伤致死时立即毒发身亡）",
       "once": true,
       "params": [{ "key": "frostVenom", "value": 1, "op": "set" }]
     },
@@ -47,16 +50,17 @@
       "params": [{ "key": "focusReturn", "value": 1, "op": "set" }]
     },
     {
-      "id": "prism_recurse",
-      "name": "棱镜往复",
-      "description": "解除弹跳『不重复命中』限制：弹跳范围内无未命中敌人时，可折返弹向已命中的其他敌人（每次折返照常消耗弹跳次数并按递减系数结算；一次性）",
+      "id": "focus_overload",
+      "name": "聚能超载",
+      "description": "弹跳终结触发聚能折返时，额外发射 1 道平行贯穿光梭，且所有光梭对命中的幸存敌人附带 0.6s 眩晕",
+      "requiresCard": "focus_return",
       "once": true,
-      "params": [{ "key": "prismRecurse", "value": 1, "op": "set" }]
+      "params": [{ "key": "focusOverload", "value": 1, "op": "set" }]
     },
     {
       "id": "link_stable",
       "name": "链路稳定",
-      "description": "链弹每跳伤害衰减更缓：递减系数 +0.05/张（×0.8 → ×0.85 → ×0.9 → ×0.95…；可叠 3 次，突破后上限 4 次）",
+      "description": "链弹每跳伤害衰减更缓：递减系数 +0.05/张（可叠 3 次，突破后上限 4 次）",
       "maxCount": 3,
       "hardMax": 4,
       "params": [{ "key": "falloff", "value": 0.05, "op": "add" }]

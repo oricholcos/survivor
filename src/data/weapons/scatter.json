@@ -18,14 +18,14 @@
     {
       "id": "burn_bullet",
       "name": "燃烧弹",
-      "description": "每枚弹丸命中附着燃烧：每 0.5s 造成目标 2% 最大生命值伤害（保底 3 伤）、持续 3s，死于灼烧或带火死亡时引爆剩余伤害并传染周围敌人（dot 频率牌加快跳伤；一次性）",
+      "description": "每枚弹丸命中附着燃烧：每 0.5s 造成目标 2% 最大生命值伤害（保底 3 伤）、持续 3s，死于灼烧或带火死亡时引爆剩余伤害并传染周围敌人",
       "once": true,
       "params": [{ "key": "burnBullet", "value": 1, "op": "set" }]
     },
     {
       "id": "knockback",
       "name": "击退",
-      "description": "命中将敌人向上击退（冲量 60；体型越大的敌人抗性越高）",
+      "description": "命中将敌人向上击退至多 60px 体型越大的敌人击退距离越短",
       "once": true,
       "params": [
         { "key": "knockback", "value": 1, "op": "set" },
@@ -35,7 +35,7 @@
     {
       "id": "bounce_up",
       "name": "弹丸反弹",
-      "description": "弹丸消亡（穿透耗尽或到时）时向 200px 内最近的未命中敌人反弹一次，继承伤害/燃烧/击退（弹射范围固定，不受范围强化影响；可叠 2 次，突破后上限 4 次）",
+      "description": "弹丸消亡时向 200px 内最近的未命中敌人反弹一次，继承伤害/燃烧/击退（可叠 2 次，突破后上限 4 次）",
       "maxCount": 2,
       "hardMax": 4,
       "params": [

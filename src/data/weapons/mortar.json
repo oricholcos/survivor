@@ -23,21 +23,21 @@
     {
       "id": "burn_ground",
       "name": "燃烧地",
-      "description": "爆炸落点留下一片燃烧地带：半径为爆炸半径的 80%（基础 72px）、持续 3s、每 0.5s 每跳 3 伤（dot 频率牌加快跳伤；一次性）",
+      "description": "爆炸落点留下一片燃烧地带：半径为爆炸半径的 80%、持续 3s、每 0.5s 每跳 3 伤",
       "once": true,
       "params": [{ "key": "burnGround", "value": 1, "op": "set" }]
     },
     {
       "id": "stun_blast",
       "name": "眩晕",
-      "description": "爆炸震晕爆炸半径（基础 90px）内的幸存敌人 800ms（Boss 减半为 400ms；一次性）",
+      "description": "爆炸震晕爆炸半径内的幸存敌人 0.8s（Boss 为 0.4s）",
       "once": true,
       "params": [{ "key": "stunBlast", "value": 1, "op": "set" }]
     },
     {
       "id": "black_hole",
       "name": "黑洞",
-      "description": "爆炸结算后，爆炸半径内的幸存敌人向爆心强力位移（至多 120px）聚怪（先炸后拉、无持续吸引；同一敌人被拉拽后 2s 内免疫再次拉拽；一次性）",
+      "description": "将爆炸半径内的敌人向爆炸中心拉拽至多 120px ，同一敌人被拉拽后 2s 内免疫再次拉拽",
       "once": true,
       "params": [{ "key": "blackHole", "value": 1, "op": "set" }]
     }

@@ -36,6 +36,8 @@ export interface ZoneSpec {
   effectData?: Record<string, number>;
   /** 渲染色（视图层用，模拟层不解释）。 */
   color?: number;
+  /** 产生此区域的源武器 ID（伤害统计全口径归因溯源）。 */
+  sourceWeaponId?: string;
 }
 
 /** meta.zones 存储的运行时条目：ZoneSpec 全字段拷贝 + 内部推进字段（视图层不解释）。 */
@@ -80,6 +82,7 @@ export function spawnZone(state: SimState, spec: ZoneSpec): void {
     effectKind: spec.effectKind,
     effectData: spec.effectData ? { ...spec.effectData } : undefined,
     color: spec.color,
+    sourceWeaponId: spec.sourceWeaponId,
     nextTickAt: spec.tickMs,
     elapsedMs: 0,
   });
@@ -94,10 +97,10 @@ function settleTick(state: SimState, zone: ZoneRuntime, grid: SpatialHash<Enemy>
       continue; // 本帧已被其他系统击杀：跳过（网格由调用方重建，可能残留已死敌人）
     }
     // 统一伤害入口（受伤乘区 mark/corrode、击杀事件与 killHooks 均由其结算）。
-    dealDamage(state, enemy, zone.damagePerTick);
+    dealDamage(state, enemy, zone.damagePerTick, zone.sourceWeaponId);
     // 效果附着：致死一击不再附着（尸体无意义，与弹丸命中同款语义）。
     if (zone.effectKind !== undefined && !enemy.dead) {
-      applyEffect(state, enemy, zone.effectKind, zone.effectData);
+      applyEffect(state, enemy, zone.effectKind, zone.effectData, zone.sourceWeaponId);
     }
   }
 }

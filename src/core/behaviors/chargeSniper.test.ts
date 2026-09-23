@@ -363,6 +363,25 @@ describe('爆头（crit_shot 爆头牌：每层 +20% 爆头率，550% 伤害，�
     simulate(state, 60);
     expect(calls).toBe(0);
   });
+
+  it('秒杀低血量小怪时：即便基础伤害致死，仍正常触发爆头判定、写入 sniper_crit_vfx 与 crit 音效', () => {
+    const state = createSimState(1);
+    const runner = makeEnemy(state, 360, 1020, { hp: 18 }); // 18 HP runner，会被 60 基伤直接秒杀
+    fireOnce(state, ['crit_shot']);
+    stubBattleRng(state, [0.1]); // 命中爆头概率（20%）
+
+    simulate(state, 60);
+    expect(runner.dead).toBe(true);
+    // 验证爆头视觉特效已成功写入 meta
+    const vfxList = state.meta['sniper_crit_vfx'] as Array<{ x: number; y: number }>;
+    expect(vfxList).toBeDefined();
+    expect(vfxList.length).toBeGreaterThan(0);
+    expect(vfxList[0].x).toBe(runner.x);
+    expect(vfxList[0].y).toBe(runner.y);
+
+    // 验证 crit 音效事件已成功推送
+    expect(state.events.some((ev) => ev.kind === 'sfx' && ev.name === 'crit')).toBe(true);
+  });
 });
 
 describe('斩首（headshot 斩首牌 + execute_up 处决强化牌）', () => {
@@ -385,16 +404,33 @@ describe('斩首（headshot 斩首牌 + execute_up 处决强化牌）', () => {
     expect(plain.projectiles[0].damage).toBeCloseTo(60, 9);
   });
 
-  it('处决强化叠加（可重复，+0.25/张）：60 × (1.5+0.25) = 105、2 张 → 60 × 2 = 120', () => {
-    const state = createSimState(1);
-    makeEnemy(state, 360, 1020, { isBoss: true, speed: 40, hp: 1e6 });
-    fireOnce(state, ['headshot', 'execute_up']);
-    expect(state.projectiles[0].damage).toBeCloseTo(60 * 1.75, 9);
+  it('处决强化叠加（可重复，+5%/Boss+2%/张）：扩张死刑宣告斩杀线', () => {
+    // 1. 普通怪：基础 20% 阈值，拿 1 张处决强化升至 25%
+    const state1 = createSimState(1);
+    // maxHp 1000，当前 300，吃直击 60 后剩 240
+    // 240 / 1000 = 24%：若仅基础 20% 无法处决（240 >= 200），但 25% 阈值下（240 < 250）成功处决
+    const e1 = makeEnemy(state1, 360, 1020, { hp: 300, maxHp: 1000 });
+    fireOnce(state1, ['execution_order', 'execute_up']);
+    simulate(state1, 60);
+    expect(e1.dead).toBe(true);
 
+    // 2. 普通怪：拿 2 张处决强化升至 30%
     const state2 = createSimState(1);
-    makeEnemy(state2, 360, 1020, { isBoss: true, speed: 40, hp: 1e6 });
-    fireOnce(state2, ['headshot', 'execute_up', 'execute_up']);
-    expect(state2.projectiles[0].damage).toBeCloseTo(120, 9);
+    // maxHp 1000，当前 350，吃直击 60 后剩 290
+    // 290 / 1000 = 29%：在 30% 阈值下（290 < 300）成功处决
+    const e2 = makeEnemy(state2, 360, 1020, { hp: 350, maxHp: 1000 });
+    fireOnce(state2, ['execution_order', 'execute_up', 'execute_up']);
+    simulate(state2, 60);
+    expect(e2.dead).toBe(true);
+
+    // 3. Boss 怪：基础 7% 阈值，拿 1 张处决强化升至 9%
+    const stateBoss = createSimState(1);
+    // maxHp 10000，当前 920，吃直击 60 后剩 860
+    // 860 / 10000 = 8.6%：在 9% 阈值下（860 < 900）成功处决
+    const boss = makeEnemy(stateBoss, 360, 1020, { hp: 920, maxHp: 10000, isBoss: true });
+    fireOnce(stateBoss, ['execution_order', 'execute_up']);
+    simulate(stateBoss, 60);
+    expect(boss.dead).toBe(true);
   });
 });
 
@@ -528,10 +564,10 @@ describe('狙神（sniper_god：穿透每穿 1 敌后续伤害 +20%）', () => {
 
   it('穿透增伤与爆头倍率叠乘：第 2 敌受击时若爆头，造成 72 × 5.5 = 396 伤害', () => {
     const state = createSimState(1);
-    const e1 = makeEnemy(state, 360, 1120, { hp: 50 }); // 基础命中 60 直接致死（不进爆头分支、不消费 RNG）
+    const e1 = makeEnemy(state, 360, 1120, { hp: 50 }); // 基础命中致死击杀穿透（判定爆头消费第 1 个随机数）
     const e2 = makeEnemy(state, 360, 1000, { hp: 1e6 });
     fireOnce(state, ['crit_shot', 'bullet_fly', 'sniper_god']);
-    stubBattleRng(state, [0.0]); // e2 命中时消费该点数判中爆头
+    stubBattleRng(state, [0.99, 0.0]); // e1 消费 0.99 不暴击致死，e2 命中时消费 0.0 判中爆头
 
     simulate(state, 200);
     expect(e1.dead).toBe(true);
@@ -562,8 +598,8 @@ describe('表现反馈 meta VFX + 一次性 sfx（G5：爆头星芒环 / 死刑�
     return { state, proj: state.projectiles[0] };
   }
 
-  it('契约常量：爆头留存 200ms / 处决留存 300ms', () => {
-    expect(SNIPER_CRIT_VFX_MS).toBe(200);
+  it('契约常量：爆头留存 320ms / 处决留存 300ms', () => {
+    expect(SNIPER_CRIT_VFX_MS).toBe(320);
     expect(SNIPER_EXECUTE_VFX_MS).toBe(300);
   });
 
@@ -575,7 +611,7 @@ describe('表现反馈 meta VFX + 一次性 sfx（G5：爆头星芒环 / 死刑�
     const list = state.meta[SNIPER_CRIT_VFX_KEY] as SniperHitVfx[];
     expect(Array.isArray(list)).toBe(true);
     expect(list).toHaveLength(1);
-    expect(list[0]).toEqual({ x: 360, y: 1020, untilMs: 700 });
+    expect(list[0]).toEqual({ x: 360, y: 1020, untilMs: 820 });
     expect(state.events).toContainEqual({ kind: 'sfx', name: 'crit' });
   });
 
@@ -650,12 +686,12 @@ describe('数值全部来自 weapons/charge_sniper.json（真实表驱动，新�
     expect(getBehavior('charge_sniper')).toBe(behavior);
   });
 
-  it('牌目录：专属牌六张（headshot/execute_up/crit_shot/execution_order/bullet_fly/sniper_god），通用牌仅伤害', () => {
+  it('牌目录：专属牌六张（headshot/execution_order/execute_up/crit_shot/bullet_fly/sniper_god），通用牌仅伤害', () => {
     expect(def.cards.slice(0, 6).map((c) => c.id)).toEqual([
       'headshot',
+      'execution_order',
       'execute_up',
       'crit_shot',
-      'execution_order',
       'bullet_fly',
       'sniper_god',
     ]);
@@ -695,12 +731,16 @@ describe('数值全部来自 weapons/charge_sniper.json（真实表驱动，新�
     expect(availableCards(def, ws5, false).map((c) => c.id)).not.toContain('crit_shot');
   });
 
-  it('升级池前置依赖：未持有 crit_shot 时 bullet_fly 不出现；未持有 bullet_fly 时 sniper_god 不出现', () => {
+  it('升级池前置依赖：未持有 execution_order 时 execute_up 不出现；未持有 crit_shot 时 bullet_fly 不出现；未持有 bullet_fly 时 sniper_god 不出现', () => {
     const wsEmpty = { level: 0, cooldownMs: 0, cards: {} };
     const poolEmpty = availableCards(def, wsEmpty, false).map((c) => c.id);
     expect(poolEmpty).not.toContain('execute_up');
     expect(poolEmpty).not.toContain('bullet_fly');
     expect(poolEmpty).not.toContain('sniper_god');
+
+    const wsExec = { level: 1, cooldownMs: 0, cards: { execution_order: 1 } };
+    const poolExec = availableCards(def, wsExec, false).map((c) => c.id);
+    expect(poolExec).toContain('execute_up');
 
     const wsCrit = { level: 1, cooldownMs: 0, cards: { crit_shot: 1 } };
     const poolCrit = availableCards(def, wsCrit, false).map((c) => c.id);
@@ -721,7 +761,12 @@ describe('数值全部来自 weapons/charge_sniper.json（真实表驱动，新�
     expect(shoot([]).damage).toBeCloseTo(60, 9);
     expect(shoot(['dmg_up']).damage).toBeCloseTo(78, 9);
     expect(shoot(['headshot']).headshotMultiplier).toBeCloseTo(1.5, 9);
-    expect(shoot(['headshot', 'execute_up']).headshotMultiplier).toBeCloseTo(1.75, 9);
+    expect(shoot(['execution_order']).executionHpFactor).toBeCloseTo(0.2, 9);
+    expect(shoot(['execution_order']).executionBossHpFactor).toBeCloseTo(0.07, 9);
+    expect(shoot(['execution_order', 'execute_up']).executionHpFactor).toBeCloseTo(0.25, 9);
+    expect(shoot(['execution_order', 'execute_up']).executionBossHpFactor).toBeCloseTo(0.09, 9);
+    expect(shoot(['execution_order', 'execute_up', 'execute_up']).executionHpFactor).toBeCloseTo(0.3, 9);
+    expect(shoot(['execution_order', 'execute_up', 'execute_up']).executionBossHpFactor).toBeCloseTo(0.11, 9);
     expect(shoot(['crit_shot']).critChance).toBeCloseTo(0.2, 9);
     expect(shoot(['crit_shot', 'crit_shot']).critChance).toBeCloseTo(0.4, 9);
     expect(shoot(['crit_shot', 'crit_shot', 'crit_shot', 'crit_shot', 'crit_shot']).critChance).toBeCloseTo(1.0, 9);

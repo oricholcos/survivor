@@ -16,7 +16,7 @@
 //   2) frostVenom=1 → 给幸存的被命中敌人 applyEffect('chill') + applyEffect('poison')
 //      （致死一击不附着，与框架 effectsOnHit 同款约定：尸体无意义）；
 //   3) chainLightning=1 → 以被命中敌人为圆心，zapRadius 内（圆相交语义，与框架命中判定
-//      同款）、不在 proj.hitIds 的敌人按数组序至多 2 个 dealDamage(zapDamage)——zap 目标
+//      同款）、不在 proj.hitIds 的敌人按数组序至多 2 个 dealDamage(zapDmg)（50% 武器伤害，若持冰毒则连携传导附着）——zap 目标
 //      与直击目标天然不重复（zap 目标不记入 hitIds，故之后仍可被续跳选中直击）；
 //   4) 伤害递减：为下一跳重写 proj.damage = baseDamage × falloff^(已命中次数)
 //      （已命中次数 = proj.hitIds.length，框架每次直击恰好 push 一个 id）。框架在钩子前
@@ -140,7 +140,17 @@ function zapNearby(
     if (distSq(source, e) > reach * reach) {
       continue; // 闪电半径外
     }
-    dealDamage(state, e, zapDamage);
+    dealDamage(state, e, zapDamage, proj.weaponId);
+    if (numOr0(proj.data.frostVenom) === 1 && !e.dead) {
+      applyEffect(state, e, 'chill', undefined, proj.weaponId);
+      const poisonData: Record<string, number> = {
+        weaponDamage: numOr0(proj.data.baseDamage),
+      };
+      if (numOr0(proj.data.poisonTickMs) > 0) {
+        poisonData.tickMs = numOr0(proj.data.poisonTickMs);
+      }
+      applyEffect(state, e, 'poison', poisonData, proj.weaponId);
+    }
     list.push({
       x1: source.x,
       y1: source.y,
@@ -157,24 +167,20 @@ function zapNearby(
 }
 
 /**
- * 续跳寻的：
- * - 第一优先级：在 chainRange 内寻找未曾命中（proj.hitIds.indexOf(e.id) === -1）的最近存活敌人。
- * - 第二优先级（当且仅当第一优先级无候选且 allowRecurse === true）：在 chainRange 内寻找非刚命中目标自身（e.id !== currentHitEnemyId）的最近存活敌人。
- * - 若两者均不存在，返回 null。
+ * 续跳寻的：在 chainRange 内寻找未曾命中（proj.hitIds.indexOf(e.id) === -1）的最近存活敌人。
+ * 若不存在，返回 null。
  */
 export function nearestChainTarget(
   state: SimState,
   proj: Projectile,
   chainRange: number,
-  currentHitEnemyId: number | string,
-  allowRecurse: boolean,
 ): Enemy | null {
   const rangeSq = chainRange * chainRange;
   let best: Enemy | null = null;
   let bestDistSq = Infinity;
   const enemies = state.enemies;
 
-  // 第一优先级：在 chainRange 内寻找未曾命中的最近存活敌人
+  // 在 chainRange 内寻找未曾命中的最近存活敌人
   for (let i = 0; i < enemies.length; i++) {
     const e = enemies[i];
     if (e.dead || proj.hitIds.indexOf(e.id) !== -1) {
@@ -189,33 +195,7 @@ export function nearestChainTarget(
       best = e;
     }
   }
-  if (best !== null) {
-    return best;
-  }
-
-  // 第二优先级（当且仅当第一优先级无候选且 allowRecurse === true）：
-  // 在 chainRange 内寻找非刚命中目标自身的最近存活敌人
-  if (allowRecurse) {
-    let recurseBest: Enemy | null = null;
-    let recurseDistSq = Infinity;
-    for (let i = 0; i < enemies.length; i++) {
-      const e = enemies[i];
-      if (e.dead || String(e.id) === String(currentHitEnemyId)) {
-        continue;
-      }
-      const d = distSq(proj, e);
-      if (d > rangeSq) {
-        continue;
-      }
-      if (d < recurseDistSq) {
-        recurseDistSq = d;
-        recurseBest = e;
-      }
-    }
-    return recurseBest;
-  }
-
-  return null;
+  return best;
 }
 
 /**
@@ -225,7 +205,7 @@ export function nearestChainTarget(
  * 发射时数值结算）。forcedTarget（可选，灼热光束协同开火强制指定）：以它为首跳目标，
  * leadAim 照常、后续弹跳/分裂/折返等内部逻辑照常。
  */
-function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats, forcedTarget?: Enemy): boolean {
+function fireVolley(state: SimState, weaponId: string, stats: WeaponStats, forcedTarget?: Enemy): boolean {
   const target = forcedTarget ?? findTarget(state);
   if (!target) {
     return false;
@@ -245,9 +225,10 @@ function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats, forc
     chainRange: numOr0(stats.chainRange),
     chainLightning: stats.chainLightning === 1 ? 1 : 0,
     zapRadius: numOr0(stats.zapRadius),
+    zapRatio: numOr0(stats.zapRatio),
     zapDamage: numOr0(stats.zapDamage),
     focusReturn: stats.focusReturn === 1 ? 1 : 0,
-    prismRecurse: stats.prismRecurse === 1 ? 1 : 0,
+    focusOverload: stats.focusOverload === 1 ? 1 : 0,
     frostVenom: stats.frostVenom === 1 ? 1 : 0,
     poisonTickMs: poisonTickOverride(stats),
     speed: numOr0(stats.projectileSpeed),
@@ -267,6 +248,7 @@ function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats, forc
       ang = baseAng + sign * pair * stepRad;
     }
     spawnProjectile(state, {
+      weaponId,
       behavior: BEHAVIOR_NAME,
       x: state.character.x,
       y: state.character.y,
@@ -309,6 +291,7 @@ function splitOnHit(state: SimState, proj: Projectile, hitEnemy: Enemy): void {
     const dir = normalize({ x: aim.x - proj.x, y: aim.y - proj.y });
     const damage = proj.damage * factor;
     spawnProjectile(state, {
+      weaponId: proj.weaponId,
       behavior: BEHAVIOR_NAME,
       x: proj.x,
       y: proj.y,
@@ -326,7 +309,7 @@ function splitOnHit(state: SimState, proj: Projectile, hitEnemy: Enemy): void {
         chainsLeft: 0, // 简化单体：命中一次即亡（不弹跳、不回旋）
         chainCount: 0,
         focusReturn: 0,
-        prismRecurse: 0,
+        focusOverload: 0,
         baseDamage: damage, // 次级弹自己的伤害基准（递减重写公式用）
         speed,
         ttlMs,
@@ -397,20 +380,27 @@ export const behavior: WeaponBehavior = {
     //    （致死一击不附着，与框架 effectsOnHit 同款约定：尸体无意义；chill 无 tick，
     //    poison 的 tick 间隔按 dot 频率牌经弹上 poisonTickMs 快照逐实例覆盖）。
     if (numOr0(d.frostVenom) === 1 && !enemy.dead) {
-      applyEffect(state, enemy, 'chill');
+      applyEffect(state, enemy, 'chill', undefined, proj.weaponId);
       const poisonData: Record<string, number> = {
         weaponDamage: numOr0(d.baseDamage),
       };
       if (numOr0(d.poisonTickMs) > 0) {
         poisonData.tickMs = numOr0(d.poisonTickMs);
       }
-      applyEffect(state, enemy, 'poison', poisonData);
+      applyEffect(state, enemy, 'poison', poisonData, proj.weaponId);
     }
 
     // 3) 连锁闪电（chainLightning=1）：以被命中敌人为圆心的 zapRadius 内、不在 hitIds 的
-    //    至多 2 个额外敌人受 zapDamage（zap 目标不记入 hitIds，与直击目标天然不重复）。
+    //    至多 2 个额外敌人受闪电伤害（zap 目标不记入 hitIds，与直击目标天然不重复）。
+    //    伤害优先按 baseDamage × zapRatio（动态缩放），缺省 fallback 为 zapDamage 或 50% 基伤。
     if (numOr0(d.chainLightning) === 1) {
-      zapNearby(state, proj, enemy, numOr0(d.zapRadius), numOr0(d.zapDamage));
+      const zapDmg =
+        numOr0(d.zapRatio) > 0
+          ? numOr0(d.baseDamage) * numOr0(d.zapRatio)
+          : numOr0(d.zapDamage) > 0
+            ? numOr0(d.zapDamage)
+            : numOr0(d.baseDamage) * 0.5;
+      zapNearby(state, proj, enemy, numOr0(d.zapRadius), zapDmg);
     }
 
     // 4) 伤害递减：为下一跳重写（框架已按旧 damage 结算本次）：
@@ -419,7 +409,7 @@ export const behavior: WeaponBehavior = {
 
     const next =
       d.chainsLeft > 0
-        ? nearestChainTarget(state, proj, numOr0(d.chainRange), enemy.id, numOr0(d.prismRecurse) === 1)
+        ? nearestChainTarget(state, proj, numOr0(d.chainRange))
         : null;
 
     if (d.chainsLeft > 0 && next !== null) {
@@ -433,25 +423,54 @@ export const behavior: WeaponBehavior = {
     }
 
     // 弹跳终止（d.chainsLeft <= 0 || next === null）：
-    if (numOr0(d.focusReturn) === 1) {
+    const hasReturn = numOr0(d.focusReturn) === 1;
+    if (hasReturn) {
       const n = proj.hitIds.length;
       const damage = numOr0(d.baseDamage) * (1 + 0.25 * n);
       const speed = Math.hypot(proj.vx, proj.vy);
-      spawnProjectile(state, {
-        behavior: BEHAVIOR_NAME,
-        x: proj.x,
-        y: proj.y,
-        vx: 0,
-        vy: speed,
-        radius: FOCUS_RETURN_RADIUS,
-        damage,
-        pierceLeft: FOCUS_RETURN_PIERCE,
-        bouncesLeft: 0,
-        hitIds: [],
-        ttlMs: FOCUS_RETURN_TTL_MS,
-        effectsOnHit: [],
-        data: { ...d, focusReturn: 0, prismRecurse: 0, returning: 1 },
-      });
+      const hasOverload = numOr0(d.focusOverload) === 1;
+      const effectsOnHit = hasOverload
+        ? [{ kind: 'stun', untilMs: 0, stacks: 1, data: { durationMs: 600 } }]
+        : [];
+
+      if (hasOverload) {
+        const offsets = [-16, 16];
+        for (let i = 0; i < offsets.length; i++) {
+          spawnProjectile(state, {
+            weaponId: proj.weaponId,
+            behavior: BEHAVIOR_NAME,
+            x: proj.x + offsets[i],
+            y: proj.y,
+            vx: 0,
+            vy: speed,
+            radius: FOCUS_RETURN_RADIUS,
+            damage,
+            pierceLeft: FOCUS_RETURN_PIERCE,
+            bouncesLeft: 0,
+            hitIds: [],
+            ttlMs: FOCUS_RETURN_TTL_MS,
+            effectsOnHit,
+            data: { ...d, focusReturn: 0, focusOverload: 0, returning: 1 },
+          });
+        }
+      } else {
+        spawnProjectile(state, {
+          weaponId: proj.weaponId,
+          behavior: BEHAVIOR_NAME,
+          x: proj.x,
+          y: proj.y,
+          vx: 0,
+          vy: speed,
+          radius: FOCUS_RETURN_RADIUS,
+          damage,
+          pierceLeft: FOCUS_RETURN_PIERCE,
+          bouncesLeft: 0,
+          hitIds: [],
+          ttlMs: FOCUS_RETURN_TTL_MS,
+          effectsOnHit,
+          data: { ...d, focusReturn: 0, focusOverload: 0, returning: 1 },
+        });
+      }
     }
     proj.dead = true;
   },

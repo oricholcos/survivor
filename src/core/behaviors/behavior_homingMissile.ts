@@ -1,5 +1,5 @@
 // src/core/behaviors/behavior_homingMissile.ts —— 追猎导弹：追踪转向 + 命中即爆 + AoE 溅射，
-// 升级节点（燃烧云/优先精英）全部以 JSON mods 数值开关表达（burnCloud/preferElite），
+// 升级节点（燃烧云/巡航加速）全部以 JSON mods 数值开关表达（burnCloud/cruiseBoost），
 // unlock 字符串仅供生成器展示，行为只读 stats 开关——M2 统一约定。
 // 数值契约：伤害/射速/弹速/寿命/AoE 半径/溅射系数/转向速度/弹数/扇形错开角全部来自
 // WeaponStats（weapons/homing_missile.json）；几何量（弹丸半径）允许硬编码。
@@ -17,6 +17,7 @@
 //   （即直击总伤 = damage × (1 + splashFactor)，不排除 hitIds）；
 // - burnCloud=1：对爆炸半径内存活敌人（先结算溅射伤害、未被击杀者）applyEffect('burn')，
 //   数值用效果表默认（dot 频率牌把 tick 间隔 ÷ dotTickMult，经弹上 burnTickMs 快照逐实例覆盖）；
+// - 巡航加速（cruiseBoost=1）：导弹在飞行中每满 300ms，速度与伤害提升 25%（至多提升 100%）。
 // - 分裂（split_shot 通用牌 → data.splitReady）：爆炸（死亡钩子）后从爆炸点分裂至多
 //   splitMaxTargets 枚次级导弹：初速按 leadAim 移动预测指向「最近且互不相同」
 //   （pickNearestDistinctEnemies）的锁定目标、其后照常被 update 钩子逐帧追踪制导
@@ -113,29 +114,8 @@ function nearestAliveEnemy(state: SimState, x: number, y: number): Enemy | null 
   return best;
 }
 
-/** 目标选择：preferElite=1 → 最近 Boss 优先，场上无 Boss 回落最近敌人；否则最近敌人。 */
-function selectTarget(state: SimState, preferElite: boolean): Enemy | null {
-  if (preferElite) {
-    let bestBoss: Enemy | null = null;
-    let bestBossDistSq = Infinity;
-    const enemies = state.enemies;
-    for (let i = 0; i < enemies.length; i++) {
-      const e = enemies[i];
-      if (e.dead || !e.isBoss) {
-        continue;
-      }
-      const dx = e.x - state.character.x;
-      const dy = e.y - state.character.y;
-      const d = dx * dx + dy * dy;
-      if (d < bestBossDistSq) {
-        bestBossDistSq = d;
-        bestBoss = e;
-      }
-    }
-    if (bestBoss) {
-      return bestBoss;
-    }
-  }
+/** 目标选择：统一锁定距角色最近的存活敌人。 */
+function selectTarget(state: SimState): Enemy | null {
   return nearestAliveEnemy(state, state.character.x, state.character.y);
 }
 
@@ -165,8 +145,8 @@ function burnTickOverride(stats: WeaponStats): number {
  * forcedTarget（可选，灼热光束协同开火强制指定）：导弹 targetId 指向它（初速朝向它、
  * 其后 update 钩子照常追踪制导）。
  */
-function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats, forcedTarget?: Enemy): boolean {
-  const target = forcedTarget ?? selectTarget(state, stats.preferElite === 1);
+function fireVolley(state: SimState, weaponId: string, stats: WeaponStats, forcedTarget?: Enemy): boolean {
+  const target = forcedTarget ?? selectTarget(state);
   if (!target) {
     return false;
   }
@@ -186,6 +166,10 @@ function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats, forc
     ttlMs: stats.ttlMs,
     turnRateDegPerSec: numOr0(stats.turnRateDegPerSec),
     projectileSpeed: numOr0(stats.projectileSpeed),
+    baseSpeed: numOr0(stats.projectileSpeed),
+    baseDamage: stats.damage,
+    cruiseBoost: stats.cruiseBoost === 1 ? 1 : 0,
+    flightTimeMs: 0,
     splitReady: numOr0(stats.splitCount) >= 1 ? 1 : 0,
     splitFactor: numOr0(stats.splitDamageFactor),
     splitMax: numOr0(stats.splitMaxTargets),
@@ -201,6 +185,7 @@ function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats, forc
       ang = aim + sign * pair * stepRad;
     }
     spawnProjectile(state, {
+      weaponId,
       behavior: BEHAVIOR_NAME,
       x: state.character.x,
       y: state.character.y,
@@ -261,7 +246,16 @@ export const behavior: WeaponBehavior = {
       if (speedSq <= 0) {
         continue; // 零速无方向：无从旋转
       }
-      const speed = Math.sqrt(speedSq);
+      let speed = Math.sqrt(speedSq);
+      // 巡航加速（cruiseBoost=1）：每飞行 300ms 速度与最终爆炸伤害提升 25%，至多提升 100%（上限 4 档）。
+      if (numOr0(p.data.cruiseBoost) === 1) {
+        p.data.flightTimeMs = numOr0(p.data.flightTimeMs) + dtMs;
+        const stage = Math.min(4, Math.floor(p.data.flightTimeMs / 300));
+        const boostFactor = 1 + stage * 0.25;
+        const baseSpeed = numOr0(p.data.baseSpeed) > 0 ? numOr0(p.data.baseSpeed) : speed;
+        speed = baseSpeed * boostFactor;
+        p.damage = numOr0(p.data.baseDamage) * boostFactor;
+      }
 
       // 解析目标：按 id 找存活敌人；死亡/缺失 → 重定向最近敌人并记忆新 id。
       let target = findAliveEnemyById(state, p.data.targetId);
@@ -319,9 +313,9 @@ export const behavior: WeaponBehavior = {
       if (e.dead) {
         continue; // 本帧已被其他弹/爆炸击杀：跳过
       }
-      dealDamage(state, e, proj.damage * numOr0(d.splashFactor));
+      dealDamage(state, e, proj.damage * numOr0(d.splashFactor), proj.weaponId);
       if (d.burnCloud === 1 && !e.dead) {
-        applyEffect(state, e, 'burn', burnData);
+        applyEffect(state, e, 'burn', burnData, proj.weaponId);
       }
     }
 
@@ -346,6 +340,7 @@ export const behavior: WeaponBehavior = {
       const aim = leadAim(proj, t, speed, state.layout.wallLineY);
       const ang = Math.atan2(aim.y - proj.y, aim.x - proj.x);
       spawnProjectile(state, {
+        weaponId: proj.weaponId,
         behavior: BEHAVIOR_NAME,
         x: proj.x,
         y: proj.y,
@@ -367,6 +362,10 @@ export const behavior: WeaponBehavior = {
           ttlMs,
           turnRateDegPerSec: numOr0(d.turnRateDegPerSec),
           projectileSpeed: speed,
+          baseSpeed: speed,
+          baseDamage: proj.damage * numOr0(d.splitFactor),
+          cruiseBoost: numOr0(d.cruiseBoost),
+          flightTimeMs: 0,
           splitReady: 0, // 封死再分裂：次级弹不再分裂
           splitDone: 1,
           isSecondary: 1,

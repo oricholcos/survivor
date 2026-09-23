@@ -9,7 +9,7 @@
     {
       "id": "trident_split",
       "name": "三叉分裂",
-      "description": "同时锁定主目标与另外至多 2 个最近敌人，各射一道贯穿线；仅 1 个目标时三线沿同方向聚合齐射（每道 1.6 倍伤害、合计 4.8 倍；一次性）",
+      "description": "同时锁定主目标与另外至多 2 个最近敌人，各射一道贯穿线；仅 1 个目标时三线沿同方向聚合齐射（每道 1.6 倍伤害、合计 4.8 倍）",
       "once": true,
       "params": [
         { "key": "trident", "value": 1, "op": "set" }
@@ -28,7 +28,7 @@
     {
       "id": "pierce_up",
       "name": "贯通+1",
-      "description": "每道射线的穿透 +1/张：可多贯穿 1 个敌人（沿途逐个结算；可叠 4 次，突破后上限 8 次）",
+      "description": "每道射线的穿透 +1（可叠 4 次，突破后上限 8 次）",
       "maxCount": 4,
       "hardMax": 8,
       "params": [{ "key": "pierce", "value": 1, "op": "add" }]
@@ -36,7 +36,7 @@
     {
       "id": "charge_damage",
       "name": "穿透增幅",
-      "description": "射线每贯穿一个敌人，该发射线的后续伤害提升 25%（×1 → ×1.25 → ×1.5…逐敌累进，仅限本发射线；一次性）",
+      "description": "射线每贯穿一个敌人，该发射线的后续伤害提升 25%",
       "once": true,
       "params": [
         { "key": "penetrateAmp", "value": 0.25, "op": "set" }

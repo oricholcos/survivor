@@ -10,8 +10,8 @@
 // - 恒单发且禁用攻速：multi_shot/burst_shot/split_shot/spd_up/range_up 均不适用。
 // - 专属牌保留：
 //   - 斩首（headshot）：高血量（hp ≥ 60%）伤害 ×1.5（开火瞬间判定）。
-//   - 处决强化（execute_up）：斩首倍率 +0.25/张（需先持有斩首）。
 //   - 死刑宣告（execution_order）：本武器任何一次击杀经验 ×1.25；残血（<20%/Boss 7%）立即处决。
+//   - 处决强化（execute_up）：需死刑宣告，死刑宣告斩杀线 +5%（Boss +2%）/张（可叠 2~4 次）。
 // - 重构/新增牌：
 //   - 爆头（crit_shot）：可叠 5 层，每层 +20% 爆头率（至多 100% 必爆），伤害倍率恒为 550%。
 //     掷点走第二独立随机流（simState.getBattleRng：种子 = 会话种子 XOR 0x9E3779B9 的固定
@@ -56,7 +56,7 @@ export interface SniperHitVfx {
 }
 
 /** 爆头 VFX 留存时长（ms）：金色星芒环 + 扩散环的生命周期，视图按剩余时间线性淡出。 */
-export const SNIPER_CRIT_VFX_MS = 200;
+export const SNIPER_CRIT_VFX_MS = 320;
 
 /** 死刑宣告 VFX 留存时长（ms）：暗红竖贯斩线 + 能量迸散快速淡出。 */
 export const SNIPER_EXECUTE_VFX_MS = 300;
@@ -131,10 +131,16 @@ function projectileData(stats: WeaponStats, baseDamage: number): Record<string, 
  * amount 走 dealDamage 正常路径（正常死亡/事件/killHooks）；若目标因此次伤害死亡，
  * 临时 killHook 追加 enemy.xp × (xpBonusRatio)。
  */
-function dealDamageWithKillXpBonus(state: SimState, enemy: Enemy, amount: number, xpFactor: number): void {
+function dealDamageWithKillXpBonus(
+  state: SimState,
+  enemy: Enemy,
+  amount: number,
+  xpFactor: number,
+  sourceWeaponId?: string,
+): void {
   const xpBonusRatio = xpFactor - 1;
   if (!(xpBonusRatio > 0)) {
-    dealDamage(state, enemy, amount);
+    dealDamage(state, enemy, amount, sourceWeaponId);
     return;
   }
   const hook = (s: SimState, killed: Enemy): void => {
@@ -146,7 +152,7 @@ function dealDamageWithKillXpBonus(state: SimState, enemy: Enemy, amount: number
   };
   killHooks.push(hook);
   try {
-    dealDamage(state, enemy, amount);
+    dealDamage(state, enemy, amount, sourceWeaponId);
   } finally {
     const idx = killHooks.indexOf(hook);
     if (idx !== -1) {
@@ -158,14 +164,16 @@ function dealDamageWithKillXpBonus(state: SimState, enemy: Enemy, amount: number
 /**
  * 处决击杀（死刑宣告命中点判定通过后调用）。
  */
-function executeKill(state: SimState, enemy: Enemy, xpFactor: number): void {
-  dealDamageWithKillXpBonus(state, enemy, enemy.hp * 1000, xpFactor);
+function executeKill(state: SimState, enemy: Enemy, xpFactor: number, sourceWeaponId?: string): void {
+  const factor = damageTakenFactor(enemy);
+  const neededDamage = factor > 0 ? enemy.hp / factor : enemy.hp;
+  dealDamageWithKillXpBonus(state, enemy, neededDamage, xpFactor, sourceWeaponId);
 }
 
 /**
  * 发射一发（恒单发）：四级优先级锁定目标 → leadAim 提前量 → 从角色向预测点方向发射。
  */
-function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats, forcedTarget?: Enemy): boolean {
+function fireVolley(state: SimState, weaponId: string, stats: WeaponStats, forcedTarget?: Enemy): boolean {
   const target = forcedTarget ?? pickTarget(state, stats);
   if (!target) {
     return false;
@@ -182,6 +190,7 @@ function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats, forc
 
   spawnProjectile(state, {
     behavior: 'charge_sniper',
+    weaponId,
     x: state.character.x,
     y: state.character.y,
     vx: Math.cos(ang) * stats.projectileSpeed,
@@ -226,40 +235,41 @@ export const behavior: WeaponBehavior = {
   onProjectileHit(state, proj, enemy) {
     const d = proj.data;
     let critTriggered = false;
+    const initialDead = enemy.dead;
 
-    if (enemy.dead) {
-      // 基础命中直接击杀（H2 路径①）：补加经验差额
-      if (dataNum(d, 'execReady') === 1) {
-        const xpFactor = dataNum(d, 'execXpFactor');
-        if (xpFactor > 1) {
-          state.progress.xp += enemy.xp * (xpFactor - 1);
-          checkLevelUp(state);
-        }
-      }
-    } else {
-      // ① 爆头判定（第二独立随机流，绝不消费 state.rng）
-      if (dataNum(d, 'critReady') === 1) {
-        const chance = dataNum(d, 'critChance');
-        const mult = dataNum(d, 'critMult');
-        if (chance > 0 && mult > 1 && getBattleRng(state).next() < chance) {
-          critTriggered = true;
-          pushSniperHitVfx(state, SNIPER_CRIT_VFX_KEY, enemy.x, enemy.y, SNIPER_CRIT_VFX_MS);
-          pushEvent(state, { kind: 'sfx', name: 'crit' });
+    // ① 爆头判定（只要持有爆头牌，不论是否已经被基础伤害致死，均执行爆头判定以提供满额视听反馈）
+    if (dataNum(d, 'critReady') === 1) {
+      const chance = dataNum(d, 'critChance');
+      const mult = dataNum(d, 'critMult');
+      if (chance > 0 && mult > 1 && getBattleRng(state).next() < chance) {
+        critTriggered = true;
+        pushSniperHitVfx(state, SNIPER_CRIT_VFX_KEY, enemy.x, enemy.y, SNIPER_CRIT_VFX_MS);
+        pushEvent(state, { kind: 'sfx', name: 'crit' });
 
+        if (!enemy.dead) {
           const factor = damageTakenFactor(enemy);
           const bonus = factor > 0 ? (proj.damage * (mult - 1)) / factor : proj.damage * (mult - 1);
-          dealDamageWithKillXpBonus(state, enemy, bonus, dataNum(d, 'execXpFactor'));
+          dealDamageWithKillXpBonus(state, enemy, bonus, dataNum(d, 'execXpFactor'), proj.weaponId);
         }
       }
+    }
 
-      // ② 死刑宣告处决（仅在目标依然存活时判定）
-      if (!enemy.dead && dataNum(d, 'execReady') === 1) {
-        const factor = enemy.isBoss ? dataNum(d, 'execBossFactor') : dataNum(d, 'execFactor');
-        if (factor > 0 && enemy.hp < factor * enemy.maxHp) {
-          pushSniperHitVfx(state, SNIPER_EXECUTE_VFX_KEY, enemy.x, enemy.y, SNIPER_EXECUTE_VFX_MS);
-          pushEvent(state, { kind: 'sfx', name: 'execute' });
-          executeKill(state, enemy, dataNum(d, 'execXpFactor'));
-        }
+    // ② 基础命中直接击杀（且未在爆头追加伤害中重复结算）：补加经验差额
+    if (initialDead && dataNum(d, 'execReady') === 1) {
+      const xpFactor = dataNum(d, 'execXpFactor');
+      if (xpFactor > 1) {
+        state.progress.xp += enemy.xp * (xpFactor - 1);
+        checkLevelUp(state);
+      }
+    }
+
+    // ③ 死刑宣告处决（仅在目标依然存活时判定）
+    if (!enemy.dead && dataNum(d, 'execReady') === 1) {
+      const factor = enemy.isBoss ? dataNum(d, 'execBossFactor') : dataNum(d, 'execFactor');
+      if (factor > 0 && enemy.hp < factor * enemy.maxHp) {
+        pushSniperHitVfx(state, SNIPER_EXECUTE_VFX_KEY, enemy.x, enemy.y, SNIPER_EXECUTE_VFX_MS);
+        pushEvent(state, { kind: 'sfx', name: 'execute' });
+        executeKill(state, enemy, dataNum(d, 'execXpFactor'), proj.weaponId);
       }
     }
 

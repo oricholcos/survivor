@@ -40,6 +40,7 @@ import {
   STATUS_FX_VECTOR_THRESHOLD,
 } from './enemyRenderer';
 import { ProjectileRenderer } from './projectileRenderer';
+import { formatDamageNum, formatTime } from '../ui/format';
 import {
   COORDINATED_COLORS,
   COORDINATED_FIRE_VFX_KEY,
@@ -457,7 +458,7 @@ export class MainScene extends Phaser.Scene {
   private chipTexts: Phaser.GameObjects.Text[] = [];
   /** 芯片 diff 基准（G1）：上帧的武器 id 序与等级序（仅变化时更新）。 */
   private chipIds: string[] = [];
-  private chipLevels: number[] = [];
+  private chipLabels: string[] = [];
   /** 击杀数：从 enemyKilled 事件累计（视图侧派生值，随 state 替换重置）。 */
   private kills = 0;
   /** 上一次见到的 SimState 引用：session.restart() 整体替换 state 时重置派生计数与特效。 */
@@ -1187,8 +1188,8 @@ export class MainScene extends Phaser.Scene {
       }
       const t = 1 - clamp01(remain / SNIPER_CRIT_VFX_MS); // 0→1 生命进度
       const fade = clamp01(remain / SNIPER_CRIT_VFX_MS);
-      const innerR = 3 + 14 * t;
-      const rayLen = 7 + 9 * t;
+      const innerR = 4 + 18 * t;
+      const rayLen = 12 + 24 * t;
       const rot = i * 0.4;
       for (let k = 0; k < 8; k++) {
         const a = rot + (k * Math.PI) / 4;
@@ -1196,13 +1197,13 @@ export class MainScene extends Phaser.Scene {
         const sinA = Math.sin(a);
         strokeLine(
           g,
-          v.x + cosA * (innerR - 1.5),
-          v.y + sinA * (innerR - 1.5),
-          v.x + cosA * (innerR + rayLen + 2),
-          v.y + sinA * (innerR + rayLen + 2),
-          4.5,
+          v.x + cosA * (innerR - 2),
+          v.y + sinA * (innerR - 2),
+          v.x + cosA * (innerR + rayLen + 3),
+          v.y + sinA * (innerR + rayLen + 3),
+          5.5,
           SNIPER_CRIT_COLORS.outer,
-          0.22 * fade,
+          0.3 * fade,
         );
         strokeLine(
           g,
@@ -1210,20 +1211,20 @@ export class MainScene extends Phaser.Scene {
           v.y + sinA * innerR,
           v.x + cosA * (innerR + rayLen),
           v.y + sinA * (innerR + rayLen),
-          2,
+          2.5,
           SNIPER_CRIT_COLORS.core,
-          0.85 * fade,
+          0.9 * fade,
         );
       }
-      // 扩散环：半径随进度增长、透明度衰减（双层：宽泛光 + 亮芯）。
-      const ringR = 5 + 26 * t;
-      g.lineStyle(5, SNIPER_CRIT_COLORS.outer, 0.18 * fade);
+      // 扩散环：半径随进度增长至约 50px、双层高亮泛光与亮芯。
+      const ringR = 6 + 44 * t;
+      g.lineStyle(6, SNIPER_CRIT_COLORS.outer, 0.25 * fade);
       g.strokeCircle(v.x, v.y, ringR + 2);
-      g.lineStyle(2.5, SNIPER_CRIT_COLORS.core, 0.55 * fade);
+      g.lineStyle(3, SNIPER_CRIT_COLORS.core, 0.75 * fade);
       g.strokeCircle(v.x, v.y, ringR);
       // 白热中心点：命中瞬间最亮，随进度收缩。
-      g.fillStyle(SNIPER_CRIT_COLORS.hot, 0.9 * fade);
-      g.fillCircle(v.x, v.y, Math.max(0.5, 3.5 * (1 - t)));
+      g.fillStyle(SNIPER_CRIT_COLORS.hot, 0.95 * fade);
+      g.fillCircle(v.x, v.y, Math.max(0.5, 5.0 * (1 - t)));
     }
   }
 
@@ -1418,12 +1419,30 @@ export class MainScene extends Phaser.Scene {
   private syncWeaponChips(s: SimState): void {
     const ids = Object.keys(s.weaponStates);
 
-    // —— diff：键序与等级逐项比对（长度 + 每项值），无变化直接返回（零写入） ——
-    let changed = ids.length !== this.chipIds.length || ids.length !== this.chipLevels.length;
+    let totalTeamDamage = 0;
+    for (let i = 0; i < ids.length; i++) {
+      totalTeamDamage += s.weaponStates[ids[i]].damageDealt ?? 0;
+    }
+
+    const nextLabels: string[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      const ws = s.weaponStates[id];
+      const level = ws.level;
+      const def = WEAPON_DEFS[id];
+      const maxed = level >= (def?.maxLevel ?? 10);
+      const dmg = ws.damageDealt ?? 0;
+      const pct = totalTeamDamage > 0 ? Math.round((dmg / totalTeamDamage) * 100) : 0;
+      const dmgStr = formatDamageNum(dmg);
+      const tag = maxed ? 'MAX' : `Lv.${level}`;
+      nextLabels.push(`${def?.name ?? id} ${tag}  ${dmgStr} (${pct}%)`);
+    }
+
+    // —— diff：键序与文本逐项比对，无变化直接返回（零写入） ——
+    let changed = ids.length !== this.chipIds.length || nextLabels.length !== this.chipLabels.length;
     if (!changed) {
       for (let i = 0; i < ids.length; i++) {
-        const id = ids[i];
-        if (id !== this.chipIds[i] || s.weaponStates[id].level !== this.chipLevels[i]) {
+        if (ids[i] !== this.chipIds[i] || nextLabels[i] !== this.chipLabels[i]) {
           changed = true;
           break;
         }
@@ -1437,19 +1456,11 @@ export class MainScene extends Phaser.Scene {
     for (let i = 0; i < ids.length; i++) {
       const id = ids[i];
       const level = s.weaponStates[id].level;
-      if (
-        i < this.chipTexts.length &&
-        id === this.chipIds[i] &&
-        level === this.chipLevels[i] &&
-        this.chipTexts[i].visible
-      ) {
-        continue; // 该芯片无变化
-      }
       const text = this.chipTexts[i] ?? this.createChipText();
       const def = WEAPON_DEFS[id];
       const maxed = level >= (def?.maxLevel ?? 10);
       const style = maxed ? CHIP_STYLE_MAX : level <= 0 ? CHIP_STYLE_LV0 : CHIP_STYLE_STD;
-      text.setText(maxed ? `${def?.name ?? id} MAX` : `${def?.name ?? id} Lv.${level}`);
+      text.setText(nextLabels[i]);
       text.setColor(style.text);
       text.setPosition(
         CHIP_X + CHIP_PAD_X,
@@ -1478,13 +1489,9 @@ export class MainScene extends Phaser.Scene {
       g.strokeRoundedRect(CHIP_X, y, w, CHIP_HEIGHT, CHIP_RADIUS);
     }
 
-    // —— 记录 diff 基准（Object.keys 每帧返回新数组，可安全持有） ——
+    // —— 记录 diff 基准 ——
     this.chipIds = ids;
-    const levels: number[] = [];
-    for (let i = 0; i < ids.length; i++) {
-      levels.push(s.weaponStates[ids[i]].level);
-    }
-    this.chipLevels = levels;
+    this.chipLabels = nextLabels;
   }
 
   /** 新建一枚芯片文本（常驻池懒建；字体/投影基线与 hudText 一致，仅字号缩小）。 */
@@ -1502,9 +1509,6 @@ export class MainScene extends Phaser.Scene {
   }
 
   private formatTime(timeMs: number): string {
-    const totalSec = Math.floor(Math.max(0, timeMs) / 1000);
-    const mm = String(Math.floor(totalSec / 60)).padStart(2, '0');
-    const ss = String(totalSec % 60).padStart(2, '0');
-    return `${mm}:${ss}`;
+    return formatTime(timeMs);
   }
 }

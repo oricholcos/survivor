@@ -355,6 +355,103 @@ export const OVERLAY_CSS = `
   margin-bottom: 12px;
 }
 
+/* —— 武器伤害统计面板（结算排行榜） —— */
+.ov-damage-box {
+  margin: 16px 0;
+  padding: 12px 14px;
+  background: rgba(13, 22, 45, 0.65);
+  border: 1px solid rgba(24, 201, 255, 0.25);
+  border-radius: 10px;
+  text-align: left;
+}
+.ov-damage-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--neon-cyan);
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+}
+.ov-damage-total {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 400;
+}
+.ov-damage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ov-damage-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ov-damage-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  line-height: 1.2;
+}
+.ov-damage-name-col {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ov-damage-name {
+  color: var(--text-bright);
+  font-weight: 600;
+}
+.ov-damage-badge {
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(24, 201, 255, 0.15);
+  color: var(--neon-cyan);
+  border: 1px solid rgba(24, 201, 255, 0.35);
+}
+.ov-damage-badge--max {
+  background: rgba(255, 224, 102, 0.18);
+  color: var(--neon-yellow);
+  border-color: rgba(255, 224, 102, 0.45);
+}
+.ov-damage-val-col {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.ov-damage-num {
+  font-family: Consolas, 'Courier New', monospace;
+  font-weight: 700;
+  color: #fff;
+}
+.ov-damage-pct {
+  font-size: 11px;
+  color: var(--neon-cyan);
+  font-family: Consolas, 'Courier New', monospace;
+}
+.ov-damage-dps {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: Consolas, 'Courier New', monospace;
+}
+.ov-damage-bar-track {
+  width: 100%;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.ov-damage-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #18c9ff 0%, #ff2fb0 100%);
+  box-shadow: 0 0 6px rgba(24, 201, 255, 0.5);
+  transition: width 300ms ease-out;
+}
+
 /* —— 响应式：窄屏（≤400px）收紧内边距、按钮全宽堆叠 —— */
 @media (max-width: 400px) {
   .ov-panel {
@@ -374,6 +471,9 @@ export const OVERLAY_CSS = `
   .ov-option { padding: 10px 12px; }
   .ov-name { font-size: 16px; }
   .ov-desc { font-size: 12px; }
+  .ov-damage-box { padding: 8px 10px; margin: 12px 0; }
+  .ov-damage-info { font-size: 12px; }
+  .ov-damage-dps { display: none; }
 }
 
 /* —— 横屏矮视口（T4.5，如 800×360）：压缩纵向空间，Scale.FIT 画布缩小时
@@ -386,6 +486,8 @@ export const OVERLAY_CSS = `
   .ov-sub { margin-bottom: 12px; }
   .ov-stats { font-size: 15px; line-height: 1.7; margin-bottom: 10px; }
   .ov-score { font-size: 19px; }
+  .ov-damage-box { margin: 8px 0; padding: 6px 10px; }
+  .ov-damage-list { gap: 4px; }
   .ov-options { margin-top: 8px; gap: 8px; }
   .ov-option { min-height: var(--tap-min); padding: 8px 14px; }
   .ov-desc { font-size: 12px; }

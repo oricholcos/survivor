@@ -20,16 +20,16 @@
     {
       "id": "burn_cloud",
       "name": "燃烧云",
-      "description": "导弹爆炸时，爆炸半径（基础 70px，受范围强化）内的幸存敌人附着燃烧：每 0.5s 造成目标 2% 最大生命值伤害（保底 3 伤）、持续 3s，带火死亡时引爆剩余伤害并传染周围敌人（dot 频率牌加快跳伤；一次性）",
+      "description": "导弹爆炸时，爆炸半径内的幸存敌人附着燃烧：每 0.5s 造成目标 2% 最大生命值伤害（保底 3 伤）、持续 3s，带火死亡时引爆剩余伤害并传染周围敌人",
       "once": true,
       "params": [{ "key": "burnCloud", "value": 1, "op": "set" }]
     },
     {
-      "id": "prefer_elite",
-      "name": "优先锁定",
-      "description": "开火时优先锁定最近的 Boss，场上无 Boss 则回落最近敌人（一次性）",
+      "id": "cruise_boost",
+      "name": "巡航加速",
+      "description": "导弹飞行越久威力越强：每飞行 0.3s，移动速度与最终爆炸伤害提升 25%（至多提升 100%）",
       "once": true,
-      "params": [{ "key": "preferElite", "value": 1, "op": "set" }]
+      "params": [{ "key": "cruiseBoost", "value": 1, "op": "set" }]
     }
   ]
 }

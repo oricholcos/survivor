@@ -205,7 +205,7 @@ function blastData(d: Record<string, number>): Record<string, number> {
  * forcedTarget（可选，灼热光束协同开火强制指定）：以它为密度锚点（落点预测照常），
  * 多射壳体环/分裂/燃烧地等内部逻辑照常。
  */
-function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats, forcedTarget?: Enemy): boolean {
+function fireVolley(state: SimState, weaponId: string, stats: WeaponStats, forcedTarget?: Enemy): boolean {
   const target = forcedTarget ?? densestEnemy(state, numOr0(stats.densityRadius));
   if (!target) {
     return false;
@@ -258,6 +258,7 @@ function fireVolley(state: SimState, _weaponId: string, stats: WeaponStats, forc
     const vy = flightSec > 0 ? (sy - state.character.y) / flightSec : 0;
 
     spawnProjectile(state, {
+      weaponId,
       behavior: BEHAVIOR_NAME,
       x: state.character.x,
       y: state.character.y,
@@ -328,7 +329,7 @@ export const behavior: WeaponBehavior = {
       if (e.dead) {
         continue; // 本帧已被其他弹/爆炸击杀：跳过
       }
-      dealDamage(state, e, proj.damage * numOr0(d.splashFactor));
+      dealDamage(state, e, proj.damage * numOr0(d.splashFactor), proj.weaponId);
     }
 
     // ② 眩晕：幸存者挂 stun（效果表默认数值）。
@@ -336,7 +337,7 @@ export const behavior: WeaponBehavior = {
       for (let i = 0; i < hits.length; i++) {
         const e = hits[i];
         if (!e.dead) {
-          applyEffect(state, e, 'stun');
+          applyEffect(state, e, 'stun', undefined, proj.weaponId);
         }
       }
     }
@@ -350,7 +351,7 @@ export const behavior: WeaponBehavior = {
           applyEffect(state, e, 'blackhole', {
             centerX: tx,
             centerY: ty,
-          });
+          }, proj.weaponId);
         }
       }
     }
@@ -366,6 +367,7 @@ export const behavior: WeaponBehavior = {
         tickMs: numOr0(d.burnTickMs),
         damagePerTick: numOr0(d.burnDamagePerTick),
         effectKind: 'burn',
+        sourceWeaponId: proj.weaponId,
       });
     }
 
@@ -389,6 +391,7 @@ export const behavior: WeaponBehavior = {
       const vx = sec > 0 ? (landing.x - tx) / sec : 0;
       const vy = sec > 0 ? (landing.y - ty) / sec : 0;
       spawnProjectile(state, {
+        weaponId: proj.weaponId,
         behavior: BEHAVIOR_NAME,
         x: tx,
         y: ty,
