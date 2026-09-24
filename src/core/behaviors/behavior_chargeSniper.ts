@@ -48,6 +48,9 @@ export const SNIPER_CRIT_VFX_KEY = 'sniper_crit_vfx';
 /** 死刑宣告斩杀 VFX 共享 meta 键（值为 SniperHitVfx[] 滚动数组）。 */
 export const SNIPER_EXECUTE_VFX_KEY = 'sniper_execute_vfx';
 
+/** 蓄能狙击累计击杀数共享 meta 键（值为 number）。 */
+export const SNIPER_KILL_COUNT_META_KEY = 'sniper_kill_count';
+
 /** 单条爆头/处决 VFX 条目：命中点坐标 + 留存截止时刻（state.timeMs 时间轴）。 */
 export interface SniperHitVfx {
   x: number;
@@ -63,6 +66,21 @@ export const SNIPER_EXECUTE_VFX_MS = 300;
 
 /** 单键 VFX 列表长度上限（防刷屏：留存窗口内高频触发时丢弃最旧条目，数组按入队序排列）。 */
 const SNIPER_HIT_VFX_CAP = 16;
+
+/**
+ * 读蓄能狙击当前累计击杀数。
+ */
+export function getSniperKillCount(state: SimState): number {
+  const count = state.meta[SNIPER_KILL_COUNT_META_KEY];
+  return typeof count === 'number' && Number.isFinite(count) ? count : 0;
+}
+
+/**
+ * 递增蓄能狙击累计击杀数。
+ */
+function incrementSniperKillCount(state: SimState): void {
+  state.meta[SNIPER_KILL_COUNT_META_KEY] = getSniperKillCount(state) + 1;
+}
 
 /**
  * 写一条爆头/处决 VFX（照 PRISM_ZAP 模式）：先过滤过期条目（untilMs ≤ 当前时刻），
@@ -108,17 +126,22 @@ function pickTarget(state: SimState, stats: WeaponStats): Enemy | null {
 }
 
 /**
- * 弹上 data 快照：爆头/死刑宣告/让子弹飞/狙神所需数值随弹走。
+ * 弹上 data 快照：爆头/死刑宣告/让子弹飞/狙神/斩首所需数值随弹走。
  */
 function projectileData(stats: WeaponStats, baseDamage: number): Record<string, number> {
   return {
     baseDamage,
     penetratedCount: 0,
     bulletFly: opt(stats, 'bulletFly') === 1 ? 1 : 0,
+    killCritAmp: opt(stats, 'killCritAmp'),
     sniperGodAmp: opt(stats, 'penetrateAmp'),
     critReady: opt(stats, 'critShot') === 1 ? 1 : 0,
     critChance: opt(stats, 'critChance'),
     critMult: opt(stats, 'critMultiplier'),
+    critSynergyBoost: opt(stats, 'critSynergyBoost'),
+    headshotReady: opt(stats, 'headshot') === 1 ? 1 : 0,
+    headshotFactor: opt(stats, 'headshotCurrentHpFactor'),
+    headshotBossFactor: opt(stats, 'headshotBossCurrentHpFactor'),
     execReady: opt(stats, 'executionOrder') === 1 ? 1 : 0,
     execFactor: opt(stats, 'executionHpFactor'),
     execBossFactor: opt(stats, 'executionBossHpFactor'),
@@ -165,12 +188,7 @@ function fireVolley(state: SimState, weaponId: string, stats: WeaponStats, force
     return false;
   }
 
-  // 伤害快照：乘区顺序 base → 斩首（高血判定）。
-  let damage = stats.damage;
-  if (opt(stats, 'headshot') === 1 && target.hp >= opt(stats, 'headshotHpFactor') * target.maxHp) {
-    damage *= opt(stats, 'headshotMultiplier');
-  }
-
+  const damage = stats.damage;
   const aim = leadAim(state.character, target, stats.projectileSpeed, state.layout.wallLineY);
   const ang = Math.atan2(aim.y - state.character.y, aim.x - state.character.x);
 
@@ -211,36 +229,58 @@ export const behavior: WeaponBehavior = {
   /**
    * 命中点钩子（框架在 dealDamage + effectsOnHit 附着之后、穿透消耗之前调用）：
    * 1. 基础命中直接击杀：若目标已 dead，补加经验差额（死刑宣告）；
-   * 2. 爆头判定：掷点判中造成弹伤 ×(倍率−1) 追加伤害，写星芒环 VFX + 'crit' 音效；
-   * 3. 死刑宣告：若存活且 hp < 阈值，触发处决击杀，写斩线 VFX + 'execute' 音效；
-   * 4. 穿透判定（让子弹飞 & 狙神）：
-   *    - 若持有让子弹飞：当触发爆头或成功击杀目标时，置 pierceLeft = 2（使框架扣减后保持 1 存活），
-   *      并若持有狙神则递增 penetratedCount 并按 baseDamage × (1 + n × amp) 提升弹伤；
-   *    - 若既未爆头又未击杀：置 proj.dead = true 立即销毁。
+   * 2. 爆头判定：包含让子弹飞击杀成长（每杀 1 单位爆头倍率 +10%）；判中时写星芒环 VFX + 'crit' 音效；
+   * 3. 斩首额外伤害：造成目标当前生命值 15%（Boss 10%）伤害；若触发爆头则提升 50%（变为 22.5% / 15%）；
+   * 4. 死刑宣告处决：若存活且 hp < 斩杀线（爆头触发时斩杀线提升 50%），触发处决击杀，写斩线 VFX + 'execute' 音效；
+   * 5. 击杀穿透（内置 Base 机制）与让子弹飞爆头穿透：
+   *    - 只要目标死亡（不论何种伤害致死），子弹穿透目标；
+   *    - 若目标未死但持有让子弹飞且触发爆头，子弹也穿透目标；
+   *    - 若持有狙神，每次穿透递增伤害；
+   * 6. 击杀计数维护：任何致死均递增 sniper_kill_count。
    */
   onProjectileHit(state, proj, enemy) {
     const d = proj.data;
     let critTriggered = false;
     const initialDead = enemy.dead;
+    const factor = damageTakenFactor(enemy);
+    // 受击前敌人当前生命值（enemy.dead 为 false 时恢复直击扣减量）
+    const hpBefore = initialDead ? 0 : enemy.hp + proj.damage;
 
     // ① 爆头判定（只要持有爆头牌，不论是否已经被基础伤害致死，均执行爆头判定以提供满额视听反馈）
     if (dataNum(d, 'critReady') === 1) {
       const chance = dataNum(d, 'critChance');
-      const mult = dataNum(d, 'critMult');
+      let mult = dataNum(d, 'critMult');
+      // 让子弹飞击杀成长：每杀死一个单位，爆头伤害提升 killCritAmp (0.1)
+      const killCritAmp = dataNum(d, 'killCritAmp');
+      if (killCritAmp > 0) {
+        mult += getSniperKillCount(state) * killCritAmp;
+      }
       if (chance > 0 && mult > 1 && getBattleRng(state).next() < chance) {
         critTriggered = true;
         pushSniperHitVfx(state, SNIPER_CRIT_VFX_KEY, enemy.x, enemy.y, SNIPER_CRIT_VFX_MS);
         pushEvent(state, { kind: 'sfx', name: 'crit' });
 
         if (!enemy.dead) {
-          const factor = damageTakenFactor(enemy);
           const bonus = factor > 0 ? (proj.damage * (mult - 1)) / factor : proj.damage * (mult - 1);
           dealDamageWithKillXpBonus(state, enemy, bonus, dataNum(d, 'execXpFactor'), proj.weaponId);
         }
       }
     }
 
-    // ② 基础命中直接击杀（且未在爆头追加伤害中重复结算）：补加经验差额
+    // ② 斩首额外伤害（当前生命值 15% / Boss 10%，无上限；爆头时提升 50%）
+    if (!enemy.dead && dataNum(d, 'headshotReady') === 1) {
+      let ratio = enemy.isBoss ? dataNum(d, 'headshotBossFactor') : dataNum(d, 'headshotFactor');
+      if (critTriggered && dataNum(d, 'critSynergyBoost') > 0) {
+        ratio *= (1 + dataNum(d, 'critSynergyBoost'));
+      }
+      if (ratio > 0 && hpBefore > 0) {
+        const rawBonus = hpBefore * ratio;
+        const bonusDamage = factor > 0 ? rawBonus / factor : rawBonus;
+        dealDamageWithKillXpBonus(state, enemy, bonusDamage, dataNum(d, 'execXpFactor'), proj.weaponId);
+      }
+    }
+
+    // ③ 基础命中直接击杀（且未在后续追加伤害中结算经验加成）：补加经验差额
     if (initialDead && dataNum(d, 'execReady') === 1) {
       const xpFactor = dataNum(d, 'execXpFactor');
       if (xpFactor > 1) {
@@ -249,34 +289,46 @@ export const behavior: WeaponBehavior = {
       }
     }
 
-    // ③ 死刑宣告处决（仅在目标依然存活时判定）
+    // ④ 死刑宣告处决（仅在目标依然存活时判定；爆头触发时斩杀线提升 50%）
     if (!enemy.dead && dataNum(d, 'execReady') === 1) {
-      const factor = enemy.isBoss ? dataNum(d, 'execBossFactor') : dataNum(d, 'execFactor');
-      if (factor > 0 && enemy.hp < factor * enemy.maxHp) {
+      let thresholdFactor = enemy.isBoss ? dataNum(d, 'execBossFactor') : dataNum(d, 'execFactor');
+      if (critTriggered && dataNum(d, 'critSynergyBoost') > 0) {
+        thresholdFactor *= (1 + dataNum(d, 'critSynergyBoost'));
+      }
+      if (thresholdFactor > 0 && enemy.hp < thresholdFactor * enemy.maxHp) {
         pushSniperHitVfx(state, SNIPER_EXECUTE_VFX_KEY, enemy.x, enemy.y, SNIPER_EXECUTE_VFX_MS);
         pushEvent(state, { kind: 'sfx', name: 'execute' });
         executeKill(state, enemy, dataNum(d, 'execXpFactor'), proj.weaponId);
       }
     }
 
-    // ③ 让子弹飞（bullet_fly）与狙神（sniper_god）穿透与增伤判定
-    if (dataNum(d, 'bulletFly') === 1) {
-      const canPenetrate = critTriggered || enemy.dead;
-      if (canPenetrate) {
-        // 赋予穿透：置为 2，projectiles.ts 随后 pierceLeft -= 1 使得余量为 1（存活）
-        proj.pierceLeft = 2;
+    // ⑤ 击杀计数维护（持有让子弹飞且发生击杀时递增）
+    if (enemy.dead && dataNum(d, 'killCritAmp') > 0) {
+      incrementSniperKillCount(state);
+    }
 
-        // 狙神（穿透递增伤）
-        const amp = dataNum(d, 'sniperGodAmp');
-        if (amp > 0) {
-          const nextCount = dataNum(d, 'penetratedCount') + 1;
-          d.penetratedCount = nextCount;
-          proj.damage = dataNum(d, 'baseDamage') * (1 + nextCount * amp);
-        }
-      } else {
-        // 既未爆头又未击杀：子弹销毁
-        proj.dead = true;
+    // ⑥ 穿透判定：
+    // a) 击杀穿透（内置 Base 机制）：只要目标致死，子弹穿透目标；
+    // b) 爆头穿透（让子弹飞 bullet_fly）：目标未死，但持有让子弹飞且触发爆头，子弹穿透目标；
+    // c) 狙神（sniper_god）：穿透时无论击杀还是爆头，均触发穿透增伤。
+    const killPenetrate = enemy.dead;
+    const critPenetrate = !enemy.dead && dataNum(d, 'bulletFly') === 1 && critTriggered;
+    const canPenetrate = killPenetrate || critPenetrate;
+
+    if (canPenetrate) {
+      // 赋予穿透：置为 2，projectiles.ts 随后 pierceLeft -= 1 使得余量为 1（存活）
+      proj.pierceLeft = 2;
+
+      // 狙神（穿透递增伤，与是否持有让子弹飞解耦）
+      const amp = dataNum(d, 'sniperGodAmp');
+      if (amp > 0) {
+        const nextCount = dataNum(d, 'penetratedCount') + 1;
+        d.penetratedCount = nextCount;
+        proj.damage = dataNum(d, 'baseDamage') * (1 + nextCount * amp);
       }
+    } else {
+      // 既未击杀又未触发爆头穿透：子弹销毁
+      proj.dead = true;
     }
   },
 };

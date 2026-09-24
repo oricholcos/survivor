@@ -16,12 +16,12 @@
     {
       "id": "headshot",
       "name": "斩首",
-      "description": "开火瞬间若锁定目标当前生命 ≥ 60% 最大生命，本波伤害 ×1.5",
+      "description": "蓄能狙击造成目标当前生命值 15% 的额外伤害（对 Boss 为 10%）",
       "once": true,
       "params": [
         { "key": "headshot", "value": 1, "op": "set" },
-        { "key": "headshotHpFactor", "value": 0.6, "op": "set" },
-        { "key": "headshotMultiplier", "value": 1.5, "op": "set" }
+        { "key": "headshotCurrentHpFactor", "value": 0.15, "op": "set" },
+        { "key": "headshotBossCurrentHpFactor", "value": 0.1, "op": "set" }
       ]
     },
     {
@@ -51,28 +51,31 @@
     {
       "id": "crit_shot",
       "name": "爆头",
-      "description": "每次命中时有概率造成 550% 伤害（每层 +20% 概率，可叠 5 次）",
+      "description": "每次命中时有概率造成 550% 伤害（每层 +20% 概率，可叠 5 次）；触发爆头时，其他专属强化效果提升 50%",
       "maxCount": 5,
       "hardMax": 5,
       "params": [
         { "key": "critShot", "value": 1, "op": "set" },
         { "key": "critChance", "value": 0.2, "op": "add" },
-        { "key": "critMultiplier", "value": 5.5, "op": "set" }
+        { "key": "critMultiplier", "value": 5.5, "op": "set" },
+        { "key": "critSynergyBoost", "value": 0.5, "op": "set" }
       ]
     },
     {
       "id": "bullet_fly",
       "name": "让子弹飞",
-      "description": "命中敌人时若触发爆头或成功击杀，子弹穿透目标",
+      "description": "命中敌人时若触发爆头，子弹穿透目标；蓄能狙击每杀死一个单位，爆头伤害提升 10%",
       "requiresCard": "crit_shot",
       "once": true,
-      "params": [{ "key": "bulletFly", "value": 1, "op": "set" }]
+      "params": [
+        { "key": "bulletFly", "value": 1, "op": "set" },
+        { "key": "killCritAmp", "value": 0.1, "op": "set" }
+      ]
     },
     {
       "id": "sniper_god",
       "name": "狙神",
       "description": "子弹每穿透 1 个敌人，对后续敌人的伤害提升 20%",
-      "requiresCard": "bullet_fly",
       "once": true,
       "params": [
         { "key": "sniperGod", "value": 1, "op": "set" },

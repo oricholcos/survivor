@@ -936,4 +936,12 @@ describe('dot 频率（dot_freq 牌，requiresCard=frost_venom：中毒 tick 间
     updateEffects(state, 269.3);
     expect(e.hp).toBeCloseTo(1e6 - 10 - 2.5, 6); // 累计 769.3 ≥ 769.2：首跳
   });
+
+  it('屏幕外敌人防锁定：仅有屏幕外敌人（y=-40）时不开火且冷却归 0', () => {
+    const state = createSimState(1);
+    makeEnemy(state, 360, -40);
+    fireWithCards(state, []);
+    expect(state.projectiles).toHaveLength(0);
+    expect(state.weaponStates.prism.cooldownMs).toBe(0);
+  });
 });

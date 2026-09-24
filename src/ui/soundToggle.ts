@@ -10,10 +10,14 @@ const TOGGLE_CSS = `
   /* 安全区（T4.5）：刘海屏/横屏贴边时避开系统 UI（env 不支持时回落 0px） */
   top: calc(10px + env(safe-area-inset-top, 0px));
   right: calc(10px + env(safe-area-inset-right, 0px));
-  z-index: 120;
+  z-index: 170;
   box-sizing: border-box;
-  min-height: 44px;
-  padding: 8px 18px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 13px;
   letter-spacing: 1px;
   color: #a5ecff;

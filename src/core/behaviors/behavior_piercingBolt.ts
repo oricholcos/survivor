@@ -2,7 +2,7 @@
 
 import { dealDamage } from '../effects';
 import { distSq, normalize } from '../math';
-import { findTarget } from '../targeting';
+import { findTarget, isEnemyLockable } from '../targeting';
 import type { Enemy, SimState, Vec } from '../types';
 import type { WeaponBehavior } from './registry';
 import type { WeaponStats } from '../weapons';
@@ -126,7 +126,7 @@ export const behavior: WeaponBehavior = {
           const enemies = state.enemies;
           for (let j = 0; j < enemies.length; j++) {
             const candidateEnemy = enemies[j];
-            if (candidateEnemy.dead || damagedIds.indexOf(candidateEnemy.id) !== -1) {
+            if (candidateEnemy.dead || damagedIds.indexOf(candidateEnemy.id) !== -1 || !isEnemyLockable(candidateEnemy)) {
               continue;
             }
             const d = distSq({ x: e.x, y: e.y }, candidateEnemy);
@@ -167,7 +167,7 @@ export const behavior: WeaponBehavior = {
       const enemies = state.enemies;
       for (let i = 0; i < enemies.length; i++) {
         const e = enemies[i];
-        if (e.dead || e.id === target.id) {
+        if (e.dead || e.id === target.id || !isEnemyLockable(e)) {
           continue;
         }
         others.push(e);

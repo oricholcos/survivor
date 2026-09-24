@@ -111,6 +111,23 @@ export function leadAim(origin: Vec2, enemy: Enemy, speed: number, maxY?: number
   return p;
 }
 
+/**
+ * 敌人顶部 Y 坐标判定阈值：
+ * 只有当敌人的完整贴图与头顶血条均已完全进入屏幕视口（y ≥ 0）后，才允许被武器锁定。
+ *
+ * 几何推导（对齐 src/phaser/enemyRenderer.ts）：
+ * - 敌人贴图有效视觉半径 r = isBoss ? radius * 1.15 : radius
+ * - 头顶血条顶端位于 barY = y - r - (isBoss ? 22 : 10)
+ * - 当 barY ≥ 0 即 y ≥ r + (isBoss ? 22 : 10) 时，头顶血条与贴图均已 100% 完整显示在屏幕顶部下方。
+ */
+export function isEnemyLockable(enemy: Enemy): boolean {
+  if (enemy.dead) {
+    return false;
+  }
+  const topOffset = enemy.isBoss ? enemy.radius * 1.15 + 22 : enemy.radius + 10;
+  return enemy.y >= topOffset;
+}
+
 /** findTarget 可选项（charge_sniper 等带偏好的武器传入；缺省即「attack 层 + 最近」）。 */
 export interface FindTargetOpts {
   /** isBoss 最优先（多个取最近）。 */
@@ -123,6 +140,8 @@ export interface FindTargetOpts {
   maxRange?: number;
   /** 排除的敌人 id（灼热光束次级束选目标时排除主束当前锁定目标）；四级优先级各层一律跳过。 */
   excludeId?: number;
+  /** 是否允许锁定屏幕外的敌人（缺省 false，仅允许锁定完整进入屏幕的敌人）。 */
+  includeOffscreen?: boolean;
 }
 
 /**
@@ -146,6 +165,7 @@ export function findTarget(state: SimState, opts?: FindTargetOpts): Enemy | null
   const threshold = opts?.fastSpeedThreshold ?? 0;
   const maxRangeSq = opts?.maxRange !== undefined && opts.maxRange > 0 ? opts.maxRange * opts.maxRange : Infinity;
   const excludeId = opts?.excludeId;
+  const includeOffscreen = opts?.includeOffscreen === true;
 
   let boss: Enemy | null = null;
   let bossDistSq = Infinity;
@@ -160,6 +180,9 @@ export function findTarget(state: SimState, opts?: FindTargetOpts): Enemy | null
   for (let i = 0; i < enemies.length; i++) {
     const e = enemies[i];
     if (e.dead) {
+      continue;
+    }
+    if (!includeOffscreen && !isEnemyLockable(e)) {
       continue;
     }
     if (excludeId !== undefined && e.id === excludeId) {

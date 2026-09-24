@@ -35,6 +35,7 @@ import {
   SNIPER_EXECUTE_VFX_MS,
   type SniperHitVfx,
   behavior,
+  getSniperKillCount,
 } from './behavior_chargeSniper';
 import './index'; // 副作用：自动发现注册
 import { getBehavior } from './registry';
@@ -338,15 +339,17 @@ describe('爆头（crit_shot 爆头牌：每层 +20% 爆头率，550% 伤害，�
     expect(e.hp).toBeCloseTo(1e6 - 330, 6);
   });
 
-  it('与斩首乘区叠乘：斩首满血（60×1.5=90）再爆头（90×5.5=495）', () => {
+  it('与斩首乘区叠乘：未爆头附加 15% 当前生命，爆头附加 22.5% 当前生命且爆头伤害提升', () => {
     const state = createSimState(1);
-    const e = makeEnemy(state, 360, 1020, { hp: 1e6 });
+    const e = makeEnemy(state, 360, 1020, { hp: 1000 });
     fireOnce(state, ['headshot', 'crit_shot']);
-    expect(state.projectiles[0].damage).toBeCloseTo(90, 9);
-    stubBattleRng(state, [0.0]);
+    expect(state.projectiles[0].damage).toBeCloseTo(60, 9);
+    stubBattleRng(state, [0.0]); // 爆头判中
 
     simulate(state, 60);
-    expect(e.hp).toBeCloseTo(1e6 - 495, 6);
+    // 直伤 60 + 爆头额外 60*(5.5-1)=270 + 斩首额外 1000*22.5%=225
+    // 总伤 = 60 + 270 + 225 = 555
+    expect(e.hp).toBeCloseTo(1000 - 555, 6);
   });
 
   it('独立随机流：主随机流全程零消费', () => {
@@ -385,23 +388,31 @@ describe('爆头（crit_shot 爆头牌：每层 +20% 爆头率，550% 伤害，�
 });
 
 describe('斩首（headshot 斩首牌 + execute_up 处决强化牌）', () => {
-  it('高血目标（hp ≥ 0.6×maxHp）×1.5：满血 boss 弹伤 60×1.5=90', () => {
-    const state = createSimState(1);
-    makeEnemy(state, 360, 1020, { isBoss: true, speed: 40, hp: 1e6 });
-    fireOnce(state, ['headshot']);
-    expect(state.projectiles[0].damage).toBeCloseTo(90, 9);
+  it('普通怪附加当前生命值 15% 额外伤害，Boss 附加 10%', () => {
+    // 1. 普通怪：1000 血，直伤 60 + 斩首 1000×15% = 150，总伤 210
+    const stateNorm = createSimState(1);
+    const norm = makeEnemy(stateNorm, 360, 1020, { hp: 1000 });
+    fireOnce(stateNorm, ['headshot']);
+    simulate(stateNorm, 60);
+    expect(norm.hp).toBeCloseTo(1000 - 210, 6);
+
+    // 2. Boss 怪：10000 血，直伤 60 + 斩首 10000×10% = 1000，总伤 1060
+    const stateBoss = createSimState(1);
+    const boss = makeEnemy(stateBoss, 360, 1020, { hp: 10000, isBoss: true });
+    fireOnce(stateBoss, ['headshot']);
+    simulate(stateBoss, 60);
+    expect(boss.hp).toBeCloseTo(10000 - 1060, 6);
   });
 
-  it('残血目标（hp < 0.6×maxHp）不增伤；无牌满血也不增伤', () => {
+  it('爆头时斩首伤害提升 50%（普通怪 22.5%，Boss 15%）', () => {
     const state = createSimState(1);
-    makeEnemy(state, 360, 1020, { speed: 90, hp: 200, maxHp: 1000 });
-    fireOnce(state, ['headshot']);
-    expect(state.projectiles[0].damage).toBeCloseTo(60, 9);
+    const e = makeEnemy(state, 360, 1020, { hp: 2000 });
+    fireOnce(state, ['headshot', 'crit_shot']);
+    stubBattleRng(state, [0.0]); // 爆头
 
-    const plain = createSimState(1);
-    makeEnemy(plain, 360, 1020, { speed: 90, hp: 1e6 });
-    fireOnce(plain);
-    expect(plain.projectiles[0].damage).toBeCloseTo(60, 9);
+    simulate(state, 60);
+    // 直伤 60 + 爆头追加 270 + 斩首 2000 * 22.5% = 450，总伤 780
+    expect(e.hp).toBeCloseTo(2000 - 780, 6);
   });
 
   it('处决强化叠加（可重复，+5%/Boss+2%/张）：扩张死刑宣告斩杀线', () => {
@@ -477,10 +488,22 @@ describe('死刑宣告（execution_order：20%/Boss 7% 阈值处决 + 经验 ×1
     expect(forced.dead).toBe(true);
     expect(state.progress.xp).toBeCloseTo(40, 9);
   });
+
+  it('爆头触发时死刑宣告斩杀线提升 50%（基础 20% -> 30%）', () => {
+    const state = createSimState(1);
+    // maxHp 1000，当前 550。
+    // 直伤 60 + 爆头额外 270 = 330 伤，剩 220
+    // 220 / 1000 = 22%：在基础 20% 无法处决（220 >= 200），但在爆头放大 1.5 倍（30% 阈值下 220 < 300）成功处决！
+    const e = makeEnemy(state, 360, 1020, { hp: 550, maxHp: 1000 });
+    fireOnce(state, ['crit_shot', 'execution_order']);
+    stubBattleRng(state, [0.0]); // 爆头判中
+    simulate(state, 60);
+    expect(e.dead).toBe(true);
+  });
 });
 
-describe('让子弹飞（bullet_fly：暴击或击杀贯穿，未暴击未击杀销毁）', () => {
-  it('触发爆头时：即使敌人未死，子弹穿透不销毁并继续命中后续敌人', () => {
+describe('让子弹飞（bullet_fly：爆头穿透 + 击杀成长 + 内置击杀穿透）', () => {
+  it('触发爆头时：即使敌人未死，持有让子弹飞则子弹穿透不销毁并继续命中后续敌人', () => {
     const state = createSimState(1);
     const e1 = makeEnemy(state, 360, 1120, { hp: 1e6 });
     const e2 = makeEnemy(state, 360, 1000, { hp: 1e6 });
@@ -532,17 +555,72 @@ describe('让子弹飞（bullet_fly：暴击或击杀贯穿，未暴击未击杀
     expect(state.projectiles).toHaveLength(0);
   });
 
-  it('未持让子弹飞：即使触发爆头或击杀，子弹打中第 1 敌即销毁', () => {
+  it('内置击杀穿透：零牌（未持让子弹飞）击杀小怪时，子弹天生穿透并命中后续敌人', () => {
+    const state = createSimState(1);
+    const e1 = makeEnemy(state, 360, 1120, { hp: 50 }); // 60 伤直接秒杀
+    const e2 = makeEnemy(state, 360, 1000, { hp: 1e6 });
+    fireOnce(state, []); // 零牌！
+
+    simulate(state, 200);
+    expect(e1.dead).toBe(true);
+    expect(e2.hp).toBeCloseTo(1e6 - 60, 6); // 击杀后子弹自动穿透命中 e2！
+    expect(state.projectiles).toHaveLength(0);
+  });
+
+  it('未持让子弹飞且未击杀（即使爆头）：子弹击中第 1 敌即销毁', () => {
     const state = createSimState(1);
     const e1 = makeEnemy(state, 360, 1120, { hp: 1e6 });
     const e2 = makeEnemy(state, 360, 1000, { hp: 1e6 });
     fireOnce(state, ['crit_shot']); // 未持 bullet_fly
-    stubBattleRng(state, [0.0]); // 触发爆头
+    stubBattleRng(state, [0.0]); // 触发爆头但未击杀
 
     simulate(state, 200);
     expect(e1.hp).toBeCloseTo(1e6 - 330, 6);
-    expect(e2.hp).toBe(1e6); // 贯穿 0，第 2 敌不中
+    expect(e2.hp).toBe(1e6); // 未持让子弹飞且未击杀，第 2 敌不中
     expect(state.projectiles).toHaveLength(0);
+  });
+
+  it('让子弹飞击杀成长：每杀死一个单位，爆头伤害提升 10%（550% -> 560% -> 570%...）', () => {
+    const state = createSimState(1);
+    const k1 = makeEnemy(state, 360, 1150, { hp: 10 });
+    const k2 = makeEnemy(state, 360, 1100, { hp: 10 });
+    const target = makeEnemy(state, 360, 1000, { hp: 1e6 });
+    fireOnce(state, ['crit_shot', 'bullet_fly']);
+    stubBattleRng(state, [0.99, 0.99, 0.0]); // k1, k2 不暴击致死，target 触发爆头
+
+    simulate(state, 200);
+    expect(k1.dead).toBe(true);
+    expect(k2.dead).toBe(true);
+    // target 受击前已击杀 2 个怪，爆头倍率 = 5.5 + 2 * 0.1 = 5.7 (570%)
+    // 直伤 60 + 爆头额外 60 * 4.7 = 282，总伤 342
+    expect(target.hp).toBeCloseTo(1e6 - 342, 6);
+  });
+
+  it('未持让子弹飞前击杀不叠加，拿到让子弹飞后才开始叠加爆头伤害', () => {
+    const state = createSimState(1);
+    // 1. 未持让子弹飞，开火击杀 2 个敌人
+    const k1 = makeEnemy(state, 360, 1150, { hp: 10 });
+    const k2 = makeEnemy(state, 360, 1100, { hp: 10 });
+    fireOnce(state, ['crit_shot']);
+    stubBattleRng(state, [0.99, 0.99]);
+    simulate(state, 200);
+    expect(k1.dead).toBe(true);
+    expect(k2.dead).toBe(true);
+    // 击杀数仍应为 0
+    expect(getSniperKillCount(state)).toBe(0);
+
+    // 2. 之后选了让子弹飞，再开火击杀 1 个敌人并贯穿 target 触发爆头
+    const k3 = makeEnemy(state, 360, 1150, { hp: 10 });
+    const target = makeEnemy(state, 360, 1000, { hp: 1e6 });
+    fireOnce(state, ['crit_shot', 'bullet_fly']);
+    stubBattleRng(state, [0.99, 0.0]); // k3 致死，target 爆头
+    simulate(state, 200);
+    expect(k3.dead).toBe(true);
+    // 此时仅累计了拿到让子弹飞之后的 1 次击杀
+    expect(getSniperKillCount(state)).toBe(1);
+    // target 爆头倍率 = 5.5 + 1 * 0.1 = 5.6 (560%)
+    // 直伤 60 + 爆头额外 60 * 4.6 = 276，总伤 336
+    expect(target.hp).toBeCloseTo(1e6 - 336, 6);
   });
 });
 
@@ -552,7 +630,7 @@ describe('狙神（sniper_god：穿透每穿 1 敌后续伤害 +20%）', () => {
     const e1 = makeEnemy(state, 360, 1120, { hp: 50 }); // 击杀穿透
     const e2 = makeEnemy(state, 360, 1000, { hp: 50 }); // 击杀穿透
     const e3 = makeEnemy(state, 360, 880, { hp: 1e6 }); // 承接第 3 击
-    fireOnce(state, ['crit_shot', 'bullet_fly', 'sniper_god']);
+    fireOnce(state, ['sniper_god']); // 不依赖 bullet_fly！
     stubBattleRng(state, [0.99, 0.99, 0.99]); // 不暴击
 
     simulate(state, 200);
@@ -562,30 +640,30 @@ describe('狙神（sniper_god：穿透每穿 1 敌后续伤害 +20%）', () => {
     expect(e3.hp).toBeCloseTo(1e6 - 84, 6);
   });
 
-  it('穿透增伤与爆头倍率叠乘：第 2 敌受击时若爆头，造成 72 × 5.5 = 396 伤害', () => {
+  it('穿透增伤与爆头倍率叠乘：第 2 敌受击时若爆头，结合击杀成长造成对应伤害', () => {
     const state = createSimState(1);
-    const e1 = makeEnemy(state, 360, 1120, { hp: 50 }); // 基础命中致死击杀穿透（判定爆头消费第 1 个随机数）
+    const e1 = makeEnemy(state, 360, 1120, { hp: 50 }); // 基础命中致死击杀穿透
     const e2 = makeEnemy(state, 360, 1000, { hp: 1e6 });
     fireOnce(state, ['crit_shot', 'bullet_fly', 'sniper_god']);
-    stubBattleRng(state, [0.99, 0.0]); // e1 消费 0.99 不暴击致死，e2 命中时消费 0.0 判中爆头
+    stubBattleRng(state, [0.99, 0.0]); // e1 不暴击致死，e2 爆头
 
     simulate(state, 200);
     expect(e1.dead).toBe(true);
-    // e2 基础伤 72，爆头 5.5 倍 → 396
-    expect(e2.hp).toBeCloseTo(1e6 - 396, 6);
+    // e1 致死后杀敌数 = 1，爆头倍率 = 5.5 + 1 * 0.1 = 5.6
+    // e2 基础伤 60 * (1 + 1 * 0.2) = 72，爆头 5.6 倍 → 72 * 5.6 = 403.2
+    expect(e2.hp).toBeCloseTo(1e6 - 403.2, 6);
   });
 
-  it('穿透增伤与斩首乘区叠乘：斩首满血（90）→ 穿透后第 2 敌基础 108', () => {
+  it('穿透增伤与斩首乘区叠乘：穿透后第 2 敌基础 72 并追加斩首 15% 当前生命', () => {
     const state = createSimState(1);
-    const e1 = makeEnemy(state, 360, 1120, { hp: 50 }); // 满血 50/50，触发斩首 60×1.5=90
-    const e2 = makeEnemy(state, 360, 1000, { hp: 1e6 });
-    fireOnce(state, ['headshot', 'crit_shot', 'bullet_fly', 'sniper_god']);
-    stubBattleRng(state, [0.99, 0.99]);
+    const e1 = makeEnemy(state, 360, 1120, { hp: 50 });
+    const e2 = makeEnemy(state, 360, 1000, { hp: 1000 });
+    fireOnce(state, ['headshot', 'sniper_god']);
 
     simulate(state, 200);
     expect(e1.dead).toBe(true);
-    // e2 受到伤害 = 90 × (1 + 1 × 0.2) = 108
-    expect(e2.hp).toBeCloseTo(1e6 - 108, 6);
+    // e2 基础伤 72 + 斩首 1000 * 15% = 150，总伤 222
+    expect(e2.hp).toBeCloseTo(1000 - 222, 6);
   });
 });
 
@@ -731,12 +809,12 @@ describe('数值全部来自 weapons/charge_sniper.json（真实表驱动，新�
     expect(availableCards(def, ws5, false).map((c) => c.id)).not.toContain('crit_shot');
   });
 
-  it('升级池前置依赖：未持有 execution_order 时 execute_up 不出现；未持有 crit_shot 时 bullet_fly 不出现；未持有 bullet_fly 时 sniper_god 不出现', () => {
+  it('升级池前置依赖：未持有 execution_order 时 execute_up 不出现；未持有 crit_shot 时 bullet_fly 不出现；sniper_god 无依赖可直接出现', () => {
     const wsEmpty = { level: 0, cooldownMs: 0, cards: {} };
     const poolEmpty = availableCards(def, wsEmpty, false).map((c) => c.id);
     expect(poolEmpty).not.toContain('execute_up');
     expect(poolEmpty).not.toContain('bullet_fly');
-    expect(poolEmpty).not.toContain('sniper_god');
+    expect(poolEmpty).toContain('sniper_god');
 
     const wsExec = { level: 1, cooldownMs: 0, cards: { execution_order: 1 } };
     const poolExec = availableCards(def, wsExec, false).map((c) => c.id);
@@ -745,11 +823,6 @@ describe('数值全部来自 weapons/charge_sniper.json（真实表驱动，新�
     const wsCrit = { level: 1, cooldownMs: 0, cards: { crit_shot: 1 } };
     const poolCrit = availableCards(def, wsCrit, false).map((c) => c.id);
     expect(poolCrit).toContain('bullet_fly');
-    expect(poolCrit).not.toContain('sniper_god');
-
-    const wsFly = { level: 2, cooldownMs: 0, cards: { crit_shot: 1, bullet_fly: 1 } };
-    const poolFly = availableCards(def, wsFly, false).map((c) => c.id);
-    expect(poolFly).toContain('sniper_god');
   });
 
   it('牌组 stats 注入：伤害乘区、爆头与新牌参数全部随牌', () => {
@@ -760,7 +833,8 @@ describe('数值全部来自 weapons/charge_sniper.json（真实表驱动，新�
     };
     expect(shoot([]).damage).toBeCloseTo(60, 9);
     expect(shoot(['dmg_up']).damage).toBeCloseTo(78, 9);
-    expect(shoot(['headshot']).headshotMultiplier).toBeCloseTo(1.5, 9);
+    expect(shoot(['headshot']).headshotCurrentHpFactor).toBeCloseTo(0.15, 9);
+    expect(shoot(['headshot']).headshotBossCurrentHpFactor).toBeCloseTo(0.10, 9);
     expect(shoot(['execution_order']).executionHpFactor).toBeCloseTo(0.2, 9);
     expect(shoot(['execution_order']).executionBossHpFactor).toBeCloseTo(0.07, 9);
     expect(shoot(['execution_order', 'execute_up']).executionHpFactor).toBeCloseTo(0.25, 9);
@@ -768,11 +842,22 @@ describe('数值全部来自 weapons/charge_sniper.json（真实表驱动，新�
     expect(shoot(['execution_order', 'execute_up', 'execute_up']).executionHpFactor).toBeCloseTo(0.3, 9);
     expect(shoot(['execution_order', 'execute_up', 'execute_up']).executionBossHpFactor).toBeCloseTo(0.11, 9);
     expect(shoot(['crit_shot']).critChance).toBeCloseTo(0.2, 9);
+    expect(shoot(['crit_shot']).critMultiplier).toBeCloseTo(5.5, 9);
+    expect(shoot(['crit_shot']).critSynergyBoost).toBeCloseTo(0.5, 9);
     expect(shoot(['crit_shot', 'crit_shot']).critChance).toBeCloseTo(0.4, 9);
     expect(shoot(['crit_shot', 'crit_shot', 'crit_shot', 'crit_shot', 'crit_shot']).critChance).toBeCloseTo(1.0, 9);
     expect(shoot(['bullet_fly']).bulletFly).toBe(1);
+    expect(shoot(['bullet_fly']).killCritAmp).toBeCloseTo(0.1, 9);
     expect(shoot(['sniper_god']).sniperGod).toBe(1);
     expect(shoot(['sniper_god']).penetrateAmp).toBeCloseTo(0.2, 9);
     expect(shoot(['execution_order']).executionXpFactor).toBeCloseTo(1.25, 12);
+  });
+
+  it('屏幕外敌人防锁定：仅有屏幕外敌人（y=-40）时不开火且冷却归 0', () => {
+    const state = createSimState(1);
+    makeEnemy(state, 360, -40);
+    fireOnce(state, []);
+    expect(state.projectiles).toHaveLength(0);
+    expect(state.weaponStates['charge_sniper'].cooldownMs).toBe(0);
   });
 });

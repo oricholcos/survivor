@@ -57,7 +57,7 @@ import { pushSfxThrottled, SFX_PUSH_MIN_INTERVAL_MS } from '../events';
 import { scheduleBurstWaves, consumeDueBurstWaves } from '../cards';
 import { distSq, normalize } from '../math';
 import { pickNearestDistinctEnemies, spawnProjectile } from '../projectiles';
-import { findTarget, leadAim } from '../targeting';
+import { findTarget, isEnemyLockable, leadAim } from '../targeting';
 import type { Enemy, Projectile, SimState } from '../types';
 import type { WeaponBehavior } from './registry';
 import type { WeaponStats } from '../weapons';
@@ -133,7 +133,7 @@ function zapNearby(
 
   for (let i = 0; i < enemies.length && zapped < ZAP_MAX_TARGETS; i++) {
     const e = enemies[i];
-    if (e.dead || proj.hitIds.indexOf(e.id) !== -1) {
+    if (e.dead || proj.hitIds.indexOf(e.id) !== -1 || !isEnemyLockable(e)) {
       continue;
     }
     const reach = zapRadius + e.radius;
@@ -183,7 +183,7 @@ export function nearestChainTarget(
   // 在 chainRange 内寻找未曾命中的最近存活敌人
   for (let i = 0; i < enemies.length; i++) {
     const e = enemies[i];
-    if (e.dead || proj.hitIds.indexOf(e.id) !== -1) {
+    if (e.dead || proj.hitIds.indexOf(e.id) !== -1 || !isEnemyLockable(e)) {
       continue;
     }
     const d = distSq(proj, e);

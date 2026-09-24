@@ -48,8 +48,8 @@ export interface EffectDef {
   durationMs: number;
   /** 周期结算间隔 ms（DoT 类）；缺省/0 = 无周期结算。 */
   tickMs?: number;
-  /** 叠层上限（>= 1）。 */
-  maxStacks: number;
+  /** 叠层上限（>= 1；缺省/未定义 = 无上限）。 */
+  maxStacks?: number;
   /** 重复施加语义：'reset' 重置为 1 层 / 'add' 加 1 层（上限钳制）。 */
   refresh: 'reset' | 'add';
   /** 互斥组名：同组不同 kind 互斥（组内只留一个）；缺省不参与互斥。 */
@@ -532,7 +532,7 @@ export function applyEffect(
       inst.sourceWeaponId = sourceWeaponId;
     }
     if (def.refresh === 'add') {
-      if (inst.stacks < def.maxStacks) {
+      if (def.maxStacks === undefined || inst.stacks < def.maxStacks) {
         inst.stacks += 1;
       }
     } else {
@@ -661,25 +661,6 @@ function tickEffectList(
       if (isDeadEnemy(bearer)) {
         list.length = 0; // DoT 致死：清空尸体剩余效果
         return;
-      }
-
-      // 中毒专属：毒发身亡（斩杀）判定——若剩余时间内的预期毒伤足以致死，立即暴毙提前结算
-      if (inst.kind === 'poison' && isEnemyTarget && !isDeadEnemy(bearer) && inst.untilMs > now) {
-        const nextTick = inst.data.nextTickAt;
-        if (typeof nextTick === 'number' && Number.isFinite(nextTick) && nextTick <= inst.untilMs) {
-          const remainingTicks = Math.floor((inst.untilMs - nextTick) / tickMs) + 1;
-          if (remainingTicks > 0) {
-            const singleDmg = calcDoTSingleDamage(def, inst, target);
-            const expectedTotalDmg = singleDmg * inst.stacks * remainingTicks;
-            if (expectedTotalDmg > 0 && target.hp <= expectedTotalDmg) {
-              dealDamage(state, target, target.hp, inst.sourceWeaponId);
-              if (isDeadEnemy(bearer)) {
-                list.length = 0;
-                return;
-              }
-            }
-          }
-        }
       }
     }
 

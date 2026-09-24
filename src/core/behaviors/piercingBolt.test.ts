@@ -350,5 +350,13 @@ describe('三叉分裂（trident 牌：多目标锁定分束或单目标聚合�
     const vfx = state.meta['rail_vfx:rail_piercer'] as { segments: unknown[] };
     expect(vfx.segments).toHaveLength(3);
   });
-});
 
+  it('屏幕外敌人防锁定：仅有屏幕外敌人（y=-40）时不开火且冷却归 0', () => {
+    const state = createSimState(1);
+    makeEnemy(state, 360, -40, 100);
+    state.weaponStates.rail_piercer = { level: 0, cooldownMs: 0, cards: {} };
+    behavior.fire(state, 'rail_piercer', makeStats());
+    expect(state.meta['rail_vfx:rail_piercer']).toBeUndefined();
+    expect(state.weaponStates.rail_piercer.cooldownMs).toBe(0);
+  });
+});

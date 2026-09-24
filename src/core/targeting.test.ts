@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { loadEffectDefs } from '../data/effects';
 import { createSimState } from './simState';
-import { findTarget, interceptPoint, leadAim, targetVelocity } from './targeting';
+import { findTarget, interceptPoint, isEnemyLockable, leadAim, targetVelocity } from './targeting';
 import type { Enemy, SimState } from './types';
 
 // 副作用：把 effects.json 真实效果表注册进 core/effects（slow/chill 的 speedFactor 乘区依赖）。
@@ -18,6 +18,7 @@ interface EnemyOpts {
   state?: 'march' | 'attack';
   isBoss?: boolean;
   dead?: boolean;
+  radius?: number;
 }
 
 /** 构造一个敌人夹具（数值仅存在于测试夹具；state 控制行军/贴墙）。 */
@@ -28,7 +29,7 @@ function makeEnemy(state: SimState, x: number, y: number, opts: EnemyOpts = {}):
     name: '测试怪',
     x,
     y,
-    radius: 10,
+    radius: opts.radius ?? 10,
     hp: 100,
     maxHp: 100,
     speed: opts.speed ?? 0,
@@ -240,5 +241,59 @@ describe('findTarget 四级优先级（boss > attack 贴墙 > fast > 最近）',
 
     expect(findTarget(state, { maxRange: 150 })).toBe(nearEnemy);
     expect(findTarget(state, { maxRange: 50 })).toBeNull();
+  });
+
+  it('屏幕外过滤：未完全进入屏幕（y < topOffset）的敌人默认不可被锁定', () => {
+    const state = createSimState(1);
+    // 普通怪 r=16，topOffset = 16 + 10 = 26
+    const offscreen = makeEnemy(state, 360, -40, { radius: 16 });
+    const partiallyIn = makeEnemy(state, 360, 20, { radius: 16 }); // 20 < 26：血条顶在 -6px，未完全进屏
+    expect(findTarget(state)).toBeNull();
+
+    // 显式允许 includeOffscreen 时可以锁定屏幕外怪
+    expect(findTarget(state, { includeOffscreen: true })).toBe(partiallyIn);
+
+    // 完全进入屏幕后（y ≥ 26）可以正常被锁定
+    const fullyIn = makeEnemy(state, 360, 26, { radius: 16 });
+    expect(findTarget(state)).toBe(fullyIn);
+    expect(offscreen.dead).toBe(false);
+  });
+});
+
+describe('isEnemyLockable（敌人屏幕内完全可见判定）', () => {
+  it('普通怪：y < radius + 10 为 false，y >= radius + 10 为 true', () => {
+    const state = createSimState(1);
+    // runner: r=12 → 阈值 22
+    const runnerOff = makeEnemy(state, 360, 21.9, { radius: 12 });
+    expect(isEnemyLockable(runnerOff)).toBe(false);
+    const runnerOn = makeEnemy(state, 360, 22, { radius: 12 });
+    expect(isEnemyLockable(runnerOn)).toBe(true);
+
+    // standard: r=16 → 阈值 26
+    const stdOff = makeEnemy(state, 360, -40, { radius: 16 });
+    expect(isEnemyLockable(stdOff)).toBe(false);
+    const stdOn = makeEnemy(state, 360, 26, { radius: 16 });
+    expect(isEnemyLockable(stdOn)).toBe(true);
+
+    // tank: r=22 → 阈值 32
+    const tankOff = makeEnemy(state, 360, 31.9, { radius: 22 });
+    expect(isEnemyLockable(tankOff)).toBe(false);
+    const tankOn = makeEnemy(state, 360, 32, { radius: 22 });
+    expect(isEnemyLockable(tankOn)).toBe(true);
+  });
+
+  it('Boss怪：考量 1.15 倍率与 22px 间距，y >= radius * 1.15 + 22 才为 true', () => {
+    const state = createSimState(1);
+    // boss_1: r=34 → 34 * 1.15 + 22 = 61.1
+    const bossOff = makeEnemy(state, 360, 61.0, { radius: 34, isBoss: true });
+    expect(isEnemyLockable(bossOff)).toBe(false);
+    const bossOn = makeEnemy(state, 360, 61.1, { radius: 34, isBoss: true });
+    expect(isEnemyLockable(bossOn)).toBe(true);
+  });
+
+  it('死亡怪恒为 false', () => {
+    const state = createSimState(1);
+    const deadEnemy = makeEnemy(state, 360, 500, { dead: true });
+    expect(isEnemyLockable(deadEnemy)).toBe(false);
   });
 });

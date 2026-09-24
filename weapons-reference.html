@@ -166,7 +166,7 @@
     <tr><th style="width:7em">牌</th><th style="width:6em">上限</th><th>效果（牌表原文）</th></tr>
     <tr><td>弹跳+1</td><td>5 层（突破 8）</td><td>链弹弹跳次数 +1（基础 3 跳）：每次命中后向弹跳范围内最近的未命中敌人弹跳，每跳伤害 ×0.8 递减（可叠 5 次，突破后上限 8 次）</td></tr>
     <tr><td>连锁闪电</td><td>1 次（一次性）</td><td>命中时对 90px 内至多 2 个尚未被本弹直击过的敌人各放出 50% 武器伤害的闪电</td></tr>
-    <tr><td>冰毒附着</td><td>1 次（一次性）</td><td>命中的幸存敌人同时附着冰缓（移速 ×0.75、持续 2.5s）与中毒（每 1s 一跳、每跳 25% 武器伤害、持续 5s、至多 15 层，预期毒伤致死时立即毒发身亡）</td></tr>
+    <tr><td>冰毒附着</td><td>1 次（一次性）</td><td>命中的幸存敌人同时附着冰缓（移速 ×0.75、持续 2.5s）与中毒（每 1s 一跳、每跳 25% 武器伤害、持续 5s，可无限叠层）</td></tr>
     <tr><td>聚能折返</td><td>1 次（一次性）</td><td>弹跳终结时竖直向下发射宽体贯穿光梭：伤害随跳数提升（基础×(1+25%×跳数)），贯穿沿途所有敌人</td></tr>
     <tr><td>聚能超载</td><td>1 次（一次性；需聚能折返）</td><td>弹跳终结触发聚能折返时，额外发射 1 道平行贯穿光梭，且所有光梭对命中的幸存敌人附带 0.6s 眩晕</td></tr>
     <tr><td>链路稳定</td><td>3 层（突破 4）</td><td>链弹每跳伤害衰减更缓：递减系数 +0.05/张（可叠 3 次，突破后上限 4 次）</td></tr>
@@ -358,7 +358,7 @@
 <!-- ============ 怪物血量成长表 ============ -->
 <section class="card" id="enemies">
   <h2>怪物血量成长表 <code>enemies.json × waves.json</code></h2>
-  <p class="tag">每 30s 采样一次（0 → 840s / 14 分钟）；血量 = 基础血量 ×（1 + 0.013 × t）×（600s 后仅无尽模式：循环膨胀 1.60^k，刷怪密度独立膨胀 1.20^k）</p>
+  <p class="tag">每 30s 采样一次（0 → 840s / 14 分钟）；血量 = 基础血量 ×（1 + 0.013 × t）×（600s 后仅极限生存模式：循环膨胀 1.60^k，刷怪密度独立膨胀 1.20^k）</p>
   <table>
     <tr><th style="width:8.5em">时间</th><th style="width:8.5em">总乘数</th><th>快速小怪 runner</th><th>标准怪 standard</th><th>肉盾怪 tank</th><th>首领 boss_1</th></tr>
     <tr><td class="num">0s</td><td class="num">×1.00</td><td class="num">18.0</td><td class="num">40.0</td><td class="num">220.0</td><td class="num">907.0</td></tr>
@@ -392,10 +392,10 @@
     <tr><td class="num">840s</td><td class="num">×147.64（循环6）</td><td class="num">2657.5</td><td class="num">5905.6</td><td class="num">32480.7</td><td class="num">133909.0</td></tr>
   </table>
   <ul>
-    <li><strong>公式与来源</strong>：基础血量 18 / 40 / 220 / 907（src/data/enemies.json）；时间膨胀 HP(t) = 基础 ×（1 + 0.013 × t）（waves.json <code>scaling.hpPerSec</code>，t 为波次时间轴位置）。≤600s 的行同时适用于战役全程与无尽模式前 10 分钟；600s 行即战役终局值。</li>
-    <li><strong>无尽循环（600s 后仅无尽模式）</strong>：时间轴回绕至表尾 560~600s 段进入 40s 循环（src/core/waveClock.ts），第 k 循环血量与经验同乘 1.60^k，刷怪密度独立同乘 1.20^k——「循环 k」行是采样时刻的实际血量（= 时间因子 × 1.60^k）。</li>
-    <li><strong>缓坡过渡</strong>：血量翻倍周期拉长至约 60~70s（循环膨胀 1.60^k，原 2.0^k 每 40s 翻倍），刷怪密度解耦大幅放缓（1.20^k），彻底消除进入无尽模式即瞬间堆屏秒败的悬崖现象。</li>
-    <li><strong>不在表内的修正</strong>：爆发波杂兵（burst）额外 ×strengthFactor（0.5~0.8 逐波，见 waves.json）；Boss 不吃 strengthFactor、不受 350 存活上限钳制。对墙伤害 / 移速 / 攻击间隔不随时间或循环膨胀（无尽模式的致死压力来自「杀不掉的怪堆积」）。</li>
+    <li><strong>公式与来源</strong>：基础血量 18 / 40 / 220 / 907（src/data/enemies.json）；时间膨胀 HP(t) = 基础 ×（1 + 0.013 × t）（waves.json <code>scaling.hpPerSec</code>，t 为波次时间轴位置）。≤600s 的行同时适用于战役全程与极限生存模式前 10 分钟；600s 行即战役终局值。</li>
+    <li><strong>循环机制（600s 后仅极限生存模式）</strong>：时间轴回绕至表尾 560~600s 段进入 40s 循环（src/core/waveClock.ts），第 k 循环血量与经验同乘 1.60^k，刷怪密度独立同乘 1.20^k——「循环 k」行是采样时刻的实际血量（= 时间因子 × 1.60^k）。</li>
+    <li><strong>缓坡过渡</strong>：血量翻倍周期拉长至约 60~70s（循环膨胀 1.60^k，原 2.0^k 每 40s 翻倍），刷怪密度解耦大幅放缓（1.20^k），彻底消除进入极限生存循环后瞬间堆屏秒败的悬崖现象。</li>
+    <li><strong>不在表内的修正</strong>：爆发波杂兵（burst）额外 ×strengthFactor（0.5~0.8 逐波，见 waves.json）；Boss 不吃 strengthFactor、不受 350 存活上限钳制。对墙伤害 / 移速 / 攻击间隔不随时间或循环膨胀（极限生存模式的致死压力来自「杀不掉的怪堆积」）。</li>
   </ul>
 </section>
 

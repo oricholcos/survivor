@@ -806,4 +806,13 @@ describe('dot 频率（dot_freq 牌，requiresCard=burn_ground：燃烧地 tick 
     updateZones(state, 384.7, fillGrid(state));
     expect(victim.hp).toBeCloseTo(1e6 - 18 - 3, 6); // 母弹爆炸 + 首跳（384.6ms）
   });
+
+  it('屏幕外敌人防锁定：仅有屏幕外敌人（y=-40）时不开火且冷却归 0', () => {
+    const state = createSimState(1);
+    makeEnemy(state, 360, -40);
+    makeEnemy(state, 370, -40);
+    fireWithCards(state, []);
+    expect(state.projectiles).toHaveLength(0);
+    expect(state.weaponStates.mortar.cooldownMs).toBe(0);
+  });
 });

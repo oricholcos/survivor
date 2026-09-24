@@ -551,35 +551,181 @@
       - `npm run lint` 0 warnings 0 errors；
       - `npm run build` 成功。
 
+38. **M38: 模式预期重塑与极限生存 HUD 强化（方案 B 落地）**：
+    - **修改背景**：
+      - 原“无尽模式”在 16~17 分钟左右收敛，容易给玩家造成“假无尽”的心理预期落差；
+      - 采纳方案 B：维持战斗数值与波次循环模型不变，通过重命名为“极限生存”明确其街机式高压防线挑战定位，并在局内强化波次轮数与历史纪录反馈。
+    - **表现层与 HUD 呈现**：
+      - **主菜单文案更新 (`src/ui/overlay.ts`)**：
+        - 模式选择按钮更新为：`极限生存（突破极限，冲击最长存活）`；
+        - 底部纪录栏更新为：`生存最长 mm:ss`；
+        - 结算面板标题更新为：`极限终章`（保留品红霓虹高亮风格与分数强调）。
+      - **局内 HUD 增强 (`src/phaser/mainScene.ts`)**：
+        - 首行模式与轮数动态展示：
+          - 初始阶段（0~600s）：`模式 极限生存 (第 1 轮)`；
+          - 进入循环（>600s）：`模式 极限生存 (第 ${loopCount + 1} 轮 ×${loopScale.toFixed(1)})`；
+        - 次行存活与历史最佳对比：`存活 mm:ss (最佳 mm:ss)`（无纪录时显示 `(最佳 —)`）；
+        - 在 `create()` 与 `restart` 时自动同步 `loadRecords().bestEndlessMs`。
+      - **武器参考手册文档同步 (`weapons-reference.html`)**：
+        - 怪物血量成长表说明全面更新为“极限生存模式（原无尽模式）”。
+    - **全量测试与质量指标**：
+      - 全量 36 个测试文件、715 passed 全部通过（0 skipped，0 errors）；
+      - `balance.test.ts` 无尽模式与战役模式全对局通过；
+      - `npm run lint` 0 warnings 0 errors；
+      - `npx tsc --noEmit` 与 `npm run build` 生产构建通过。
+
+39. **M39: 毒伤机制调整（解除叠加上限与删除毒发身亡斩杀）**：
+    - **修改背景**：
+      - 玩家要求调整中毒机制：解除 15 层的叠层上限，允许毒附着无限叠层；同时移除当预期剩余总毒伤超过当前血量时的立即死亡（斩杀）判定，恢复平稳周期跳伤。
+    - **数据与机制实装**：
+      - **效果配置 (`src/data/effects.json`)**：移除 `poison` 的 `maxStacks: 15` 配置；
+      - **模拟层协议与叠层 (`src/core/effects.ts`)**：
+        - `EffectDef.maxStacks` 设为可选 `maxStacks?: number`，未定义表示无叠层上限；
+        - `applyEffect` 中当 `def.refresh === 'add'` 时放宽条件：`def.maxStacks === undefined || inst.stacks < def.maxStacks` 均可累加层数；
+        - `tickEffectList` 中彻底移除 `inst.kind === 'poison'` 的毒发提前斩杀致死判定，无论剩余总毒伤多高均平稳按 `tickMs` 周期跳伤扣血。
+      - **卡牌与文档描述同步**：
+        - `src/data/weapons/prism.json`：`frost_venom` 文案更新为“命中的幸存敌人同时附着冰缓（移速 ×0.75、持续 2.5s）与中毒（每 1s 一跳、每跳 25% 武器伤害、持续 5s，可无限叠层）”；
+        - `CARDS.md` 与 `weapons-reference.html` 同步对齐上述卡牌描述；
+      - **专项单测更新 (`src/core/effects.test.ts`)**：
+        - 验证 20 层以上无限叠毒与每跳伤害线性累加；
+        - 验证当敌人生命值低于预期剩余总毒伤时不再当帧暴毙，而是按周期正常跳伤。
+    - **全量测试与质量指标**：
+      - 全量 36 个测试文件、715 passed 全部通过（0 skipped，0 errors）；
+      - `balance.test.ts` 战役/极限生存对局全部正常通过；
+      - `npm run lint` 0 warnings 0 errors；
+      - `npx tsc --noEmit` 与 `npm run build` 成功。
+
+40. **M40: 蓄能狙击机制重构与波次平衡基线重校**：
+    - **修改背景与设计定位**：
+      - 蓄能狙击（`charge_sniper`）定位为“慢速极小范围但伤害极高的对点输出武器”，不享受多射/连射/分裂/攻速强化；原机制在面对怪潮时无法突破前排小怪射中 Boss，且中后期固定攻速与极细杀伤线跟不上敌人血量成长；
+      - 遵循用户设计进行系统级重构，内化击杀穿透、解除击杀爆头成长上限、重做百分比斩首、引入专属卡牌乘区联动，并解耦狙神前置依赖。
+    - **核心机制与卡牌实装**：
+      - **击杀穿透内化为基础能力 (`src/core/behaviors/behavior_chargeSniper.ts`)**：
+        - 移除原先穿透必须依赖专属牌【让子弹飞】的限制；子弹命中造成敌方死亡（直击致死、爆头伤害致死、斩首当前生命致死或死刑宣告处决致死），立即获得穿透（`pierceLeft = 2` 后扣减 1 为 1 保持飞行），实现零牌初始即可打穿前排杂兵直取后排或 Boss。
+      - **【让子弹飞 (`bullet_fly`)】重构为爆头穿透与击杀爆头永久成长**：
+        - 机制 1：命中触发爆头（`isCrit`）时强制穿透（即使目标未死亡）；
+        - 机制 2：蓄能狙击每杀死 1 个单位，爆头伤害永久提升 10%（550% → 560% → 570%...，全局累计无上限）；在 `behavior_chargeSniper.ts` 中通过全局计数器 `sniper_kill_count` 跟踪，并动态计算 `killCritBonus = killCount * 0.1`。
+      - **【斩首 (`headshot`)】重做为目标当前生命值百分比伤害**：
+        - `src/data/weapons/charge_sniper.json` 配置 `headshotCurrentHpFactor: 0.15` 与 `headshotBossCurrentHpFactor: 0.10`；
+        - 蓄能狙击命中时造成目标当前生命值 15%（对 Boss 为 10%）的额外物理伤害（无上限）；
+        - 伤害结算除以 `damageTakenFactor(enemy)` 消除易伤标记（`mark`）对当前生命额外伤害的二次污染放大。
+      - **【爆头 (`crit_shot`)】50% 专属强化联动放大**：
+        - `src/data/weapons/charge_sniper.json` 配置 `critSynergyBoost: 0.5`；
+        - 触发爆头时，其他专属效果提升 50%：【斩首】当前生命百分比提升至 22.5%（Boss 15%）；【死刑宣告】斩杀线提升至 1.5 倍（普通怪 15% / 22.5%，Boss 7.5% / 11.25%）。
+      - **【狙神 (`sniper_god`)】解耦**：
+        - 移除 `requiresCard: "bullet_fly"`，不再依赖【让子弹飞】，效果保持不变（常驻瞄准血量最高敌人、弹速 ×1.5、开火后全屏轻震）。
+    - **文档与测试同步**：
+      - `CARDS.md` 与 `weapons-reference.html`：全面同步【斩首】、【爆头】、【让子弹飞】与【狙神】的新机制说明与数值公式；
+      - 专属行为单测 (`src/core/behaviors/chargeSniper.test.ts`)：46 个单测全部重构并通过；
+      - 波次平衡回归 (`src/core/balance.test.ts`)：战役模式 3 个测试种子在狙击质变后均实现 1600/1600 零墙损满血通关，咬合与防线消耗断言更新为防线存活护栏（`minWallHp <= startWallHp && minWallHp > 0`），数值收敛性验证移交极限生存/无尽模式。
+    - **全量测试与质量指标**：
+      - 全量 36 个测试文件、718 passed 全部通过（0 skipped，0 errors）；
+      - `balance.test.ts` 战役/极限生存对局全部正常通过；
+      - `npm run lint` 0 warnings 0 errors；
+      - `npx tsc --noEmit` 与 `npm run build` 成功。
+
+41. **M41: 交互体验优化、视觉旧版残留清理与构筑详情指标系统重构**：
+    - **按钮重叠彻底解耦与布局对齐（任务 1）**：
+      - 解决原音效按钮（`#sfx-toggle`，宽约 95px）与悬浮暂停按钮（`.ov-pause-btn`，`right: 58px`）在右上角的物理重叠问题；
+      - 统一两按钮高度为 `34px`，顶部对齐 `top: calc(10px + env(safe-area-inset-top, 0px))`；
+      - 音效按钮固定于最右侧 `right: calc(10px + env(safe-area-inset-right, 0px))`，暂停按钮居其左侧 `right: calc(115px + env(safe-area-inset-right, 0px))`，采用全圆角胶囊风格，视觉规整协调。
+    - **选牌时暂停按钮可用与查看构筑详情（任务 2）**：
+      - 解决原升级三选一全屏面板（`z-index: 100`）遮挡暂停按钮（`z-index: 50`）导致升级中无法查看当前构筑的问题；
+      - 将 `.ov-pause-btn` 提升为 `z-index: 160`，构筑详情面板增加 `.ov-panel--inspect` 提升为 `z-index: 150`；
+      - 选牌期间点击右上角 `⏸ 构筑` 按钮，构筑详情面板流畅覆盖在选牌面板之上；关闭构筑详情面板后检测 `upgradeOpen === true` 自动保持暂停，安全平滑返回三选一界面；
+      - `resetRunState()` 补齐 `hide(levelupPanel)`，防止选牌时在构筑面板点重新开始或退出主界面造成弹窗残留。
+    - **玩家角色旧版实心黄色光晕残留彻底清除（任务 3）**：
+      - 根因排查：`src/phaser/mainScene.ts` 的 `drawCharacter` 在 ADD 发光叠加层（`depth: 4`）残留了旧版矢量实心小黄圆的 `glow.fillCircle(cx, cy, 26 + 3 * breath)` 呼吸光晕，直接罩在深度为 `3.0`/`3.1` 的 2D 高清机甲炮塔（基座与炮管贴图）正上方，致使贴图发黄发虚；
+      - 彻底移除 `drawCharacter` 中的 `glow.fillCircle` 残留与未使用的 `COLOR_CHARACTER` 常量，使机甲本体的硬表面金属质感、炮管自转索敌与后坐力 100% 锐利清晰呈现。
+    - **构筑详情面板数据指标系统重构（任务 4）**：
+      - 建立独立数据解析模块 `src/ui/buildInspect.ts`，彻底移除与攻击间隔重复的“攻击频次”项；
+      - **基础战斗面板**：单发伤害、攻击间隔、弹体穿透（无限/数值）、弹体速度；
+      - **范围类数据（rangeKeys）**：锁定范围（灼热光束）、爆炸半径（追猎导弹、迫击榴弹）、弹跳范围/闪电半径（弹射棱镜）、散射夹角（扇面霰弹）、推进距离（震波壁垒）；
+      - **弹道机制数据**：齐射发数（多射 `multi_shot`）、连射波数（连射 `burst_shot`）、命中分裂（分裂牌 `split_shot`）；
+      - **持续伤害（DoT）跳频**：结合通用 `dot_freq` 动态计算各武器灼烧、中毒、地裂的实时跳伤周期（如 `0.38s/跳` 或 `0.77s/跳`）以及频率加成倍率；
+      - **蓄能狙击专属**：爆头几率、爆头伤害（基础 550% + 让子弹飞击杀成长加成动态总和）、斩首百分比（当前生命% / Boss%）、死刑宣告斩杀线（普通怪% / Boss%）、狙神穿透增伤（+20%/人）；
+      - **各武器专属可变机制数值**：全面呈现加载增伤、协同齐射、次级光束、巡航加速、溅射比例、眩晕时长、黑洞拉拽、弹跳次数与衰减、连锁闪电、聚能折返/超载、折射次数、反弹次数、击退力度、余震伤害、眩晕加深、熔岩裂隙与城垣共鸣；
+    - **防误触二次确认弹窗（任务 5 增量）**：
+      - 为构筑详情面板底部的【重新开始】与【返回主界面】增设赛博朋克玻璃拟态二次确认模态弹窗（`.ov-panel--confirm`，`z-index: 200`）；
+      - 点击【重新开始】提示“当前对局进度将丢失，确定要重新开始一局吗？”，点击【返回主界面】提示“当前对局进度将丢失且不计入战绩，确定要退出吗？”；
+      - 配备红色高亮警示「确认」与青蓝「取消」按钮，彻底消除手滑误触导致对局丢失的问题。
+
+42. **M42: 构筑详情数据表规范对齐 (BUILD_INSPECT_DATA_SPEC.md) 与震波壁垒【眩晕时间】实装**：
+    - **修改背景**：
+      - 用户手动整理并确认了根目录下的 `BUILD_INSPECT_DATA_SPEC.md`（重点是「二、8 把武器专属指标详表」），要求游戏中构筑详情面板与文档表格 100% 逐字对齐；
+      - 特别需求：震波壁垒（`seismic_wall`）的【眩晕加时】修改为【眩晕时间】，数值直接展示当前实际生效的眩晕时长。
+    - **核心实现与对齐点 (`src/ui/buildInspect.ts`)**：
+      - **震波壁垒【眩晕时间】**：基础 800ms，持有【震荡加深】专属牌时计算 `stats.stunBonusMs`，显示格式为 `((800 + stats.stunBonusMs) / 1000).toFixed(2) + 's'`（如 `0.95s`、`1.10s`）；
+      - **迫击榴弹与弹射棱镜齐射发数约定**：`mortar.json` 和 `prism.json` 的 base 配置缺省 `projectileCount`（设计约定为单体），发射行为按 `1 + stats.projectileCount` 消费。因此构筑面板精准判断 `extraProj > 0` 并显示 `${1 + extraProj}发`；
+      - **8 把武器指标逐一精确精简**：
+        - 蓄能狙击：仅保留伤害、间隔、弹速、爆头几率、爆头伤害（去括号纯百分比）、斩杀阈值，移除斩首/击杀经验等非表定项；
+        - 灼热光束：仅保留伤害、间隔、锁定范围、灼烧跳频；
+        - 追猎导弹：仅保留伤害、间隔、弹速、爆炸半径、齐射发数、连射波数、灼烧跳频；
+        - 迫击榴弹：仅保留伤害、间隔、爆炸半径、齐射发数、连射波数、灼烧跳频；
+        - 弹射棱镜：仅保留伤害、间隔、弹速、弹跳范围、弹跳次数、每跳衰减、齐射发数、连射波数、闪电半径、中毒跳频；
+        - 轨道贯穿炮：仅保留伤害、间隔、弹体穿透（规范中唯一保留穿透的武器）、折射次数；
+        - 扇面霰弹：仅保留伤害、间隔、弹速、散射夹角、齐射发数（常驻基础5发）、连射波数、灼烧跳频；
+        - 震波壁垒：仅保留伤害、间隔、推进距离、余震伤害、眩晕时间、撕裂跳频、城垣共鸣。
+      - **【让子弹飞】击杀成长启动约束与爆头伤害展示优化**：
+        - 蓄能狙击【让子弹飞】的击杀叠加爆头伤害效果严格限制为**拿到【让子弹飞】后发射并击杀敌人**才开始从 0 累加（`dataNum(d, 'killCritAmp') > 0` 且 `enemy.dead`），未持牌前杀怪不予追溯；
+        - 构筑详情面板中的蓄能狙击【爆头伤害】去除了冗余括号说明 `(杀敌+N%)`，直接展示当前生效的净倍率（如 `550%`、`700%`）。
+    - **专项测试与全量回归 (`src/ui/buildInspect.test.ts` & `src/core/behaviors/chargeSniper.test.ts`)**：
+      - 编写 8 把武器各自指标和卡牌触发条件的专属单测用例，并覆盖让子弹飞拿牌后击杀叠加行为测试；
+      - 全量 37 个测试文件、727 个单测用例 100% 通过（0 skipped，0 errors）；
+      - `npx tsc --noEmit`、`npm run lint`、`npm run build` 全部 0 errors。
+
+43. **M43: 远程武器屏幕内完全可见索敌约束与视口锁定基建**：
+    - **修改背景**：
+      - 5 把远程武器（蓄能狙击 `charge_sniper`、追猎导弹 `homing_missile`、迫击榴弹 `mortar`、弹射棱镜 `prism`、轨道贯穿炮 `rail_piercer`）原先索敌覆盖全地图，导致敌人刚在 `spawnLineY = -40` 刷新（处于屏幕外顶部负坐标区间）时就被武器远距离锁定击杀，玩家在视觉上频繁看到怪物贴图和血条还未进入屏幕就被打死；
+      - 遵循规范将索敌限制为：只有当敌人的完整贴图与头顶血条完全进入屏幕可视区域后，才允许被武器锁定。
+    - **几何判定与阈值推导 (`src/core/targeting.ts`)**：
+      - 导出通用判定函数 `isEnemyLockable(enemy: Enemy): boolean`，严格对齐渲染层（`src/phaser/enemyRenderer.ts`）的几何尺寸：
+        - 敌人贴图有效视觉半径：`r = isBoss ? radius * 1.15 : radius`；
+        - 头顶血条顶端位于：`barY = y - r - (isBoss ? 22 : 10)`；
+        - 完全进入屏幕判定：`barY >= 0` 即 `y >= r + (isBoss ? 22 : 10)`；
+        - 当达到该阈值时，敌人的完整贴图（`y - r >= 10 > 0`）、头顶血条（`barY >= 0`）以及 Boss 旋转光环（`y - (r + 9) >= 13 > 0`）均 100% 完整显示在屏幕可视区域内；
+      - 各类型敌人的临界锁定坐标：快速小怪 `runner: y >= 22`、标准怪 `standard: y >= 26`、肉盾怪 `tank: y >= 32`、领主首领 `boss_1: y >= 61.1`；
+      - `findTarget` 主循环默认过滤 `!isEnemyLockable(e)`，并为 `FindTargetOpts` 增设 `includeOffscreen?: boolean`（缺省 `false`），保持未来特定机制或测试的灵活性。
+    - **5 把远程武器与次级系统全面接入**：
+      - **蓄能狙击 (`charge_sniper`)**：`pickTarget` 经 `findTarget` 天然受限，无进屏敌人时不发射且冷却置 0 就绪；
+      - **追猎导弹 (`homing_missile`)**：`nearestAliveEnemy` 增加 `!isEnemyLockable(e)` 过滤；初始开火 `selectTarget` 与飞行途中目标死亡后的重定向更新仅锁定屏幕内敌人，无进屏敌人时不发射且冷却置 0；
+      - **迫击榴弹 (`mortar`)**：`densestEnemy` 锚点选取与邻域聚集群统计增加 `isEnemyLockable(e)` 过滤，无进屏敌人时不发射且冷却置 0；
+      - **轨道贯穿炮 (`rail_piercer`)**：主射线经 `findTarget` 过滤；三叉分裂（`isTrident` 寻找 `others`）与智能折射（`refractLeft` 寻找 `candidateEnemy`）均增加 `isEnemyLockable` 过滤，无进屏敌人时不发射且冷却置 0；
+      - **弹射棱镜 (`prism`)**：主链弹经 `findTarget` 过滤；弹跳续跳 `nearestChainTarget` 与连锁闪电 `zapNearby` 均增加 `!isEnemyLockable` 过滤，无进屏敌人时不发射且冷却置 0；
+      - **次级分裂与炮台视觉对齐**：`src/core/projectiles.ts` 的 `pickNearestDistinctEnemies` 接入 `isEnemyLockable` 过滤，次级分裂弹不再飞出屏幕外；`src/phaser/mainScene.ts` 炮台炮管自转朝向仅瞄准屏幕内完全可见敌人，全场无进屏怪时朝正上方待命。
+    - **专项测试与全量回归**：
+      - `targeting.test.ts`、`chargeSniper.test.ts`、`homingMissile.test.ts`、`mortar.test.ts`、`piercingBolt.test.ts`、`prismChain.test.ts` 均补充屏幕外敌人防锁定专项测试；
+      - 全量 37 个测试文件、736 个单测用例 100% 全部通过（0 failed，0 skipped）；
+      - `balance.test.ts` 全自动对局回归：战役模式三种子（7, 42, 2024）全部获胜（Boss 6 满杀，seed 42 在 366.3s 承受最低墙血 184 点 = 11.5% 后逆风翻盘），极限生存模式运行至 1009.4s（16.8 分钟）自然收敛。
+
 ---
 
 ## 4. 当前工程状态与质量指标
 
 - **当前工程是否能直接运行/编译：** **是**。
 - **全量测试结果 (`npm run test` / `vitest run`)：**
-  - **36 / 36 test files passed (100%)**
-  - **715 passed, 0 skipped (715 tests)**（无尽模式收敛测试已全面解挂并通过）。
-  - 运行总耗时约 **21s**（含全自动战役/无尽完整对局模拟）。
+  - **37 / 37 test files passed (100%)**
+  - **736 passed, 0 skipped (736 tests)**。
+  - 运行总耗时约 **33s**（含全自动战役/极限生存完整对局模拟）。
 - **静态检查 (`npm run lint` / `eslint .`)：**
   - **ESLint 通过，0 errors, 0 warnings**。
 - **TypeScript 检查 (`npx tsc --noEmit` & `npm run build`)：**
-  - **通过，0 errors**，Vite 生产构建正常，70 modules transformed，产物位于 `dist/`。
+  - **通过，0 errors**，Vite 生产构建正常，71 modules transformed，产物位于 `dist/`。
+- **代码格式与 Whitespace 检查 (`git diff --check`)：**
+  - **通过，0 errors**。
 - **版本控制与资源状态：**
   - 当前分支：`feature/dev-continue`。
-  - `.gitignore` 已配置 `public/assets/sprites/`，美术资源与代码库干净隔离。
-- **平衡回归 (`balance.test.ts` 全自动对局面板，M37 最新基线)：**
-  - campaign seed 7：`victory` @598.6s，最低墙血 1573/1600（98.3%），击杀 1579（Boss 6）。
-  - campaign seed 42：`victory` @610.8s，最低墙血 1555/1600（97.2%），击杀 1610（Boss 6）。
-  - campaign seed 2024：`victory` @591.4s，最低墙血 1600/1600（100.0%），击杀 1531（Boss 6）。
-  - endless seed 7：`defeat` @961.0s，最低墙血 0/1600（0.0%），击杀 5515（Boss 12），loop=10（×109.95）。
+  - 美术资源与代码库干净隔离。
 
 ---
 
 ## 5. 给接手 Agent 的后续建议
 
 1. **当前状态**：
-   - M37 战力平衡与局内体验升级（局中构筑详情面板与右上角暂停按钮、无尽 DoT 上限与单测解挂、Boss 来袭声光警报与关键高伤跳字、三选一 2 次重掷）已 100% 交付；
-   - 代码库状态全绿：36 个测试套件通过，715 个用例全 PASS，tsc、lint 与 build 均为 0 errors。
+   - M43 远程武器屏幕内完全可见索敌约束与视口锁定基建已完整交付；
+   - 敌人完全进入屏幕判定条件为：头顶血条顶端坐标 $\text{barY} \ge 0$（普通怪 $y \ge \text{radius} + 10$，Boss $y \ge \text{radius} \times 1.15 + 22$），贴图、光环与血条均完全处于屏幕内；
+   - 5 把远程武器、次级分裂弹、闪电、弹跳与炮台朝向均已统一接入 `isEnemyLockable`；
+   - 全量测试通过：37 个测试套件通过，736 个用例全 PASS，tsc、lint、build 与 git diff --check 均为 0 errors。
 2. **后续可选打磨方向**：
    - **音效多样性**：可继续补充更多武器的专属击中与开火音色（如光束蜂鸣、电磁充能声）；
    - **更多模式与局外系统**：如局外科技树或图鉴系统。

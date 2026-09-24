@@ -17,6 +17,8 @@
 import Phaser from 'phaser';
 import { xpToNext } from '../core/gems';
 import { listZones } from '../core/zones';
+import { WAVE_CLOCK_META_KEY, type WaveClockInput } from '../core/waves';
+import { isEnemyLockable } from '../core/targeting';
 import type { CoordinatedFireVfx, HeatBeamVfx } from '../core/behaviors/behavior_heatBeam';
 import { COORDINATED_FIRE_VFX_MS } from '../core/behaviors/behavior_heatBeam';
 import type { RailVfx } from '../core/behaviors/behavior_piercingBolt';
@@ -31,6 +33,7 @@ import { SEISMIC_SWEEP_MS, type SeismicPulseVfx } from '../core/behaviors/behavi
 import type { GameEvent } from '../core/events';
 import type { Enemy, SimState } from '../core/types';
 import type { GameSession } from '../game/session';
+import { loadRecords } from '../game/records';
 import { loadWeaponDefs } from '../data/weapons';
 import { loadEnemyTypes } from '../data/enemies';
 import {
@@ -134,7 +137,6 @@ const SEISMIC_SHAKE_INTENSITY = 0.005;
 const MORTAR_BLAST_DRAW_CAP = 32;
 
 const COLOR_XP_FILL = 0x8be9fd;
-const COLOR_CHARACTER = 0xffe066;
 
 /** 武器定义表（HUD 武器列表行名称用；数据表只加载一次、内容共享只读）。 */
 const WEAPON_DEFS = loadWeaponDefs();
@@ -402,6 +404,8 @@ export class MainScene extends Phaser.Scene {
   private kills = 0;
   /** 上一次见到的 SimState 引用：session.restart() 整体替换 state 时重置派生计数与特效。 */
   private lastState: SimState | null = null;
+  /** 极限生存历史最佳纪录 ms（局初读入，本局对比展示）。 */
+  private bestEndlessMs: number | null = null;
 
   // —— 池化特效（fx.ts：环形缓冲，容量硬上限） ——
   private readonly deathBurst = new DeathBurst();
@@ -518,6 +522,7 @@ export class MainScene extends Phaser.Scene {
       })
       .setDepth(10)
       .setShadow(0, 2, 'rgba(0,0,0,0.85)', 3);
+    this.bestEndlessMs = loadRecords().bestEndlessMs;
     // 武器胶囊芯片层（G1）：depth 同 hudText（10），压在敌人/弹丸之上；仅 diff 变化时重绘。
     this.chipGfx = this.add.graphics().setDepth(10);
 
@@ -578,6 +583,7 @@ export class MainScene extends Phaser.Scene {
     if (this.session.state !== this.lastState) {
       this.lastState = this.session.state;
       this.kills = 0;
+      this.bestEndlessMs = loadRecords().bestEndlessMs;
       this.resetFx();
     }
 
@@ -1017,19 +1023,19 @@ export class MainScene extends Phaser.Scene {
   /** 主角防卫炮塔：双层装配（基座 + 旋转炮管）+ 实时索敌 + 开火后坐力。 */
   private drawCharacter(
     _g: Phaser.GameObjects.Graphics,
-    glow: Phaser.GameObjects.Graphics,
+    _glow: Phaser.GameObjects.Graphics,
     s: SimState,
   ): void {
     const cx = s.character.x;
     const cy = s.character.y;
 
-    // 索敌朝向：优先场上最近的存活敌人，无存活敌人时默认朝向正上方 (-PI/2)
+    // 索敌朝向：优先场上最近的存活且在屏幕内的敌人，无存活敌人时默认朝向正上方 (-PI/2)
     let targetAngle = -Math.PI / 2;
     let minDistSq = Infinity;
     const enemies = s.enemies;
     for (let i = 0; i < enemies.length; i++) {
       const e = enemies[i];
-      if (e.dead) {
+      if (e.dead || !isEnemyLockable(e)) {
         continue;
       }
       const dx = e.x - cx;
@@ -1048,11 +1054,6 @@ export class MainScene extends Phaser.Scene {
     this.turretBase.setPosition(cx, cy);
     this.turretCannon.setPosition(cx + recoilX, cy + recoilY);
     this.turretCannon.setRotation(targetAngle);
-
-    // 炮塔呼吸底光（保留科幻感氛围）
-    const breath = 0.5 + 0.5 * Math.sin(s.timeMs / 620);
-    glow.fillStyle(COLOR_CHARACTER, 0.08 + 0.04 * breath);
-    glow.fillCircle(cx, cy, 26 + 3 * breath);
   }
 
   /** meta VFX 分发（视图只读 meta，逐键前缀匹配；条目结构运行时守卫）。 */
@@ -1546,12 +1547,27 @@ export class MainScene extends Phaser.Scene {
   /** HUD（左上角等宽字体）：当前模式 / 存活时间 mm:ss / 等级 / 击杀数 + 细经验条；武器列表改为胶囊芯片（G1）。 */
   private renderHud(s: SimState): void {
     const bossKills = (s.meta.bossKills as number | undefined) ?? 0;
-    const modeLabel =
-      this.session.mode === 'endless'
-        ? '模式 无尽'
-        : `模式 通关 (${bossKills}/6)`;
+    let modeLabel: string;
+    let timeLabel: string;
+
+    if (this.session.mode === 'endless') {
+      const clock = s.meta[WAVE_CLOCK_META_KEY] as WaveClockInput | undefined;
+      const loopCount = clock?.loopCount ?? 0;
+      const loopScale = clock?.loopScale ?? 1;
+      const loopTag =
+        loopCount > 0 ? ` (第 ${loopCount + 1} 轮 ×${loopScale.toFixed(1)})` : ' (第 1 轮)';
+      modeLabel = `模式 极限生存${loopTag}`;
+
+      const bestMs = this.bestEndlessMs;
+      const bestStr = bestMs !== null ? this.formatTime(bestMs) : '—';
+      timeLabel = `存活 ${this.formatTime(s.timeMs)} (最佳 ${bestStr})`;
+    } else {
+      modeLabel = `模式 通关 (${bossKills}/6)`;
+      timeLabel = `存活 ${this.formatTime(s.timeMs)}`;
+    }
+
     this.hudText.setText(
-      `${modeLabel}\n存活 ${this.formatTime(s.timeMs)}\n等级 ${s.progress.level}\n击杀 ${this.kills}`,
+      `${modeLabel}\n${timeLabel}\n等级 ${s.progress.level}\n击杀 ${this.kills}`,
     );
     this.syncWeaponChips(s);
 

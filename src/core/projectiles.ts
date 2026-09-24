@@ -11,6 +11,7 @@ import { getBehavior } from './behaviors/registry';
 import { pushSfxThrottled, SFX_PUSH_MIN_INTERVAL_MS } from './events';
 import { applyEffectsOnHit, dealDamage } from './effects';
 import { Pool } from './objectPool';
+import { isEnemyLockable } from './targeting';
 import type { SpatialHash } from './spatialHash';
 import type { Enemy, Projectile, SimState } from './types';
 import type { WeaponBehavior } from './behaviors/registry';
@@ -142,7 +143,7 @@ export function pickNearestDistinctEnemies(
     let bestDistSq = Infinity;
     for (let i = 0; i < enemies.length; i++) {
       const e = enemies[i];
-      if (e.dead || picked.indexOf(e) !== -1) {
+      if (e.dead || !isEnemyLockable(e) || picked.indexOf(e) !== -1) {
         continue;
       }
       if (excluded.indexOf(e.id) !== -1) {

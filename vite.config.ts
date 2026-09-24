@@ -9,6 +9,8 @@ export default defineConfig({
       'src/core/**/*.spec.ts',
       'src/game/**/*.test.ts',
       'src/game/**/*.spec.ts',
+      'src/ui/**/*.test.ts',
+      'src/ui/**/*.spec.ts',
     ],
     passWithNoTests: true,
   },

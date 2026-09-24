@@ -506,18 +506,18 @@ export const OVERLAY_CSS = `
 /* —— 局中构筑悬浮按钮与构筑面板（模块 A & D） —— */
 .ov-pause-btn {
   position: fixed;
-  top: calc(12px + env(safe-area-inset-top, 0px));
-  right: calc(58px + env(safe-area-inset-right, 0px));
-  z-index: 50;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  right: calc(115px + env(safe-area-inset-right, 0px));
+  z-index: 160;
   height: 34px;
-  padding: 0 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(24, 201, 255, 0.4);
-  background: rgba(11, 17, 32, 0.85);
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(24, 201, 255, 0.45);
+  background: rgba(10, 17, 36, 0.85);
   color: #eaf4ff;
   font-size: 13px;
   font-weight: 700;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 4px;
@@ -532,6 +532,29 @@ export const OVERLAY_CSS = `
   border-color: #18c9ff;
   box-shadow: 0 0 18px rgba(24, 201, 255, 0.45);
   transform: scale(1.03);
+}
+
+.ov-panel--inspect {
+  z-index: 150;
+}
+
+.ov-panel--confirm {
+  z-index: 200;
+}
+
+.ov-card--confirm {
+  max-width: min(88vw, 420px);
+  padding: 24px 28px;
+}
+.ov-card--confirm .ov-title {
+  font-size: 22px;
+  margin-bottom: 12px;
+}
+.ov-card--confirm .ov-sub {
+  font-size: 14px;
+  line-height: 1.5;
+  margin-bottom: 20px;
+  color: #cdd9e5;
 }
 
 .ov-card--inspect {

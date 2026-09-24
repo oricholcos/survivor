@@ -60,7 +60,7 @@ import { scheduleBurstWaves, consumeDueBurstWaves } from '../cards';
 import { clamp } from '../math';
 import { pickNearestDistinctEnemies, spawnProjectile } from '../projectiles';
 import { SpatialHash } from '../spatialHash';
-import { leadAim, targetVelocity } from '../targeting';
+import { isEnemyLockable, leadAim, targetVelocity } from '../targeting';
 import type { Enemy, SimState } from '../types';
 import type { WeaponBehavior } from './registry';
 import type { WeaponStats } from '../weapons';
@@ -154,13 +154,13 @@ function densestEnemy(state: SimState, densityRadius: number): Enemy | null {
   const enemies = state.enemies;
   for (let i = 0; i < enemies.length; i++) {
     const e = enemies[i];
-    if (e.dead) {
+    if (e.dead || !isEnemyLockable(e)) {
       continue;
     }
     const near = grid.queryCircle(e.x, e.y, densityRadius, scratchNear);
     let count = 0;
     for (let n = 0; n < near.length; n++) {
-      if (!near[n].dead) {
+      if (!near[n].dead && isEnemyLockable(near[n])) {
         count++;
       }
     }

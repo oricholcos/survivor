@@ -376,7 +376,7 @@ describe('燃烧云（burn_cloud 牌）', () => {
 describe('巡航加速（cruise_boost 牌）', () => {
   it('未持牌时：飞行速度与伤害保持基础值不变', () => {
     const state = createSimState(1);
-    makeEnemy(state, 360, 0); // 远距离敌人
+    makeEnemy(state, 360, 25); // 屏幕内完全可见且远距离敌人 (y=25 >= topOffset 20)
     fireWithCards(state);
     const p = state.projectiles[0];
     const baseSpeed = Math.hypot(p.vx, p.vy);
@@ -389,7 +389,7 @@ describe('巡航加速（cruise_boost 牌）', () => {
 
   it('持有 cruise_boost：每飞行 300ms 速度与最终爆炸伤害提升 25%，上限 +100%', () => {
     const state = createSimState(1);
-    makeEnemy(state, 360, 0); // 远距离敌人
+    makeEnemy(state, 360, 25); // 屏幕内完全可见且远距离敌人 (y=25 >= topOffset 20)
     fireWithCards(state, ['cruise_boost']);
     const p = state.projectiles[0];
     const baseSpeed = Math.hypot(p.vx, p.vy);
@@ -413,6 +413,14 @@ describe('巡航加速（cruise_boost 牌）', () => {
     // 进一步飞行 (累计 1500ms) -> 不再超过 2.0 倍
     simulate(state, 15, 20);
     expect(p.damage).toBeCloseTo(baseDamage * 2.0, 3);
+  });
+
+  it('屏幕外敌人防锁定：仅有屏幕外敌人（y=-40）时不开火且冷却归 0', () => {
+    const state = createSimState(1);
+    makeEnemy(state, 360, -40); // 出生线敌人
+    fireWithCards(state);
+    expect(state.projectiles).toHaveLength(0);
+    expect(state.weaponStates['homing_missile'].cooldownMs).toBe(0);
   });
 });
 

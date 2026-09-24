@@ -36,10 +36,10 @@ import {
 import type { GameSession } from '../game/session';
 import { loadRecords, recordResult } from '../game/records';
 import { loadWeaponDefs } from '../data/weapons';
-import { getWeaponStats } from '../core/weapons';
 import { allMaxedUnlocked } from '../core/cards';
 import { OVERLAY_CSS } from './styles';
 import { formatDamageNum, formatTime } from './format';
+import { getWeaponDisplayStats } from './buildInspect';
 
 // —— 数据表：只加载一次（内容共享只读；与 game/session.ts 同款约定） ——
 
@@ -125,7 +125,7 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
   startCard.appendChild(el('div', 'ov-sub', '抵御进攻，守住城墙'));
   const modeBox = el('div', 'ov-modes');
   const campaignBtn = el('button', 'ov-btn ov-btn--mode', '通关模式（消灭 6 只领主首领获胜）');
-  const endlessBtn = el('button', 'ov-btn ov-btn--mode', '无尽模式（扛到死，冲击最长存活）');
+  const endlessBtn = el('button', 'ov-btn ov-btn--mode', '极限生存（突破极限，冲击最长存活）');
   modeBox.appendChild(campaignBtn);
   modeBox.appendChild(endlessBtn);
   startCard.appendChild(modeBox);
@@ -151,7 +151,7 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
   levelupPanel.appendChild(levelupCard);
 
   // —— 面板二点五：局中构筑详情面板（模块 A：点击打开并自动暂停，关闭后继续） ——
-  const inspectPanel = el('div', 'ov-panel ov-hidden');
+  const inspectPanel = el('div', 'ov-panel ov-panel--inspect ov-hidden');
   const inspectCard = el('div', 'ov-card ov-card--inspect');
   inspectCard.appendChild(el('div', 'ov-title', '战斗暂停 · 构筑详情'));
   const inspectWeaponsBox = el('div', 'ov-inspect-weapons');
@@ -187,14 +187,43 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
   overCard.appendChild(overBtnRow);
   overPanel.appendChild(overCard);
 
+  // —— 面板四：二次确认弹窗（防误触重新开始与返回主界面） ——
+  const confirmPanel = el('div', 'ov-panel ov-panel--confirm ov-hidden');
+  const confirmCard = el('div', 'ov-card ov-card--confirm');
+  const confirmTitle = el('div', 'ov-title', '提示');
+  const confirmMessage = el('div', 'ov-sub', '');
+  const confirmBtnRow = el('div', 'ov-btnrow');
+  const confirmOkBtn = el('button', 'ov-btn ov-btn--danger', '确认');
+  const confirmCancelBtn = el('button', 'ov-btn ov-btn--ghost', '取消');
+  confirmBtnRow.appendChild(confirmOkBtn);
+  confirmBtnRow.appendChild(confirmCancelBtn);
+  confirmCard.appendChild(confirmTitle);
+  confirmCard.appendChild(confirmMessage);
+  confirmCard.appendChild(confirmBtnRow);
+  confirmPanel.appendChild(confirmCard);
+
   root.appendChild(pauseBtn);
   root.appendChild(startPanel);
   root.appendChild(levelupPanel);
   root.appendChild(inspectPanel);
   root.appendChild(overPanel);
+  root.appendChild(confirmPanel);
   document.body.appendChild(root);
 
   let inspectOpen = false; // 构筑详情面板展开中
+  let onConfirmAction: (() => void) | null = null;
+
+  function showConfirm(title: string, message: string, onOk: () => void): void {
+    confirmTitle.textContent = title;
+    confirmMessage.textContent = message;
+    onConfirmAction = onOk;
+    show(confirmPanel);
+  }
+
+  function hideConfirm(): void {
+    onConfirmAction = null;
+    hide(confirmPanel);
+  }
 
   // —— 本局派生值归位（开局 / 重开共用）。 ——
   function resetRunState(): void {
@@ -203,7 +232,9 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
     upgradeOpen = false;
     inspectOpen = false;
     gameEnded = false;
+    hideConfirm();
     hide(inspectPanel);
+    hide(levelupPanel);
   }
 
   // —— 菜单纪录摘要（T4.2）：填真实纪录；三行紧凑展示，无任何纪录时显示引导文案。 ——
@@ -217,7 +248,7 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
     }
     recordsSummary.textContent = '';
     const endlessBest = records.bestEndlessMs !== null ? formatTime(records.bestEndlessMs) : '—';
-    recordsSummary.appendChild(el('div', undefined, `无尽最长 ${endlessBest}`));
+    recordsSummary.appendChild(el('div', undefined, `生存最长 ${endlessBest}`));
     recordsSummary.appendChild(
       el('div', undefined, `通关：${records.campaignCleared ? '已达成' : '未达成'}`),
     );
@@ -242,7 +273,6 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
       if (!def) {
         continue;
       }
-      const stats = getWeaponStats(def, state, id);
       const isMax = ws.level >= (def.maxLevel ?? 10);
 
       const card = el('div', 'ov-weapon-card');
@@ -262,15 +292,9 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
       head.appendChild(el('span', 'ov-weapon-damage', `累计输出 ${formatDamageNum(ws.damageDealt ?? 0)}`));
       card.appendChild(head);
 
-      // 数值网格：实时解析后的伤害、攻速、间隔、穿透、弹速
+      // 数值网格：实时解析后的伤害、间隔、穿透、弹速、范围及各项专属可变机制
       const grid = el('div', 'ov-stats-grid');
-      const statItems = [
-        { label: '单发伤害', val: `${Math.round(stats.damage)}` },
-        { label: '攻击间隔', val: `${(stats.intervalMs / 1000).toFixed(2)}s` },
-        { label: '攻击频次', val: `${(1000 / stats.intervalMs).toFixed(1)}/s` },
-        { label: '弹体穿透', val: `${Math.round(stats.pierce)}` },
-        { label: '弹体速度', val: `${Math.round(stats.projectileSpeed)}` },
-      ];
+      const statItems = getWeaponDisplayStats(def, state, id);
       for (const item of statItems) {
         const itemEl = el('div', 'ov-stat-item');
         itemEl.appendChild(el('span', undefined, item.label));
@@ -452,8 +476,8 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
       overTime.className = 'ov-stats';
       overTime.textContent = `存活时间 ${formatTime(s.state.timeMs)}`;
     } else if (s.mode === 'endless') {
-      // 无尽终章：存活时间即分数，强调显示。
-      setOutcomeTitle('无尽终章', 'endless');
+      // 极限终章：存活时间即分数，强调显示。
+      setOutcomeTitle('极限终章', 'endless');
       overTime.className = 'ov-stats ov-score';
       overTime.textContent = `本局存活 ${formatTime(s.state.timeMs)}`;
     } else {
@@ -463,7 +487,7 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
       overTime.textContent = `存活时间 ${formatTime(s.state.timeMs)}`;
     }
 
-    // 无尽模式刷新最长存活 → 「本局存活」旁加「新纪录！」标记。
+    // 极限生存模式刷新最长存活 → 「本局存活」旁加「新纪录！」标记。
     if (s.mode === 'endless' && settled.newBestEndless) {
       overTime.appendChild(recordBadge('新纪录！'));
     }
@@ -668,24 +692,43 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
     if (session === null) {
       return;
     }
-    closeInspect();
-    resetRunState();
-    session.restart();
-    show(pauseBtn);
+    const curSession = session;
+    showConfirm('确定重新开始？', '当前对局进度将丢失，确定要重新开始一局吗？', () => {
+      closeInspect();
+      resetRunState();
+      curSession.restart();
+      show(pauseBtn);
+    });
   });
 
   // 游戏途中返回主界面（用户拍板：游戏途中返回严格不更新纪录，绕过 recordResult）
   inspectQuitBtn.addEventListener('click', () => {
-    closeInspect();
-    resetRunState();
-    hide(pauseBtn);
-    if (destroySession !== null) {
-      destroySession();
-      destroySession = null;
+    if (session === null) {
+      return;
     }
-    session = null;
-    renderRecordsSummary();
-    show(startPanel);
+    showConfirm('确定返回主界面？', '当前对局进度将丢失且不计入战绩，确定要退出吗？', () => {
+      closeInspect();
+      resetRunState();
+      hide(pauseBtn);
+      if (destroySession !== null) {
+        destroySession();
+        destroySession = null;
+      }
+      session = null;
+      renderRecordsSummary();
+      show(startPanel);
+    });
+  });
+
+  // 二次确认弹窗按钮
+  confirmOkBtn.addEventListener('click', () => {
+    const action = onConfirmAction;
+    hideConfirm();
+    action?.();
+  });
+
+  confirmCancelBtn.addEventListener('click', () => {
+    hideConfirm();
   });
 
   // 同模式重开：restart 保持当前 mode（新种子新局）；不重建视图（场景检测 state

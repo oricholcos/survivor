@@ -16,7 +16,6 @@
     "name": "毒附着",
     "durationMs": 5000,
     "tickMs": 1000,
-    "maxStacks": 15,
     "refresh": "add",
     "damagePerTick": 2,
     "weaponDamageFactor": 0.25

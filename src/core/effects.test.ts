@@ -576,18 +576,18 @@ describe('overheat 过热：开火间隔乘区', () => {
 });
 
 describe('叠层 / 互斥 / refresh 语义', () => {
-  it('poison refresh=add：叠至 15 层封顶，每跳伤害 = damagePerTick × 层数', () => {
+  it('poison refresh=add：无层数上限（可叠至 20 层以上），每跳伤害 = damagePerTick × 层数', () => {
     const state = createSimState(1);
     const e = makeEnemy(state, 0, 0, 1000);
     for (let i = 0; i < 20; i++) {
       applyEffect(state, e, 'poison');
     }
-    expect(effectStacks(e, 'poison')).toBe(15);
+    expect(effectStacks(e, 'poison')).toBe(20);
 
     advance(state, 1000);
-    expect(e.hp).toBe(970); // 每跳 2×15=30
+    expect(e.hp).toBe(960); // 每跳 2×20=40
     advance(state, 1000);
-    expect(e.hp).toBe(940);
+    expect(e.hp).toBe(920);
   });
 
   it('refresh=reset：层数重置为 1，untilMs 重算（重复施加重新武装计时）', () => {
@@ -840,22 +840,22 @@ describe('DoT 持续伤害重构（灼烧百分比+余烬尸爆传染、中毒�
     expect(hasEffect(faraway, 'burn')).toBe(false);
   });
 
-  it('中毒：单跳伤害与 weaponDamage 挂钩（单层 25%），且可稳定叠加至 15 层', () => {
+  it('中毒：单跳伤害与 weaponDamage 挂钩（单层 25%），且无层数上限（可叠至 20 层以上）', () => {
     const state = createSimState(1);
     const e = makeEnemy(state, 0, 0, 2000);
 
     // 传入 weaponDamage = 40，单层单跳 = max(2, 40 * 0.25) = 10
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 20; i++) {
       applyEffect(state, e, 'poison', { weaponDamage: 40 });
     }
-    expect(effectStacks(e, 'poison')).toBe(15);
+    expect(effectStacks(e, 'poison')).toBe(20);
 
-    // 推进 1000ms（第一跳：10 × 15 = 150 点）
+    // 推进 1000ms（第一跳：10 × 20 = 200 点）
     advance(state, 1000);
-    expect(e.hp).toBe(1850); // 2000 - 150
+    expect(e.hp).toBe(1800); // 2000 - 200
   });
 
-  it('中毒毒发暴毙（斩杀）：当敌人生命值低于预期剩余总毒伤时，立即判定死亡', () => {
+  it('中毒删除斩杀效果：当敌人生命值低于预期剩余总毒伤时，不再立即斩杀，按周期正常跳伤', () => {
     const state = createSimState(1);
     // 敌人当前血量 80
     const e = makeEnemy(state, 0, 0, 80);
@@ -867,17 +867,22 @@ describe('DoT 持续伤害重构（灼烧百分比+余烬尸爆传染、中毒�
 
     try {
       // 挂 2 层毒，weaponDamage = 40（单层跳伤 10 点，2层共 20 点/跳，持续 5s 共 5 跳，总预期伤害 100 点）
-      // 此时敌人血量 80 <= 100，触发毒发斩杀
+      // 虽然 80 <= 100，但已去除斩杀，不会在下一帧立刻死亡
       applyEffect(state, e, 'poison', { weaponDamage: 40 });
       applyEffect(state, e, 'poison', { weaponDamage: 40 });
 
       // 仅推进一小帧 50ms（远未到 1000ms 的第一跳结算时刻）
       advance(state, 50);
 
-      // 验证敌人直接毒发身亡，血量归零并触发死亡回调
-      expect(e.dead).toBe(true);
-      expect(e.hp).toBe(0);
-      expect(killedHookCount).toBe(1);
+      // 验证敌人并未毒发身亡，依然存活且血量保持 80
+      expect(e.dead).toBe(false);
+      expect(e.hp).toBe(80);
+      expect(killedHookCount).toBe(0);
+
+      // 推进至 1000ms（第一跳结算 20 点，80 - 20 = 60）
+      advance(state, 950);
+      expect(e.dead).toBe(false);
+      expect(e.hp).toBe(60);
     } finally {
       const idx = killHooks.indexOf(hook);
       if (idx >= 0) {

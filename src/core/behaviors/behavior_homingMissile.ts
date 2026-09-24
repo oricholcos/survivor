@@ -30,7 +30,7 @@ import { applyEffect, dealDamage, getEffectDef } from '../effects';
 import { scheduleBurstWaves, consumeDueBurstWaves } from '../cards';
 import { pickNearestDistinctEnemies, spawnProjectile } from '../projectiles';
 import { SpatialHash } from '../spatialHash';
-import { leadAim } from '../targeting';
+import { isEnemyLockable, leadAim } from '../targeting';
 import type { Enemy, SimState } from '../types';
 import type { WeaponBehavior } from './registry';
 import type { WeaponStats } from '../weapons';
@@ -94,14 +94,14 @@ function findAliveEnemyById(state: SimState, id: number): Enemy | null {
   return null;
 }
 
-/** 距 (x, y) 最近的存活敌人（distSq 扫描，无开方；平距取数组先出现者，确定性）。 */
+/** 距 (x, y) 最近的存活且在屏幕内的敌人（distSq 扫描，无开方；平距取数组先出现者，确定性）。 */
 function nearestAliveEnemy(state: SimState, x: number, y: number): Enemy | null {
   let best: Enemy | null = null;
   let bestDistSq = Infinity;
   const enemies = state.enemies;
   for (let i = 0; i < enemies.length; i++) {
     const e = enemies[i];
-    if (e.dead) {
+    if (e.dead || !isEnemyLockable(e)) {
       continue;
     }
     const dx = e.x - x;
@@ -258,12 +258,12 @@ export const behavior: WeaponBehavior = {
         p.damage = numOr0(p.data.baseDamage) * boostFactor;
       }
 
-      // 解析目标：按 id 找存活敌人；死亡/缺失 → 重定向最近敌人并记忆新 id。
+      // 解析目标：按 id 找存活且在屏幕内的敌人；死亡/缺失/未完全进屏 → 重定向最近敌人并记忆新 id。
       let target = findAliveEnemyById(state, p.data.targetId);
-      if (!target) {
+      if (!target || !isEnemyLockable(target)) {
         target = nearestAliveEnemy(state, p.x, p.y);
         if (!target) {
-          continue; // 全场无敌人：保持直线
+          continue; // 全场无可用敌人：保持直线
         }
         p.data.targetId = target.id;
       }
