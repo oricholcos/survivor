@@ -698,15 +698,28 @@
       - 全量 37 个测试文件、736 个单测用例 100% 全部通过（0 failed，0 skipped）；
       - `balance.test.ts` 全自动对局回归：战役模式三种子（7, 42, 2024）全部获胜（Boss 6 满杀，seed 42 在 366.3s 承受最低墙血 184 点 = 11.5% 后逆风翻盘），极限生存模式运行至 1009.4s（16.8 分钟）自然收敛。
 
+44. **M44: 暂停/构筑详情悬浮按钮图标切换交互优化 (`⏸` <-> `▶`)**：
+    - **修改背景与交互体验**：
+      - 玩家在战斗中点击右上角悬浮按钮（`.ov-pause-btn`）打开构筑详情面板进入暂停（"战斗暂停 · 构筑详情"）后，按钮图标原先保持固定的 `⏸ 构筑`；
+      - 遵循标准播放/暂停控件交互模式，当游戏处于暂停/展开构筑详情面板时，红圈内的图标由暂停符号 `⏸` 切换为播放/恢复符号 `▶`（按钮文案变为 `▶ 构筑`，title 为"继续游戏"），点击该按钮即可恢复战斗并关闭构筑面板；面板关闭恢复战斗后，图标无缝切回 `⏸ 构筑`（title 为"暂停 / 构筑详情"）；
+    - **实现与架构解耦 (`src/ui/format.ts` & `src/ui/overlay.ts`)**：
+      - 在 `src/ui/format.ts` 中导出可测试纯函数 `getPauseButtonText(isPaused: boolean): string`；
+      - 在 `src/ui/overlay.ts` 中建立 `syncPauseBtnState()`，精准在 `openInspect`、`closeInspect`、`resetRunState`、`endGame` 等生命周期节点同步按钮文案、`title` 与 `aria-label`；
+    - **专项测试与全量回归 (`src/ui/format.test.ts`)**：
+      - 新增 `src/ui/format.test.ts` 专项单元测试，覆盖 `formatTime`、`formatDamageNum` 与 `getPauseButtonText` 切换逻辑；
+      - 全量 38 个测试文件、744 个单测用例 100% 全部通过（0 failed，0 skipped）；
+      - `balance.test.ts` 全自动对局回归：战役模式三种子（7, 42, 2024）全部获胜，极限生存模式自然收敛至 1009.4s；
+      - `npm run lint`、`npm run build`、`git diff --check` 全部 0 errors。
+
 ---
 
 ## 4. 当前工程状态与质量指标
 
 - **当前工程是否能直接运行/编译：** **是**。
 - **全量测试结果 (`npm run test` / `vitest run`)：**
-  - **37 / 37 test files passed (100%)**
-  - **736 passed, 0 skipped (736 tests)**。
-  - 运行总耗时约 **33s**（含全自动战役/极限生存完整对局模拟）。
+  - **38 / 38 test files passed (100%)**
+  - **744 passed, 0 skipped (744 tests)**。
+  - 运行总耗时约 **64s**（含全自动战役/极限生存完整对局模拟）。
 - **静态检查 (`npm run lint` / `eslint .`)：**
   - **ESLint 通过，0 errors, 0 warnings**。
 - **TypeScript 检查 (`npx tsc --noEmit` & `npm run build`)：**
@@ -722,10 +735,9 @@
 ## 5. 给接手 Agent 的后续建议
 
 1. **当前状态**：
-   - M43 远程武器屏幕内完全可见索敌约束与视口锁定基建已完整交付；
-   - 敌人完全进入屏幕判定条件为：头顶血条顶端坐标 $\text{barY} \ge 0$（普通怪 $y \ge \text{radius} + 10$，Boss $y \ge \text{radius} \times 1.15 + 22$），贴图、光环与血条均完全处于屏幕内；
-   - 5 把远程武器、次级分裂弹、闪电、弹跳与炮台朝向均已统一接入 `isEnemyLockable`；
-   - 全量测试通过：37 个测试套件通过，736 个用例全 PASS，tsc、lint、build 与 git diff --check 均为 0 errors。
+   - M44 暂停/构筑详情悬浮按钮图标切换交互优化已完整交付；
+   - 暂停/构筑面板展开时右上角悬浮按钮图标显示为 `▶ 构筑`，点击后或点击【继续游戏】面板关闭并恢复游戏模拟时切回 `⏸ 构筑`；
+   - 全量测试通过：38 个测试套件通过，744 个用例全 PASS，tsc、lint、build 与 git diff --check 均为 0 errors。
 2. **后续可选打磨方向**：
    - **音效多样性**：可继续补充更多武器的专属击中与开火音色（如光束蜂鸣、电磁充能声）；
    - **更多模式与局外系统**：如局外科技树或图鉴系统。

@@ -38,7 +38,7 @@ import { loadRecords, recordResult } from '../game/records';
 import { loadWeaponDefs } from '../data/weapons';
 import { allMaxedUnlocked } from '../core/cards';
 import { OVERLAY_CSS } from './styles';
-import { formatDamageNum, formatTime } from './format';
+import { formatDamageNum, formatTime, getPauseButtonText } from './format';
 import { getWeaponDisplayStats } from './buildInspect';
 
 // —— 数据表：只加载一次（内容共享只读；与 game/session.ts 同款约定） ——
@@ -135,7 +135,9 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
   startPanel.appendChild(startCard);
 
   // —— 悬浮暂停/构筑详情按钮（模块 A：右上角常驻悬浮，局内显示） ——
-  const pauseBtn = el('button', 'ov-pause-btn ov-hidden', '⏸ 构筑');
+  const pauseBtn = el('button', 'ov-pause-btn ov-hidden', getPauseButtonText(false));
+  pauseBtn.title = '暂停 / 构筑详情';
+  pauseBtn.setAttribute('aria-label', '暂停并查看构筑');
 
   // —— 面板二：升级三选一 ——
   const levelupPanel = el('div', 'ov-panel ov-hidden');
@@ -213,6 +215,13 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
   let inspectOpen = false; // 构筑详情面板展开中
   let onConfirmAction: (() => void) | null = null;
 
+  function syncPauseBtnState(): void {
+    const isPaused = inspectOpen;
+    pauseBtn.textContent = getPauseButtonText(isPaused);
+    pauseBtn.title = isPaused ? '继续游戏' : '暂停 / 构筑详情';
+    pauseBtn.setAttribute('aria-label', isPaused ? '继续游戏' : '暂停并查看构筑');
+  }
+
   function showConfirm(title: string, message: string, onOk: () => void): void {
     confirmTitle.textContent = title;
     confirmMessage.textContent = message;
@@ -235,6 +244,7 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
     hideConfirm();
     hide(inspectPanel);
     hide(levelupPanel);
+    syncPauseBtnState();
   }
 
   // —— 菜单纪录摘要（T4.2）：填真实纪录；三行紧凑展示，无任何纪录时显示引导文案。 ——
@@ -336,6 +346,7 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
     }
     inspectOpen = true;
     session.paused = true;
+    syncPauseBtnState();
     renderInspectPanel(session);
     show(inspectPanel);
   }
@@ -345,6 +356,7 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
       return;
     }
     inspectOpen = false;
+    syncPauseBtnState();
     hide(inspectPanel);
     if (session !== null && !upgradeOpen && !gameEnded) {
       session.paused = false;
@@ -612,6 +624,7 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
     hide(pauseBtn);
     if (inspectOpen) {
       inspectOpen = false;
+      syncPauseBtnState();
       hide(inspectPanel);
     }
     pendingLevels.length = 0; // 极端时序（同帧先弹升级又终局）：丢弃未处理升级

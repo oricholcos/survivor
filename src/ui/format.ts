@@ -28,3 +28,12 @@ export function formatDamageNum(num: number): string {
   }
   return Math.round(num).toString();
 }
+
+/**
+ * 获取悬浮暂停/构筑详情按钮的显示文本。
+ * - 暂停/展开构筑时：显示播放/恢复图标 '▶ 构筑'
+ * - 正常战斗运行时：显示暂停图标 '⏸ 构筑'
+ */
+export function getPauseButtonText(isPaused: boolean): string {
+  return isPaused ? '▶ 构筑' : '⏸ 构筑';
+}
