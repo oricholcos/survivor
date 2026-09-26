@@ -756,8 +756,8 @@
 - **代码格式与 Whitespace 检查 (`git diff --check`)：**
   - **通过，0 errors**。
 - **版本控制与资源状态：**
-  - 当前分支：`feature/dev-continue`。
-  - 美术资源与代码库干净隔离。
+  - 当前分支：`main`（已推送至 GitHub 公开仓库）。
+  - 美术资源（`public/assets/sprites/`，11 项 PNG，约 11MB）已随仓库分发。
 
 ---
 
