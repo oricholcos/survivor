@@ -102,17 +102,51 @@ export function addWeapon(state: SimState, weaponId: string): void {
   if (state.weaponStates[weaponId]) {
     return;
   }
-  const ws: WeaponState = { level: 0, cooldownMs: 0, cards: {}, cardsVersion: 0, damageDealt: 0 };
+  const ws: WeaponState = {
+    level: 0,
+    cooldownMs: 0,
+    cards: {},
+    cardsVersion: 0,
+    damageDealt: 0,
+    disabled: false,
+  };
   state.weaponStates[weaponId] = ws;
 }
 
 /**
+ * 设置某武器的禁用/开启状态。
+ * @returns 若成功设置返回 true；若该武器不存在返回 false。
+ */
+export function setWeaponDisabled(state: SimState, weaponId: string, disabled: boolean): boolean {
+  const ws = state.weaponStates[weaponId];
+  if (!ws) {
+    return false;
+  }
+  ws.disabled = disabled;
+  return true;
+}
+
+/**
+ * 切换某武器的禁用/开启状态。
+ * @returns 切换后的状态，若武器不存在返回 undefined。
+ */
+export function toggleWeaponDisabled(state: SimState, weaponId: string): boolean | undefined {
+  const ws = state.weaponStates[weaponId];
+  if (!ws) {
+    return undefined;
+  }
+  ws.disabled = !ws.disabled;
+  return ws.disabled;
+}
+
+/**
  * 推进一帧武器系统：对 weaponStates 里每把武器（按 keys 顺序，确定性）：
- * 0) 数据表存在该武器 def → 先调 getBehavior(def.behavior).update?.(state, dtMs)（每帧行为
+ * 0) 若武器被手动禁用（ws.disabled === true），跳过行为更新与开火推进；
+ * 1) 数据表存在该武器 def → 先调 getBehavior(def.behavior).update?.(state, dtMs)（每帧行为
  *    更新钩子，在冷却扣减与开火判定之前；def 缺失跳过该钩子，冷却仍照常扣减）；
- * 1) cooldownMs -= dtMs；
- * 2) 数据表缺该武器 id → 跳过该武器（不抛错；冷却已照常扣减，恢复注册后自然追赶）；
- * 3) 冷却 <= 0 → stats = getWeaponStats(def, state, weaponId)（牌乘区/开关已含在内），
+ * 2) cooldownMs -= dtMs；
+ * 3) 数据表缺该武器 id → 跳过该武器（不抛错；冷却已照常扣减，恢复注册后自然追赶）；
+ * 4) 冷却 <= 0 → stats = getWeaponStats(def, state, weaponId)（牌乘区/开关已含在内），
  *    getBehavior(def.behavior).fire(...)，然后 cooldownMs += stats.intervalMs；
  *    若加完仍 <= 0 继续开火（长 dt 追补语义），循环至 cooldownMs > 0。
  *    fire 可改写 cooldownMs（如无目标归 0），以其改写后值为累加基准。
@@ -127,6 +161,13 @@ export function updateWeapons(state: SimState, dtMs: number, defs: Record<string
   const ids = Object.keys(states);
   for (let i = 0; i < ids.length; i++) {
     const weaponId = ids[i];
+    const ws = states[weaponId];
+
+    // 手动禁用：跳过每帧行为更新与冷却/开火推进
+    if (ws.disabled) {
+      continue;
+    }
+
     const def = defs[weaponId];
 
     // 每帧行为更新钩子：仅当该武器已拥有（weaponStates 有条目）且数据表存在 def 时调用，
@@ -135,7 +176,6 @@ export function updateWeapons(state: SimState, dtMs: number, defs: Record<string
       getBehavior(def.behavior).update?.(state, dtMs);
     }
 
-    const ws = states[weaponId];
     ws.cooldownMs -= dtMs;
 
     if (!def) {

@@ -37,6 +37,7 @@ import type { GameSession } from '../game/session';
 import { loadRecords, recordResult } from '../game/records';
 import { loadWeaponDefs } from '../data/weapons';
 import { allMaxedUnlocked } from '../core/cards';
+import { toggleWeaponDisabled } from '../core/weapons';
 import { OVERLAY_CSS } from './styles';
 import { formatDamageNum, formatTime, getPauseButtonText } from './format';
 import { getWeaponDisplayStats } from './buildInspect';
@@ -284,10 +285,11 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
         continue;
       }
       const isMax = ws.level >= (def.maxLevel ?? 10);
+      const isDisabled = Boolean(ws.disabled);
 
-      const card = el('div', 'ov-weapon-card');
+      const card = el('div', isDisabled ? 'ov-weapon-card ov-weapon-card--disabled' : 'ov-weapon-card');
 
-      // 头部：武器名称 + 等级徽章 + 累计输出
+      // 头部：武器名称 + 等级徽章 + 禁用状态 + 累计输出 + 禁用/开启切换按钮
       const head = el('div', 'ov-weapon-head');
       const title = el('div', 'ov-weapon-title');
       title.appendChild(el('span', undefined, def.name));
@@ -298,8 +300,27 @@ export function initUi(launch: (mode: GameMode) => SessionLaunch): void {
           isMax ? 'MAX' : `Lv.${ws.level}`,
         ),
       );
+      if (isDisabled) {
+        title.appendChild(el('span', 'ov-damage-badge ov-damage-badge--disabled', '已禁用'));
+      }
       head.appendChild(title);
-      head.appendChild(el('span', 'ov-weapon-damage', `累计输出 ${formatDamageNum(ws.damageDealt ?? 0)}`));
+
+      const headRight = el('div', 'ov-weapon-head-right');
+      headRight.appendChild(el('span', 'ov-weapon-damage', `累计输出 ${formatDamageNum(ws.damageDealt ?? 0)}`));
+
+      const toggleBtn = el(
+        'button',
+        isDisabled ? 'ov-btn-toggle ov-btn-toggle--disabled' : 'ov-btn-toggle',
+        isDisabled ? '开启武器' : '禁用武器',
+      ) as HTMLButtonElement;
+      toggleBtn.title = isDisabled ? '点击恢复此武器自动攻击' : '点击暂停此武器攻击';
+      toggleBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        toggleWeaponDisabled(state, id);
+        renderInspectPanel(s);
+      });
+      headRight.appendChild(toggleBtn);
+      head.appendChild(headRight);
       card.appendChild(head);
 
       // 数值网格：实时解析后的伤害、间隔、穿透、弹速、范围及各项专属可变机制

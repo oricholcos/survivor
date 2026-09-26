@@ -17,7 +17,6 @@
 import Phaser from 'phaser';
 import { xpToNext } from '../core/gems';
 import { listZones } from '../core/zones';
-import { WAVE_CLOCK_META_KEY, type WaveClockInput } from '../core/waves';
 import { isEnemyLockable } from '../core/targeting';
 import type { CoordinatedFireVfx, HeatBeamVfx } from '../core/behaviors/behavior_heatBeam';
 import { COORDINATED_FIRE_VFX_MS } from '../core/behaviors/behavior_heatBeam';
@@ -44,6 +43,9 @@ import {
 } from './enemyRenderer';
 import { ProjectileRenderer } from './projectileRenderer';
 import { formatDamageNum, formatTime } from '../ui/format';
+import { createExternalHud, type ExternalHud } from '../ui/hud';
+import { toggleWeaponDisabled } from '../core/weapons';
+import { playSfx } from '../audio/sfx';
 import {
   COORDINATED_COLORS,
   COORDINATED_FIRE_VFX_KEY,
@@ -110,6 +112,7 @@ const CHIP_BG = 0x0b1120;
 const CHIP_STYLE_LV0 = { stroke: 0x5a6478, text: '#8f98ab' };
 const CHIP_STYLE_STD = { stroke: 0x6fc3ff, text: '#f2faff' };
 const CHIP_STYLE_MAX = { stroke: 0xffd24a, text: '#ffe89a' };
+const CHIP_STYLE_DISABLED = { stroke: 0x883344, text: '#888899' };
 
 /** 城墙低血量警示阈值（<30% 常驻红色脉冲）。 */
 const WALL_LOW_PCT = 0.3;
@@ -406,6 +409,8 @@ export class MainScene extends Phaser.Scene {
   private lastState: SimState | null = null;
   /** 极限生存历史最佳纪录 ms（局初读入，本局对比展示）。 */
   private bestEndlessMs: number | null = null;
+  /** 电脑端外置 HUD 管理器（M45：在宽屏画布左侧外部渲染状态、经验条与芯片；窄屏/移动端兜底画布内）。 */
+  private externalHud?: ExternalHud;
 
   // —— 池化特效（fx.ts：环形缓冲，容量硬上限） ——
   private readonly deathBurst = new DeathBurst();
@@ -526,6 +531,22 @@ export class MainScene extends Phaser.Scene {
     // 武器胶囊芯片层（G1）：depth 同 hudText（10），压在敌人/弹丸之上；仅 diff 变化时重绘。
     this.chipGfx = this.add.graphics().setDepth(10);
 
+    // 电脑端外置 HUD（M45）：在宽屏下承接左侧外部渲染，绑定点击切换武器禁用
+    if (typeof document !== 'undefined') {
+      this.externalHud = createExternalHud((weaponId) => {
+        toggleWeaponDisabled(this.session.state, weaponId);
+        playSfx('uiClick');
+      });
+      this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+        this.externalHud?.destroy();
+        this.externalHud = undefined;
+      });
+      this.events.once(Phaser.Scenes.Events.DESTROY, () => {
+        this.externalHud?.destroy();
+        this.externalHud = undefined;
+      });
+    }
+
     // 领主首领来袭顶部警告横幅（模块 C）
     this.bossWarningBanner = this.add
       .text(layout.width / 2, 70, '⚠ WARNING: 领主首领接近中 ⚠', {
@@ -632,6 +653,7 @@ export class MainScene extends Phaser.Scene {
     this.deathBurst.clear();
     this.muzzle.clear();
     this.waves.clear();
+    this.externalHud?.setVisible(true);
   }
 
   /**
@@ -668,6 +690,7 @@ export class MainScene extends Phaser.Scene {
         case 'victory':
           // DOM 覆盖层接管：双模式结算面板（victory=守城成功 / gameOver=城墙陷落或
           // 无尽终章，见 src/ui/overlay.ts；模拟层已停摆：state.over 非 null）。
+          this.externalHud?.setVisible(false);
           break;
         case 'bossDefeated':
           // Boss 击杀表现已在 enemyKilled(isBoss) 处理（爆裂 + 冲击波）；
@@ -1546,17 +1569,33 @@ export class MainScene extends Phaser.Scene {
 
   /** HUD（左上角等宽字体）：当前模式 / 存活时间 mm:ss / 等级 / 击杀数 + 细经验条；武器列表改为胶囊芯片（G1）。 */
   private renderHud(s: SimState): void {
+    // 电脑端外置 HUD（M45）：若空间充裕由外部接管，画布内隐藏以最大化对战视野
+    if (this.externalHud) {
+      const isPcActive = this.externalHud.update(
+        s,
+        this.session.mode,
+        this.bestEndlessMs,
+        this.kills,
+        this.game.canvas,
+      );
+      if (isPcActive) {
+        this.hudText.setVisible(false);
+        this.chipGfx.clear();
+        for (let i = 0; i < this.chipTexts.length; i++) {
+          this.chipTexts[i].setVisible(false);
+        }
+        return;
+      }
+    }
+
+    this.hudText.setVisible(true);
+
     const bossKills = (s.meta.bossKills as number | undefined) ?? 0;
     let modeLabel: string;
     let timeLabel: string;
 
     if (this.session.mode === 'endless') {
-      const clock = s.meta[WAVE_CLOCK_META_KEY] as WaveClockInput | undefined;
-      const loopCount = clock?.loopCount ?? 0;
-      const loopScale = clock?.loopScale ?? 1;
-      const loopTag =
-        loopCount > 0 ? ` (第 ${loopCount + 1} 轮 ×${loopScale.toFixed(1)})` : ' (第 1 轮)';
-      modeLabel = `模式 极限生存${loopTag}`;
+      modeLabel = '模式 极限生存';
 
       const bestMs = this.bestEndlessMs;
       const bestStr = bestMs !== null ? this.formatTime(bestMs) : '—';
@@ -1590,6 +1629,7 @@ export class MainScene extends Phaser.Scene {
    * 数据表缺该武器 id 时退回显示 id（不抛错）。
    * 等级表现：Lv.0 灰调（未强化）/ Lv.1~9 常规白 / 达到该武器 maxLevel 金描边 +「MAX」
    * 角标替代 Lv.n 字样（无解锁后的 Lv.11+ 歧义：满级即 MAX，突破上限继续叠牌仍是满级）。
+   * 禁用表现（M45）：被禁用时文字追加 (已禁用)，样式与描边变暗，支持点击切换启用/禁用。
    */
   private syncWeaponChips(s: SimState): void {
     const ids = Object.keys(s.weaponStates);
@@ -1606,11 +1646,13 @@ export class MainScene extends Phaser.Scene {
       const level = ws.level;
       const def = WEAPON_DEFS[id];
       const maxed = level >= (def?.maxLevel ?? 10);
+      const isDisabled = Boolean(ws.disabled);
       const dmg = ws.damageDealt ?? 0;
       const pct = totalTeamDamage > 0 ? Math.round((dmg / totalTeamDamage) * 100) : 0;
       const dmgStr = formatDamageNum(dmg);
       const tag = maxed ? 'MAX' : `Lv.${level}`;
-      nextLabels.push(`${def?.name ?? id} ${tag}  ${dmgStr} (${pct}%)`);
+      const disTag = isDisabled ? ' (已禁用)' : '';
+      nextLabels.push(`${def?.name ?? id}${disTag} ${tag}  ${dmgStr} (${pct}%)`);
     }
 
     // —— diff：键序与文本逐项比对，无变化直接返回（零写入） ——
@@ -1630,11 +1672,19 @@ export class MainScene extends Phaser.Scene {
     // —— 同步芯片文本（仅变化项 setText/改样式/改位；新增项懒建） ——
     for (let i = 0; i < ids.length; i++) {
       const id = ids[i];
-      const level = s.weaponStates[id].level;
+      const ws = s.weaponStates[id];
+      const level = ws.level;
       const text = this.chipTexts[i] ?? this.createChipText();
       const def = WEAPON_DEFS[id];
       const maxed = level >= (def?.maxLevel ?? 10);
-      const style = maxed ? CHIP_STYLE_MAX : level <= 0 ? CHIP_STYLE_LV0 : CHIP_STYLE_STD;
+      const isDisabled = Boolean(ws.disabled);
+      const style = isDisabled
+        ? CHIP_STYLE_DISABLED
+        : maxed
+          ? CHIP_STYLE_MAX
+          : level <= 0
+            ? CHIP_STYLE_LV0
+            : CHIP_STYLE_STD;
       text.setText(nextLabels[i]);
       text.setColor(style.text);
       text.setPosition(
@@ -1652,16 +1702,34 @@ export class MainScene extends Phaser.Scene {
     g.clear();
     for (let i = 0; i < ids.length; i++) {
       const id = ids[i];
-      const level = s.weaponStates[id].level;
+      const ws = s.weaponStates[id];
+      const level = ws.level;
       const def = WEAPON_DEFS[id];
       const maxed = level >= (def?.maxLevel ?? 10);
-      const style = maxed ? CHIP_STYLE_MAX : level <= 0 ? CHIP_STYLE_LV0 : CHIP_STYLE_STD;
+      const isDisabled = Boolean(ws.disabled);
+      const style = isDisabled
+        ? CHIP_STYLE_DISABLED
+        : maxed
+          ? CHIP_STYLE_MAX
+          : level <= 0
+            ? CHIP_STYLE_LV0
+            : CHIP_STYLE_STD;
       const w = (this.chipTexts[i]?.width ?? 0) + CHIP_PAD_X * 2;
       const y = CHIP_START_Y + i * CHIP_STRIDE;
-      g.fillStyle(CHIP_BG, 0.55);
+      g.fillStyle(isDisabled ? 0x221118 : CHIP_BG, isDisabled ? 0.45 : 0.55);
       g.fillRoundedRect(CHIP_X, y, w, CHIP_HEIGHT, CHIP_RADIUS);
-      g.lineStyle(1.5, style.stroke, maxed ? 1 : 0.85);
+      g.lineStyle(1.5, style.stroke, maxed && !isDisabled ? 1 : 0.85);
       g.strokeRoundedRect(CHIP_X, y, w, CHIP_HEIGHT, CHIP_RADIUS);
+
+      // 扩大可交互点击区域至整枚芯片范围（包含内边距），避免边缘点空
+      const t = this.chipTexts[i];
+      if (t && t.input?.hitArea) {
+        const hitArea = t.input.hitArea as Phaser.Geom.Rectangle;
+        hitArea.width = w;
+        hitArea.height = CHIP_HEIGHT;
+        hitArea.x = -CHIP_PAD_X;
+        hitArea.y = -(CHIP_HEIGHT - t.height) / 2;
+      }
     }
 
     // —— 记录 diff 基准 ——
@@ -1669,7 +1737,7 @@ export class MainScene extends Phaser.Scene {
     this.chipLabels = nextLabels;
   }
 
-  /** 新建一枚芯片文本（常驻池懒建；字体/投影基线与 hudText 一致，仅字号缩小）。 */
+  /** 新建一枚芯片文本（常驻池懒建；字体/投影基线与 hudText 一致，仅字号缩小；可点击切换禁用状态）。 */
   private createChipText(): Phaser.GameObjects.Text {
     const text = this.add
       .text(0, 0, '', {
@@ -1679,6 +1747,17 @@ export class MainScene extends Phaser.Scene {
       })
       .setDepth(10)
       .setShadow(0, 1, 'rgba(0,0,0,0.85)', 2);
+
+    text.setInteractive({ useHandCursor: true });
+    text.on('pointerdown', () => {
+      const idx = this.chipTexts.indexOf(text);
+      if (idx >= 0 && idx < this.chipIds.length) {
+        const wid = this.chipIds[idx];
+        toggleWeaponDisabled(this.session.state, wid);
+        playSfx('uiClick');
+      }
+    });
+
     this.chipTexts.push(text);
     return text;
   }

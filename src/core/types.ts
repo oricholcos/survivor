@@ -161,6 +161,8 @@ export interface WeaponState {
   cardsVersion?: number;
   /** 本局累计造成的总伤害（包含直击、穿透、弹跳、分裂、Zone、DoT、尸爆等全口径）。 */
   damageDealt?: number;
+  /** 是否被手动禁用（禁用时武器停止发射新攻击）。缺省或 false 表示正常启用。 */
+  disabled?: boolean;
 }
 
 /** 经验宝石：飞向角色被吸收。 */

@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { getBehavior, listBehaviors, registerBehavior } from './behaviors/registry';
 import { createSimState } from './simState';
-import { addWeapon, getWeaponStats, updateWeapons, WEAPON_STATS_CACHE_META_KEY } from './weapons';
+import { addWeapon, getWeaponStats, setWeaponDisabled, toggleWeaponDisabled, updateWeapons, WEAPON_STATS_CACHE_META_KEY } from './weapons';
 import type { WeaponDef } from './weapons';
 import type { WeaponCardDef } from './cards';
 import { applyUpgrade } from './upgrade';
@@ -30,16 +30,16 @@ function makeDef(overrides?: Partial<WeaponDef>): WeaponDef {
 }
 
 describe('addWeapon：0 级起步 + 空牌表', () => {
-  it('新增武器 = { level: 0, cooldownMs: 0, cards: {}, damageDealt: 0 }（T5.3a：武器 0 级起步，成长全靠牌）', () => {
+  it('新增武器 = { level: 0, cooldownMs: 0, cards: {}, damageDealt: 0, disabled: false }（T5.3a：武器 0 级起步，成长全靠牌）', () => {
     const state = createSimState(1);
     addWeapon(state, 'w');
-    expect(state.weaponStates.w).toEqual({ level: 0, cooldownMs: 0, cards: {}, cardsVersion: 0, damageDealt: 0 });
+    expect(state.weaponStates.w).toEqual({ level: 0, cooldownMs: 0, cards: {}, cardsVersion: 0, damageDealt: 0, disabled: false });
   });
 
   it('重复添加不覆盖已有等级/冷却/牌表（幂等）', () => {
     const state = createSimState(1);
     addWeapon(state, 'w');
-    expect(state.weaponStates.w).toEqual({ level: 0, cooldownMs: 0, cards: {}, cardsVersion: 0, damageDealt: 0 });
+    expect(state.weaponStates.w).toEqual({ level: 0, cooldownMs: 0, cards: {}, cardsVersion: 0, damageDealt: 0, disabled: false });
 
     // 模拟吃牌与战斗中的冷却推进
     state.weaponStates.w.level = 3;
@@ -303,5 +303,66 @@ describe('行为注册表', () => {
     expect(names).toContain('override_me');
     // weapons.ts 副作用 import behaviors/index → behavior_*.ts 已自动发现注册
     expect(names).toContain('piercing_bolt');
+  });
+});
+
+describe('局内武器禁用/开启功能 (disabled)', () => {
+  it('setWeaponDisabled 与 toggleWeaponDisabled 能正确修改状态并对不存在武器返回安全值', () => {
+    const state = createSimState(1);
+    addWeapon(state, 'gun');
+    expect(state.weaponStates.gun.disabled).toBe(false);
+
+    expect(setWeaponDisabled(state, 'non_existent', true)).toBe(false);
+    expect(toggleWeaponDisabled(state, 'non_existent')).toBeUndefined();
+
+    expect(setWeaponDisabled(state, 'gun', true)).toBe(true);
+    expect(state.weaponStates.gun.disabled).toBe(true);
+
+    expect(toggleWeaponDisabled(state, 'gun')).toBe(false);
+    expect(state.weaponStates.gun.disabled).toBe(false);
+
+    expect(toggleWeaponDisabled(state, 'gun')).toBe(true);
+    expect(state.weaponStates.gun.disabled).toBe(true);
+  });
+
+  it('updateWeapons 遇 disabled 武器不调用 update 也不开火，冷却保持不动', () => {
+    let updates = 0;
+    let fires = 0;
+    registerBehavior({
+      name: 'fake_disable_test',
+      update: () => {
+        updates++;
+      },
+      fire: () => {
+        fires++;
+      },
+    });
+
+    const state = createSimState(1);
+    addWeapon(state, 'gun');
+    state.weaponStates.gun.cooldownMs = 0;
+    const defs = { gun: makeDef({ id: 'gun', behavior: 'fake_disable_test' }) };
+
+    // 禁用前：推进 50ms 触发 1 次开火与 1 次 update
+    updateWeapons(state, 50, defs);
+    expect(updates).toBe(1);
+    expect(fires).toBe(1);
+    const cdAfterFire = state.weaponStates.gun.cooldownMs;
+
+    // 禁用武器
+    setWeaponDisabled(state, 'gun', true);
+
+    // 禁用后再次推进：update 与 fire 均不增加，冷却保持原样
+    updateWeapons(state, 50, defs);
+    expect(updates).toBe(1);
+    expect(fires).toBe(1);
+    expect(state.weaponStates.gun.cooldownMs).toBe(cdAfterFire);
+
+    // 恢复开启
+    setWeaponDisabled(state, 'gun', false);
+    updateWeapons(state, 50, defs);
+    expect(updates).toBe(2);
+    // 冷却扣减 50ms
+    expect(state.weaponStates.gun.cooldownMs).toBe(cdAfterFire - 50);
   });
 });

@@ -674,4 +674,152 @@ export const OVERLAY_CSS = `
   border-color: #ff4d6d;
   box-shadow: 0 0 18px rgba(255, 77, 109, 0.4);
 }
+
+/* —— 局内武器禁用/开启切换与卡片禁用态（M45） —— */
+.ov-weapon-card--disabled {
+  opacity: 0.65;
+  border-color: rgba(255, 77, 109, 0.45);
+  background: rgba(22, 14, 26, 0.75);
+}
+.ov-damage-badge--disabled {
+  color: #ff6b81 !important;
+  border-color: rgba(255, 77, 109, 0.6) !important;
+  background: rgba(255, 77, 109, 0.18) !important;
+}
+.ov-weapon-head-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.ov-btn-toggle {
+  box-sizing: border-box;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 77, 109, 0.45);
+  background: rgba(255, 77, 109, 0.12);
+  color: #ff8599;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  touch-action: manipulation;
+}
+.ov-btn-toggle:hover {
+  border-color: #ff4d6d;
+  background: rgba(255, 77, 109, 0.25);
+  box-shadow: 0 0 10px rgba(255, 77, 109, 0.3);
+}
+.ov-btn-toggle--disabled {
+  border-color: rgba(24, 201, 255, 0.5);
+  background: rgba(24, 201, 255, 0.12);
+  color: #a5ecff;
+}
+.ov-btn-toggle--disabled:hover {
+  border-color: #18c9ff;
+  background: rgba(24, 201, 255, 0.25);
+  box-shadow: 0 0 10px rgba(24, 201, 255, 0.3);
+}
+
+/* —— 电脑端外部 HUD 面板（画布左侧外部区域，M45） —— */
+.ov-hud-pc {
+  position: fixed;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: Consolas, "Courier New", monospace;
+  color: #dff4ff;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.85);
+  box-sizing: border-box;
+}
+.ov-hud-pc-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 19px;
+  line-height: 1.35;
+  color: #dff4ff;
+}
+.ov-hud-pc-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ov-hud-pc-xp {
+  width: 100%;
+  max-width: 224px;
+}
+.ov-hud-pc-xp-track {
+  width: 100%;
+  height: 8px;
+  background: #0e1e36;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid rgba(24, 201, 255, 0.35);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+.ov-hud-pc-xp-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #18c9ff, #38e1ff);
+  box-shadow: 0 0 8px rgba(24, 201, 255, 0.7);
+  transition: width 0.08s linear;
+}
+.ov-hud-pc-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 4px;
+}
+.ov-hud-chip {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  height: 32px;
+  background: rgba(14, 24, 48, 0.75);
+  border: 1px solid rgba(24, 201, 255, 0.4);
+  border-radius: 999px;
+  color: #f2faff;
+  font-size: 13px;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  transition: all 0.15s ease;
+  width: fit-content;
+  max-width: 100%;
+  touch-action: manipulation;
+}
+.ov-hud-chip:hover {
+  border-color: #18c9ff;
+  background: rgba(24, 201, 255, 0.15);
+  box-shadow: 0 0 12px rgba(24, 201, 255, 0.4);
+  transform: translateX(2px);
+}
+.ov-hud-chip--max {
+  border-color: rgba(255, 224, 102, 0.6);
+  color: #ffe066;
+}
+.ov-hud-chip--lv0 {
+  color: #8da4be;
+  border-color: rgba(141, 164, 190, 0.35);
+}
+.ov-hud-chip--disabled {
+  opacity: 0.55;
+  border-color: rgba(255, 77, 109, 0.4);
+  background: rgba(30, 15, 20, 0.65);
+  color: #a89aa0;
+  text-decoration: line-through;
+}
+.ov-hud-chip-disabled-tag {
+  font-size: 11px;
+  color: #ff6b81;
+  text-decoration: none;
+  font-weight: 700;
+}
 `;

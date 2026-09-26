@@ -711,19 +711,48 @@
       - `balance.test.ts` 全自动对局回归：战役模式三种子（7, 42, 2024）全部获胜，极限生存模式自然收敛至 1009.4s；
       - `npm run lint`、`npm run build`、`git diff --check` 全部 0 errors。
 
+45. **M45: 电脑端外置 HUD 迁移与局内武器禁用/启用双入口系统实装**：
+    - **修改背景与需求对齐**：
+      - 需求 1：电脑宽屏端将原画布内左上角 HUD 信息（模式、存活时间、等级、击杀）、细经验条以及武器胶囊芯片完整外移到画布左侧空白处（对齐用户标注红框位置），移动端（窄屏）维持画布内原有渲染；
+      - 需求 2：新增局内武器手动禁用/开启功能，停火后武器不发新弹丸、冷却不空转消耗，开启后恢复攻击；
+      - 需求 3：被禁用的武器在升级三选一中仍可正常出现并升级，再次开启时享受所有强化；提供双入口交互（构筑面板卡片开关 + 局内武器芯片直接点击切换）。
+    - **核心实现与架构设计**：
+      - **核心模拟层契约 (`src/core/types.ts` & `src/core/weapons.ts`)**：
+        - `WeaponState` 增加 `disabled?: boolean` 字段（`addWeapon` 初始化为 `false`）；
+        - 导出通用操作函数 `setWeaponDisabled(state, weaponId, disabled)` 与 `toggleWeaponDisabled(state, weaponId)`；
+        - `updateWeapons` 推进帧首增加 `if (ws.disabled) continue;` 判定：被禁用武器跳过行为更新与冷却扣减/开火判定，冷却进度保持不动，已有在场弹丸自然打完消散；
+      - **电脑端外置 HUD 面板 (`src/ui/hud.ts` & `src/ui/styles.ts`)**：
+        - 建立独立的 `createExternalHud` 组件与响应式逻辑（`PC_HUD_MIN_LEFT_SPACE = 180`）：
+          - 视口左侧黑边空间充足时（`leftSpace >= 180`），外置面板在画布左侧外部动态定位；渲染模式、时间、等级、击杀等宽科幻文本，霓虹发光经验进度条，以及武器胶囊芯片；
+          - 极限生存模式不分轮数，始终恒定显示【模式 极限生存】（彻底去除 `(第 1 轮)` 以及后续循环的轮数/倍率后缀）；
+          - 视口左侧空间不足时（移动端窄屏或视口极窄），外部面板自动隐藏，Phaser 场景内部 HUD 兜底生效；
+        - **芯片 DOM 节点稳定复用与事件委托**：武器芯片使用持久结构池与父级 `pointerdown` 事件委托，彻底解决此前战斗中伤害高频更新导致节点瞬替清空进而造成点击失效的缺陷；
+        - 外部武器芯片支持点击切换禁用/启用，禁用时打上 `ov-hud-chip--disabled` 样式，显示删除线与 `[已禁用]` 醒目标签；
+      - **Phaser 场景无缝协同 (`src/phaser/mainScene.ts`)**：
+        - `renderHud` 每帧调用 `externalHud.update`：外部接管时隐藏内部 `hudText`、清空 `chipGfx` 与隐藏 `chipTexts`，经验条跳过绘制；移动端模式时恢复画布内完整绘制；极限生存模式同样恒定为【模式 极限生存】；
+        - 移动端画布内的 `chipTexts` 判定区扩大至整块芯片区域，支持点击交互与禁用状态渲染（`(已禁用)` 文字追加、暗红色描边与底色）；
+      - **构筑详情面板开关 (`src/ui/overlay.ts`)**：
+        - 每把武器卡片头部增加禁用状态徽章（`已禁用`）与切换按钮（`.ov-btn-toggle`：`禁用武器` / `开启武器`），点击即时生效并刷新面板。
+    - **专项测试与全量回归 (`src/ui/hud.test.ts` & `src/core/weapons.test.ts` 等)**：
+      - 新增 `src/ui/hud.test.ts` 专项单元测试（7 个用例），覆盖响应式阈值判定、电脑端与移动端切换、文本与经验条渲染、极限生存恒定无轮数后缀展示、DOM稳定复用防丢失点击、禁用样式与点击切换回调；
+      - `weapons.test.ts` 增加武器禁用核心机制测试，`upgrade.test.ts` 适配初始 WeaponState 契约；
+      - 全量 39 个测试文件、753 个单测用例 100% 全部通过（0 failed，0 skipped）；
+      - `balance.test.ts` 全自动对局回归正常通过（战役三种子全胜通关，极限生存模式 1009.4s 自然收敛）；
+      - `npx tsc --noEmit`、`npm run lint`、`npm run build` 全部 0 errors。
+
 ---
 
 ## 4. 当前工程状态与质量指标
 
 - **当前工程是否能直接运行/编译：** **是**。
 - **全量测试结果 (`npm run test` / `vitest run`)：**
-  - **38 / 38 test files passed (100%)**
-  - **744 passed, 0 skipped (744 tests)**。
-  - 运行总耗时约 **64s**（含全自动战役/极限生存完整对局模拟）。
+  - **39 / 39 test files passed (100%)**
+  - **753 passed, 0 skipped (753 tests)**。
+  - 运行总耗时约 **62s**（含全自动战役/极限生存完整对局模拟）。
 - **静态检查 (`npm run lint` / `eslint .`)：**
   - **ESLint 通过，0 errors, 0 warnings**。
 - **TypeScript 检查 (`npx tsc --noEmit` & `npm run build`)：**
-  - **通过，0 errors**，Vite 生产构建正常，71 modules transformed，产物位于 `dist/`。
+  - **通过，0 errors**，Vite 生产构建正常，72 modules transformed，产物位于 `dist/`。
 - **代码格式与 Whitespace 检查 (`git diff --check`)：**
   - **通过，0 errors**。
 - **版本控制与资源状态：**
@@ -735,9 +764,10 @@
 ## 5. 给接手 Agent 的后续建议
 
 1. **当前状态**：
-   - M44 暂停/构筑详情悬浮按钮图标切换交互优化已完整交付；
-   - 暂停/构筑面板展开时右上角悬浮按钮图标显示为 `▶ 构筑`，点击后或点击【继续游戏】面板关闭并恢复游戏模拟时切回 `⏸ 构筑`；
-   - 全量测试通过：38 个测试套件通过，744 个用例全 PASS，tsc、lint、build 与 git diff --check 均为 0 errors。
+   - M45 电脑端外置 HUD 迁移与局内武器禁用/启用双入口系统已完整交付；
+   - 极限生存模式不分轮数，自始至终一直固定显示【模式 极限生存】（彻底去除 `(第 1 轮)` 以及后续循环的任何轮数/倍率后缀）；
+   - 彻底修复武器气泡点击失效问题：DOM 节点稳定持久复用 + 容器级 `pointerdown` 事件委托，0 延迟极速响应；移动端气泡点击判定区扩大至整个芯片；
+   - 全量测试通过：39 个测试套件通过，753 个用例全 PASS，tsc、lint、build 与 git diff --check 均为 0 errors。
 2. **后续可选打磨方向**：
    - **音效多样性**：可继续补充更多武器的专属击中与开火音色（如光束蜂鸣、电磁充能声）；
    - **更多模式与局外系统**：如局外科技树或图鉴系统。
