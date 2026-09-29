@@ -4,6 +4,12 @@
 // 2. 经验进度条（霓虹发光）；
 // 3. 拥有武器胶囊芯片列表：支持点击直接切换禁用/开启已拥有武器；
 // 当处于移动端/窄屏模式时自动隐藏，由画布内 HUD 兜底渲染。
+//
+// 性能约定（P0-2 热路径）：update() 由视图层每帧调用（约 60fps），必须满足：
+// 1. 零布局读取：禁止每帧调用 canvas.getBoundingClientRect()；画布矩形只走缓存，
+//    仅在「首次拿到画布（懒初始化）」或「window / visualViewport 的 resize 事件」时重算；
+// 2. 零冗余 DOM 写入：所有文本、样式、dataset 写入一律先 diff，值变化才落 DOM；
+//    面板位置/宽度只在位置重算事件路径（缓存矩形失效后的首个激活帧）写入。
 
 import { xpToNext } from '../core/gems';
 import { loadWeaponDefs } from '../data/weapons';
@@ -23,7 +29,7 @@ export const PC_HUD_MIN_LEFT_SPACE = 180;
 export interface ExternalHud {
   element: HTMLElement;
   /**
-   * 每帧由视图层同步状态与位置。
+   * 每帧由视图层同步状态与位置（热路径：零布局读取、零冗余 DOM 写入）。
    * @returns 若处于电脑宽屏外置模式返回 true（画布内 HUD 应隐藏）；若空间不足返回 false（画布内 HUD 应显示）。
    */
   update(
@@ -106,16 +112,79 @@ export function createExternalHud(onToggleWeapon?: (weaponId: string) => void): 
 
   document.body.appendChild(container);
 
+  // —— 画布矩形缓存（事件驱动，P0-2）——
+  // 只在 refreshLayout() 里读取真实布局（首帧懒初始化 / resize 事件），其余帧一律读缓存。
+  let lastCanvas: HTMLCanvasElement | null = null;
+  let cachedLeft = 0;
+  let cachedTop = 0;
+  // true 表示缓存矩形刚失效（首帧 / resize 后），需要在下一个激活帧重写面板位置与宽度
+  let layoutDirty = false;
+
+  function refreshLayout(): void {
+    const canvas = lastCanvas;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    cachedLeft = rect.left;
+    cachedTop = rect.top;
+    layoutDirty = true;
+  }
+
+  /** 位置重算事件路径：仅在此重写面板宽度/位置（每帧热路径绝不触碰这三项）。 */
+  function applyPanelPosition(): void {
+    // 响应式动态定位到画布左侧空白处（红框位置）：
+    // 距画布左侧留 20px 间距，垂直从画布顶部下方 16px 起
+    const panelWidth = Math.min(260, Math.max(160, cachedLeft - 32));
+    container.style.width = `${panelWidth}px`;
+    container.style.top = `${Math.max(16, cachedTop + 16)}px`;
+    container.style.left = `${Math.max(12, cachedLeft - panelWidth - 20)}px`;
+  }
+
+  // resize 监听（window + visualViewport）：移动端地址栏收展会改画布矩形。
+  // 具名处理函数，destroy() 用同一引用成对移除；visualViewport 可能不存在，判空降级。
+  function handleViewportResize(): void {
+    // 只重读矩形并标记脏；面板样式写入推迟到下一次 update 的激活帧（隐藏态不写）
+    refreshLayout();
+  }
+
+  const win: Window | null = typeof window !== 'undefined' ? window : null;
+  if (win) {
+    win.addEventListener('resize', handleViewportResize);
+    const vv = win.visualViewport ?? null;
+    if (vv) {
+      vv.addEventListener('resize', handleViewportResize);
+    }
+  }
+
   let isExplicitlyVisible = true;
 
-  function setVisible(visible: boolean): void {
-    isExplicitlyVisible = visible;
-    if (!visible) {
+  function hidePanel(): void {
+    if (!container.classList.contains('ov-hidden')) {
       container.classList.add('ov-hidden');
     }
   }
 
+  function showPanel(): void {
+    if (container.classList.contains('ov-hidden')) {
+      container.classList.remove('ov-hidden');
+    }
+  }
+
+  function setVisible(visible: boolean): void {
+    isExplicitlyVisible = visible;
+    if (!visible) {
+      hidePanel();
+    }
+  }
+
   function destroy(): void {
+    if (win) {
+      win.removeEventListener('resize', handleViewportResize);
+      const vv = win.visualViewport ?? null;
+      if (vv) {
+        vv.removeEventListener('resize', handleViewportResize);
+      }
+    }
+    lastCanvas = null; // 兜底：即使有残留调用也不再触达已移除的画布节点
     container.remove();
   }
 
@@ -126,30 +195,35 @@ export function createExternalHud(onToggleWeapon?: (weaponId: string) => void): 
     kills: number,
     canvas: HTMLCanvasElement | null,
   ): boolean {
+    // 显式隐藏或画布缺失：面板隐藏、回退画布内渲染（此分支不写任何面板位置/内容样式）
     if (!isExplicitlyVisible || !canvas) {
-      container.classList.add('ov-hidden');
+      lastCanvas = canvas;
+      hidePanel();
       return false;
     }
 
-    const rect = canvas.getBoundingClientRect();
-    const leftSpace = rect.left;
+    // 首次拿到画布（懒初始化）或画布对象被替换：重算一次矩形；其余帧一律用缓存矩形
+    if (canvas !== lastCanvas) {
+      lastCanvas = canvas;
+      refreshLayout();
+    }
 
     // 屏幕左侧黑边空间不足（移动端竖屏或超窄视口）：隐藏外部面板，由画布内渲染
-    if (leftSpace < PC_HUD_MIN_LEFT_SPACE) {
-      container.classList.add('ov-hidden');
+    if (cachedLeft < PC_HUD_MIN_LEFT_SPACE) {
+      hidePanel();
+      layoutDirty = false;
       return false;
     }
 
-    container.classList.remove('ov-hidden');
+    showPanel();
 
-    // 响应式动态定位到画布左侧空白处（红框位置）：
-    // 距画布左侧留 20px 间距，垂直从画布顶部下方 16px 起
-    const panelWidth = Math.min(260, Math.max(160, leftSpace - 32));
-    container.style.width = `${panelWidth}px`;
-    container.style.top = `${Math.max(16, rect.top + 16)}px`;
-    container.style.left = `${Math.max(12, rect.left - panelWidth - 20)}px`;
+    // 位置重算事件路径：缓存矩形刚失效（首帧 / resize 后）才重写面板位置与宽度
+    if (layoutDirty) {
+      applyPanelPosition();
+      layoutDirty = false;
+    }
 
-    // 渲染文本：模式 / 存活时间 / 等级 / 击杀
+    // 渲染文本：模式 / 存活时间 / 等级 / 击杀（全部 diff 后写入，避免每帧替换文本节点）
     let modeText: string;
     let timeText: string;
     if (sessionMode === 'endless') {
@@ -164,15 +238,28 @@ export function createExternalHud(onToggleWeapon?: (weaponId: string) => void): 
       timeText = `存活 ${formatTime(state.timeMs)}`;
     }
 
-    modeEl.textContent = modeText;
-    timeEl.textContent = timeText;
-    levelEl.textContent = `等级 ${state.progress.level}`;
-    killsEl.textContent = `击杀 ${kills}`;
+    if (modeEl.textContent !== modeText) {
+      modeEl.textContent = modeText;
+    }
+    if (timeEl.textContent !== timeText) {
+      timeEl.textContent = timeText;
+    }
+    const levelText = `等级 ${state.progress.level}`;
+    if (levelEl.textContent !== levelText) {
+      levelEl.textContent = levelText;
+    }
+    const killsText = `击杀 ${kills}`;
+    if (killsEl.textContent !== killsText) {
+      killsEl.textContent = killsText;
+    }
 
-    // 经验条百分比
+    // 经验条百分比（diff 后写入）
     const need = xpToNext(state);
     const xpPct = need > 0 && Number.isFinite(need) ? clamp01(state.progress.xp / need) : 0;
-    xpFill.style.width = `${(xpPct * 100).toFixed(1)}%`;
+    const xpWidthText = `${(xpPct * 100).toFixed(1)}%`;
+    if (xpFill.style.width !== xpWidthText) {
+      xpFill.style.width = xpWidthText;
+    }
 
     // 武器胶囊芯片渲染：稳定复用现有 DOM 节点，避免高频清空造成点击丢失
     const wsMap = state.weaponStates;
@@ -210,12 +297,14 @@ export function createExternalHud(onToggleWeapon?: (weaponId: string) => void): 
       chipNodes.push({ button, nameSpan, disabledSpan, tagSpan, dmgSpan });
     }
 
-    // 隐藏多余的节点
+    // 隐藏多余的节点（diff 后写入）
     for (let i = ids.length; i < chipNodes.length; i++) {
-      chipNodes[i].button.style.display = 'none';
+      if (chipNodes[i].button.style.display !== 'none') {
+        chipNodes[i].button.style.display = 'none';
+      }
     }
 
-    // 原地精准更新节点属性，绝不重建 DOM
+    // 原地精准更新节点属性，绝不重建 DOM（display / dataset 同样 diff 后写入）
     for (let i = 0; i < ids.length; i++) {
       const id = ids[i];
       const ws = wsMap[id];
@@ -229,8 +318,12 @@ export function createExternalHud(onToggleWeapon?: (weaponId: string) => void): 
       const tag = maxed ? 'MAX' : `Lv.${level}`;
 
       const node = chipNodes[i];
-      node.button.style.display = '';
-      node.button.dataset.weaponId = id;
+      if (node.button.style.display !== '') {
+        node.button.style.display = '';
+      }
+      if (node.button.dataset.weaponId !== id) {
+        node.button.dataset.weaponId = id;
+      }
 
       let chipClass = 'ov-hud-chip';
       if (isDisabled) {
@@ -254,7 +347,10 @@ export function createExternalHud(onToggleWeapon?: (weaponId: string) => void): 
         node.nameSpan.textContent = expectedName;
       }
 
-      node.disabledSpan.style.display = isDisabled ? '' : 'none';
+      const expectedDisabledDisplay = isDisabled ? '' : 'none';
+      if (node.disabledSpan.style.display !== expectedDisabledDisplay) {
+        node.disabledSpan.style.display = expectedDisabledDisplay;
+      }
 
       if (node.tagSpan.textContent !== tag) {
         node.tagSpan.textContent = tag;
