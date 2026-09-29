@@ -6,7 +6,7 @@
 - **引擎/框架与核心版本：** Phaser `3.90.0`、Vite `8.3.0`、TypeScript `5.9.3`、Vitest `5.0.0`。
 - **开发语言与运行时环境：** TypeScript strict、Node.js `v24.16.0`、npm `11.17.0`。当前工作目录为 `F:\myzcode\survivor`。
 - **当前开发分支：** `feature/dev-continue`（基于 `main` 分支建立的安全迭代分支）。
-- **关键第三方库/插件/依赖：** Phaser `3.90.0`；开发依赖为 `vite`、`vitest`、`eslint`、`typescript-eslint`、`@eslint/js`。无后端，包含 11 项 2D 高清机甲美术素材（存于 `public/assets/sprites/`，已配置 `.gitignore` 隔离）。
+- **关键第三方库/插件/依赖：** Phaser `3.90.0`；开发依赖为 `vite`、`vitest`、`eslint`、`typescript-eslint`、`@eslint/js`。无后端，包含 11 项 2D 机甲美术素材（存于 `public/assets/sprites/`，随仓库分发；M46 起精灵类素材已按绘制尺寸×2 重导出，目录约 1.82MB）。
 - **如何启动与调试：**
   - 安装依赖：`npm install`
   - 开发服务：`npm run dev`
@@ -740,6 +740,23 @@
       - `balance.test.ts` 全自动对局回归正常通过（战役三种子全胜通关，极限生存模式 1009.4s 自然收敛）；
       - `npx tsc --noEmit`、`npm run lint`、`npm run build` 全部 0 errors。
 
+46. **M46: 性能优化第一批落地（P0-1 素材重导出 + P0-2 外置 HUD 热路径治理）**：
+    - **背景（全仓性能静态审查结论）**：
+      - 核心模拟层（对象池 / SpatialHash / 扫掠碰撞 / stats 缓存 / 实体护栏）与渲染层（T6a/T6b 烘焙纹理 + 池化 Image）已高度优化，常规对局无瓶颈；
+      - 剩余两个明确问题：① 11 张精灵 PNG 共约 10.8MB（解码约 32MB 显存），绘制时缩放系数低至 0.03~0.06（如 `46/1175`、`22/847`），既有加载/显存开销又有极端缩比无 mipmap 的采样闪烁；② 外置 HUD `update()` 每帧 1 次 `getBoundingClientRect` + 无条件 DOM 写入（layout thrash），60fps 下 99% 帧为无效功；
+      - 审查另列 P1 微热点（芯片标签先拼串后 diff、追踪导弹逐帧 O(弹数×敌数) 索敌、尸爆全场扫描、`collectFactor` 每帧 `Math.pow` 等）与 P2 结构项（glow 层一次性 VFX 烘焙为池化 Image、相机 bloom 移动端自动降级），本批未做、留待实测确认后处理。
+    - **P0-1 素材按绘制尺寸×2 重导出（commit `7d60705`）**：
+      - 10 张精灵 PNG 以 LANCZOS 重采样缩小（长边 64~256px；`map_background.png` 保持 720×1280 不动）：素材包体 9.11MB→0.41MB（-95.5%）、解码显存约 30.3MB→1.02MB（-96.5%）、sprites 目录约 10.5MB→1.82MB；
+      - **屏幕显示尺寸严格不变**：显示值（炮塔 48/46px、修复包 22px、墙高 32px、弹丸 32/28px、敌人 `r×2.2`）全部保留，仅把缩放除数换成新图尺寸；附带消除极端缩比采样闪烁；
+      - halo 目检（alpha 边缘定位后 nearest 4× 放大逐张检查）全部无脏边，未启用透明区预处理；重导出脚本在 `scratch/resize_assets.py`（scratch/ 不入库）；
+      - 常量同步：`enemyRenderer.ts` 的 `ENEMY_SPRITE_SIZES` 长边→256；`mainScene.ts` 四处 setScale 除数（wall `32/70`、drop `22/62`、base `48/120`、cannon `46/128`）；`projectileRenderer.ts` 的 `MISSILE/MORTAR_SPRITE_WIDTH`→128。全仓 grep 确认旧尺寸数字无其他引用。
+    - **P0-2 外置 HUD 热路径治理（commit `a1c6fa5`，仅 `src/ui/hud.ts` + `src/ui/hud.test.ts`，mainScene 契约不动）**：
+      - 布局读取收敛到闭包内唯一 `refreshLayout()`：仅「首帧懒初始化 / 画布对象更换 / window 与 visualViewport 的 resize（visualViewport 判空降级）」三个触发点调用，`update()` 稳态帧零 `getBoundingClientRect`；
+      - 面板位置/宽度仅 `layoutDirty` 激活帧写入；stats 4 项 textContent、经验条宽度、芯片 `display`/`dataset.weaponId`/多余节点隐藏全部先 diff 后写入——稳态帧零冗余 DOM 写入、零文本节点替换；
+      - 语义契约不变：返回值约定、`PC_HUD_MIN_LEFT_SPACE=180` 阈值、位置公式、隐藏态不写面板（窄屏隐藏时清 dirty 标记，恢复显示由 resize 重算闭环）、`destroy()` 用同一具名处理函数成对退订监听；
+      - `hud.test.ts` 新增 7 个热路径用例（赋值计数验证 diff 生效、window/visualViewport resize 重算、窄屏隐藏恢复、setVisible(false) 零写入、destroy 退订），既有 7 个用例与断言原样保留。
+    - **验证**：`npx tsc --noEmit` 0 错误；`npm run lint` 0 errors 0 warnings；全量 **39 套件 / 760 用例 100% 通过**（753 基线 + 7 新增）；`npm run build` 正常（chunk >500kB 警告为 Phaser 单包体既有提示，与本次无关），`dist/` 总体积约 13MB→3.2MB。
+
 ---
 
 ## 4. 当前工程状态与质量指标
@@ -747,8 +764,8 @@
 - **当前工程是否能直接运行/编译：** **是**。
 - **全量测试结果 (`npm run test` / `vitest run`)：**
   - **39 / 39 test files passed (100%)**
-  - **753 passed, 0 skipped (753 tests)**。
-  - 运行总耗时约 **62s**（含全自动战役/极限生存完整对局模拟）。
+  - **760 passed, 0 skipped (760 tests)**。
+  - 运行总耗时约 **52s**（含全自动战役/极限生存完整对局模拟）。
 - **静态检查 (`npm run lint` / `eslint .`)：**
   - **ESLint 通过，0 errors, 0 warnings**。
 - **TypeScript 检查 (`npx tsc --noEmit` & `npm run build`)：**
@@ -757,17 +774,19 @@
   - **通过，0 errors**。
 - **版本控制与资源状态：**
   - 当前分支：`main`（已推送至 GitHub 公开仓库）。
-  - 美术资源（`public/assets/sprites/`，11 项 PNG，约 11MB）已随仓库分发。
+  - 美术资源（`public/assets/sprites/`，11 项 PNG）已随仓库分发；M46 起精灵类素材按绘制尺寸×2 重导出（目录约 10.5MB→1.82MB，解码显存约 30.3MB→1.02MB），屏幕显示尺寸不变。
 
 ---
 
 ## 5. 给接手 Agent 的后续建议
 
 1. **当前状态**：
+   - M46 性能优化第一批已完整交付：素材按绘制尺寸×2 重导出（包体/显存降约 95%，显示尺寸不变）+ 外置 HUD 布局事件驱动化与全量 DOM 写入 diff 化（稳态帧零布局读取、零冗余写入）；
    - M45 电脑端外置 HUD 迁移与局内武器禁用/启用双入口系统已完整交付；
    - 极限生存模式不分轮数，自始至终一直固定显示【模式 极限生存】（彻底去除 `(第 1 轮)` 以及后续循环的任何轮数/倍率后缀）；
    - 彻底修复武器气泡点击失效问题：DOM 节点稳定持久复用 + 容器级 `pointerdown` 事件委托，0 延迟极速响应；移动端气泡点击判定区扩大至整个芯片；
-   - 全量测试通过：39 个测试套件通过，753 个用例全 PASS，tsc、lint、build 与 git diff --check 均为 0 errors。
+   - 全量测试通过：39 个测试套件通过，760 个用例全 PASS，tsc、lint、build 与 git diff --check 均为 0 errors。
 2. **后续可选打磨方向**：
+   - **性能优化后续批次（P1/P2，均建议先用 Performance 面板实测确认热点再动手）**：P1 微热点——画布内芯片标签先拼串后 diff 改为先比数值字段、追踪导弹逐帧 O(弹数×敌数) 索敌改空间网格最近邻、尸爆全场扫描接网格、`collectFactor` 的 `Math.pow` 查表化；P2 结构项——glow 层一次性爆点 VFX（死亡碎片/星芒/处决）烘焙为池化 ADD Image（照 T6b 模式）、相机 bloom 移动端/低端设备自动降级（保留 `?fx=0` 手动开关）；
    - **音效多样性**：可继续补充更多武器的专属击中与开火音色（如光束蜂鸣、电磁充能声）；
    - **更多模式与局外系统**：如局外科技树或图鉴系统。
