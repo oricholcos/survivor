@@ -476,7 +476,7 @@ export class MainScene extends Phaser.Scene {
     const layout = this.session.state.layout;
 
     // 城墙装甲 TileSprite 横向平铺（装甲墙高度 32px，保持等比平铺）
-    const wallTileScale = 32 / 644;
+    const wallTileScale = 32 / 70;
     this.wallSprite = this.add
       .tileSprite(0, layout.wallLineY, layout.width, 32, 'wall_segment')
       .setOrigin(0, 0)
@@ -488,7 +488,7 @@ export class MainScene extends Phaser.Scene {
       const dropImg = this.add
         .image(0, -200, 'drop_repair')
         .setOrigin(0.5, 0.5)
-        .setScale(22 / 847)
+        .setScale(22 / 62)
         .setDepth(1.2)
         .setVisible(false);
       this.dropPool.push(dropImg);
@@ -499,12 +499,12 @@ export class MainScene extends Phaser.Scene {
     this.turretBase = this.add
       .image(ch.x, ch.y, 'turret_base')
       .setOrigin(0.5, 0.5)
-      .setScale(48 / 834)
+      .setScale(48 / 120)
       .setDepth(3.0);
     this.turretCannon = this.add
       .image(ch.x, ch.y, 'turret_cannon')
       .setOrigin(0.25, 0.5)
-      .setScale(46 / 1175)
+      .setScale(46 / 128)
       .setDepth(3.1);
 
     // 敌人渲染池（T6a）：按图鉴逐类型绑定真实贴图，并建满固定容量池。

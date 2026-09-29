@@ -46,10 +46,10 @@ export const ENEMY_TEXTURE_MAP: Record<string, string> = {
 
 /** 各敌人素材的长边基准像素（用于按 logical radius 进行精准等比 setScale）。 */
 export const ENEMY_SPRITE_SIZES: Record<string, number> = {
-  runner: 1107,
-  standard: 991,
-  tank: 1204,
-  boss_1: 1015,
+  runner: 256,
+  standard: 256,
+  tank: 256,
+  boss_1: 256,
 };
 
 const AURA_PREFIX = 'enemy_aura_';

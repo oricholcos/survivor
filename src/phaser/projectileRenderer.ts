@@ -41,10 +41,10 @@ const SLOT_DEPTH_EPS = 0.00001;
 /** 弹丸池深度基线：glow 层（glowGfx=4、状态降级光环同基线；ADD 可交换）。 */
 const DEPTH_BASE = 4;
 
-/** 追猎导弹素材原始宽度 px。 */
-const MISSILE_SPRITE_WIDTH = 966;
-/** 迫击航弹素材原始宽度 px。 */
-const MORTAR_SPRITE_WIDTH = 988;
+/** 追猎导弹素材宽度 px（重导出缩小版，长边=宽）。 */
+const MISSILE_SPRITE_WIDTH = 128;
+/** 迫击航弹素材宽度 px（重导出缩小版，长边=宽）。 */
+const MORTAR_SPRITE_WIDTH = 128;
 
 /** 光点贴图基准弹体半径（各行为弹丸 core 半径均为 6；运行期 scale = 有效半径 / 6）。 */
 const REF_DOT_RADIUS = 6;
