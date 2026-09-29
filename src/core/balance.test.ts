@@ -398,9 +398,9 @@ function damageHistogram(m: RunMetrics, bucketSec = 30): string {
 }
 
 /**
- * 跑一局完整自动对局：step(1/60s) × N，逐帧 drainEvents 消费升级 / 记录墙损，
- * 周期清理尸体（core 从不把 dead 敌人移出 state.enemies；清理保序且所有子系统
- * 均跳过 dead——纯内存/迭代优化，不改变模拟语义与随机序列）。
+ * 跑一局完整自动对局：step(1/60s) × N，逐帧 drainEvents 消费升级 / 记录墙损。
+ * 尸体清理由 core step 帧末 sweepDeadEnemies 统一负责（保序原地压缩，不改变
+ * 模拟语义与随机序列），本代理无需再自行过滤。
  * @param capSec 模拟时间上限（秒）：endless 防不收敛的保护栏，campaign 传通关时长 + 余量
  */
 export function runGame(seed: number, mode: GameMode, capSec: number, waves: WavesConfig = WAVES): RunMetrics {
@@ -432,12 +432,10 @@ export function runGame(seed: number, mode: GameMode, capSec: number, waves: Wav
   const endlessCfg = mode === 'endless' ? (waves.endlessLoop ?? null) : null;
   const capMs = capSec * 1000;
   const t0 = performance.now();
-  let stepIndex = 0;
   let allUpgradesExhausted = false;
 
   while (state.over === null && state.timeMs < capMs) {
     coreStep(state, STEP_MS);
-    stepIndex++;
 
     const tSec = state.timeMs / 1000;
 
@@ -481,12 +479,6 @@ export function runGame(seed: number, mode: GameMode, capSec: number, waves: Wav
       } else if (ev.kind === 'gameOver') {
         m.gameOverEvents++;
       }
-    }
-
-    // 尸体清理：core 不移除 dead 敌人（纯标记），长对局会无限堆积拖慢逐帧扫描；
-    // 每 0.5s 过滤一次（保序，等价性见函数注释）。
-    if (stepIndex % 30 === 0 && state.enemies.length > 0) {
-      state.enemies = state.enemies.filter((e) => !e.dead);
     }
   }
 

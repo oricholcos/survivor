@@ -757,6 +757,20 @@
       - `hud.test.ts` 新增 7 个热路径用例（赋值计数验证 diff 生效、window/visualViewport resize 重算、窄屏隐藏恢复、setVisible(false) 零写入、destroy 退订），既有 7 个用例与断言原样保留。
     - **验证**：`npx tsc --noEmit` 0 错误；`npm run lint` 0 errors 0 warnings；全量 **39 套件 / 760 用例 100% 通过**（753 基线 + 7 新增）；`npm run build` 正常（chunk >500kB 警告为 Phaser 单包体既有提示，与本次无关），`dist/` 总体积约 13MB→3.2MB。
 
+47. **M47: 帧末尸体清理落地（core step 内置 sweepDeadEnemies，修复长对局死敌无限堆积）**：
+    - **问题确认（用户指出的性能缺陷，属实）**：
+      - core 层 `enemies.ts` 击杀只置 `dead=true` 标记、从不把死敌移出 `state.enemies`；`session.ts` / `mainScene.ts` 亦无任何清理——死敌在数组中永久残留；
+      - `balance.test.ts` 的测试代理（`runGame`）早已自带每 0.5s 过滤死敌的清理逻辑，且注释明言「core 不移除 dead 敌人（纯标记），长对局会无限堆积拖慢逐帧扫描」，但该等价性论证未落地到正式对局；
+      - 量级实证：极限生存 15~20 分钟局击杀 6000~10000+（endless seed 7 @1005.5s 击杀 6435；M25 记录 @1270.8s 击杀 10121），即 `state.enemies` 堆积数千至上万具尸体；core 8 个 hooks 与视图层（`trackEnemyHits` / 状态特效 / 炮塔索敌 / `EnemyRenderer.sync` / `countStatusEnemies`）每帧全量扫描该数组，每帧对同一数组白付十余次 O(n) 遍历——长对局变卡的真实直接原因之一（M46 性能静态审查漏列此项）。
+    - **修复实现（`src/core/step.ts`）**：
+      - 帧末新增 `sweepDeadEnemies`：写指针单遍**原地压缩**移除 dead 敌人，零分配、保序；每帧执行使数组恒收敛为纯活敌（受 `maxEnemies=350` 护栏约束），尸体当帧移除；
+      - 优于测试原「每 0.5s filter 新数组」方案：无临时数组 GC 分配、无清理间隔期的遍历浪费；
+      - **等价性论证**（继承自 balance.test.ts 原注释并实证）：清理保序；不消费 RNG；所有消费方均跳过 dead（武器索敌 / 弹丸扫掠 / 效果 tick / 区域 / 墙战 / 波次存活预算 / 视图层渲染）；击杀表现（死亡爆裂粒子 / 冲击波 / 音效）由 `enemyKilled` 事件驱动，与尸体是否残留数组无关——纯内存/迭代优化，不改变模拟语义与随机序列。
+    - **测试代理同步（`src/core/balance.test.ts`）**：
+      - `runGame` 删除自带清理块与 `stepIndex` 计数（core step 已内置清理），函数注释同步更新为指向 `sweepDeadEnemies`；
+      - **零语义漂移实证**：balance 面板与修复前基线逐字一致——campaign 三种子胜负/收敛点不变（seed 2024 victory @603.2s 等），endless seed 7 仍 defeat @1009.4s、击杀 7407、loop=11。
+    - **验证**：`npx tsc --noEmit` 0 错误；`npm run lint` 0 errors 0 warnings；全量 **39 套件 / 760 用例 100% 通过**；`npm run build` 正常（chunk 警告为既有提示）。
+
 ---
 
 ## 4. 当前工程状态与质量指标
@@ -781,6 +795,7 @@
 ## 5. 给接手 Agent 的后续建议
 
 1. **当前状态**：
+   - M47 帧末尸体清理已完整交付：core `step` 帧末原地压缩移除 dead 敌人（正式对局不再依赖测试代理的临时清理），长对局 `state.enemies` 恒为纯活敌（≤350），每帧十余处全量扫描不再为尸体白付遍历；
    - M46 性能优化第一批已完整交付：素材按绘制尺寸×2 重导出（包体/显存降约 95%，显示尺寸不变）+ 外置 HUD 布局事件驱动化与全量 DOM 写入 diff 化（稳态帧零布局读取、零冗余写入）；
    - M45 电脑端外置 HUD 迁移与局内武器禁用/启用双入口系统已完整交付；
    - 极限生存模式不分轮数，自始至终一直固定显示【模式 极限生存】（彻底去除 `(第 1 轮)` 以及后续循环的任何轮数/倍率后缀）；
