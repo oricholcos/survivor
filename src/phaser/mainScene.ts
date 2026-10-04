@@ -452,8 +452,8 @@ export class MainScene extends Phaser.Scene {
   }
 
   preload(): void {
-    // 统一预加载 11 项透底 PNG 资源
-    this.load.image('map_background', '/assets/sprites/map_background.png');
+    // 统一预加载 11 项资源；map_background 为不透明底图，用 JPEG 减包体
+    this.load.image('map_background', '/assets/sprites/map_background.jpg');
     this.load.image('turret_base', '/assets/sprites/turret_base.png');
     this.load.image('turret_cannon', '/assets/sprites/turret_cannon.png');
     this.load.image('wall_segment', '/assets/sprites/wall_segment.png');
