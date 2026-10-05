@@ -779,6 +779,17 @@
       - `mainScene.ts` preload 加载路径改为 `/assets/sprites/map_background.jpg`；删除原 PNG（无损原图可经 git 历史回溯）。
     - **验证**：`npm run build`（含 tsc）通过，dist 总体积 3.27MB→1.97MB（-40%）；线上传输总量（gzip 后估算）约 2.3MB→1.0MB，背景图不再是最大传输项（最大项变为 JS 包 372KB gzip，后续优化方向为代码分割）；全量 **39 套件 / 760 用例 100% 通过**。
 
+49. **M49: Tailscale 内网部署上线（codelingo 服务器 nginx 8080 静态站点）**：
+    - **部署形态与依据**：游戏为纯前端静态产物（无后端/无 API），模拟全在玩家浏览器执行，服务器仅由 nginx 发放 `dist/`（约 2.0MB），不新增常驻进程、内存增量约等于零；目标服务器为阿里云 Ubuntu 22.04（公网 47.239.11.4，Tailscale 主机名 `codelingo` / 100.82.229.64，deploy 账号 + Windows ssh-agent 密钥登录），与既有 enlearn 业务共存。
+    - **访问入口与暴露范围**：`http://codelingo:8080/`（或 `http://100.82.229.64:8080/`），**仅 Tailscale 内网可玩**——实测公网入站 80 被阿里云防火墙拦截（外部直连 http_code 000），8080 同理；如需公网开放只需在阿里云控制台安全组放行 8080，服务器配置零改动。
+    - **nginx 站点配置**（`/etc/nginx/sites-available/survivor` → `sites-enabled/`，仓库留档 `deploy/survivor.nginx.conf`，commit `b9ea268`）：
+      - `listen 8080` 独立 server 块，`root /var/www/survivor`，完全不动 enlearn 的 80 default_server；
+      - 缓存策略：`/assets/`（构建产物带内容哈希）`expires 30d` + `Cache-Control: public`；`index.html` `Cache-Control: no-cache`——发版即生效，避免旧 HTML 引用已删除的哈希文件名导致 404；
+      - `gzip on` 覆盖 text/css/application/javascript/application/json。
+    - **权限结构**：一次性 root 操作（建 webroot 并属主 `deploy`、安装站点配置、`nginx -t` + reload）已完成；此后产物更新全程免 sudo。
+    - **更新流程（手动，免 sudo）**：本地 `npm run build` → `tar czf` 打包 `dist/` → `scp` 至 `deploy@codelingo:~/` → `ssh` 解压进 `/var/www/survivor/`；CI 自动化未启用（cron 定时拉取与 GitHub Actions + `tailscale/github-action` 两种方案已评估，用户决定暂不做）。
+    - **验证**：服务器本地与 tailnet 设备直连均 HTTP 200；响应头实测 `index.html` 为 `Cache-Control: no-cache`、素材为 `Expires`(+30d) + `max-age=2592000, public`；webroot 2.0MB 属主 `deploy`；服务器暂存文件（`~/survivor-dist*`、`~/survivor.nginx.conf`）已清理。
+
 ---
 
 ## 4. 当前工程状态与质量指标
@@ -803,6 +814,7 @@
 ## 5. 给接手 Agent 的后续建议
 
 1. **当前状态**：
+   - M49 Tailscale 内网部署上线已完整交付：codelingo 服务器 nginx 8080 静态站点（`http://codelingo:8080/`，仅 tailnet 可达；公网开放仅需阿里云安全组放行 8080），缓存策略 `index.html` no-cache + `/assets/` expires 30d，配置留档 `deploy/survivor.nginx.conf`，产物更新免 sudo，CI 自动化暂不启用；
    - M48 背景图资产格式优化已完整交付：不透明底图 `map_background` PNG→JPEG q85（1447KB→186KB，-87%），dist 总体积 3.27MB→1.97MB（-40%），线上传输总量约 2.3MB→1.0MB；背景图不再是最大传输项，后续加载优化方向为 JS 包代码分割；
    - M47 帧末尸体清理已完整交付：core `step` 帧末原地压缩移除 dead 敌人（正式对局不再依赖测试代理的临时清理），长对局 `state.enemies` 恒为纯活敌（≤350），每帧十余处全量扫描不再为尸体白付遍历；
    - M46 性能优化第一批已完整交付：素材按绘制尺寸×2 重导出（包体/显存降约 95%，显示尺寸不变）+ 外置 HUD 布局事件驱动化与全量 DOM 写入 diff 化（稳态帧零布局读取、零冗余写入）；
